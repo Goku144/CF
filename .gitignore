@@ -1,2 +1,2 @@
-tests/build/
-tests/bin/
+tests/build/*
+tests/bin/*
