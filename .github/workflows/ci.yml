@@ -1,0 +1,28 @@
+name: test
+
+on:
+  push:
+    branches:
+      - main
+      - dev/types
+  pull_request:
+    branches:
+      - main
+      - dev/types
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v6
+
+      - name: Show test file
+        run: |
+          pwd
+          ls -R
+          sed -n '1,120p' tests/src/test.c
+
+      - name: Run tests
+        run: make test
