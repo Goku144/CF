@@ -20,4 +20,9 @@ jobs:
 
       - name: Run tests
         run: make test
-  
+
+      - name: Show test file
+        run: |
+          pwd
+          ls -R
+          sed -n '1,120p' tests/src/test.c
