@@ -21,10 +21,16 @@ FLAG := -Wall -Wextra -Wpedantic -Werror
 test: runTests
 
 runTests: tests/build/test
-	./tests/build/test
+	./$<
 
 tests/build/test: tests/bin/test.o
-	$(CC) tests/bin/test.o -o tests/build/test
+	$(CC) $^ -o $@
 
-tests/bin/test.o: tests/src/test.c
-	$(CC) $(FLAG) -I$(INC) -c tests/src/test.c -o tests/bin/test.o
+test/bin:
+	mkdir -p $@
+
+tests/build:
+	mkdir -p $@
+
+tests/bin/test.o: tests/src/test.c $(INC)/cf_types.h
+	$(CC) $(FLAG) -I$(INC) -c $< -o $@
