@@ -1,6 +1,5 @@
 #if !defined(CF_STATUS_H)
 #define CF_STATUS_H
-#include "cf_types.h"
 
 typedef enum cf_status
 {
