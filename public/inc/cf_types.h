@@ -16,7 +16,7 @@
 #define CF_TRUE true
 #define CF_FALSE false
 #define CF_NULL NULL
-//if parametre isn't used
+// if parametre isn't used
 #define CF_UNUSED(x) ((void)(x))
 // works only on array defined a[] no pointer defined *a
 #define CF_ARRAY_COUNT(x) (sizeof(x) / sizeof((x)[0]))
