@@ -57,12 +57,12 @@ cf_bool cf_string_is_empty(cf_string str);
 
 /**
  * Compares two cf_str values for equality.
- * @param lhs     Left-hand string.
- * @param rhs     Right-hand string.
+ * @param s1     Left-hand string.
+ * @param s2     Right-hand string.
  * @param out_eq  Output boolean set to CF_TRUE if equal, CF_FALSE otherwise.
  * @return CF_ERR_NULL if out_eq is null; CF_ERR_STATE if either is invalid; CF_OK otherwise.
  */
-cf_status cf_str_eq(cf_str lhs, cf_str rhs, cf_bool *out_eq);
+cf_status cf_str_eq(cf_str s1, cf_str s2, cf_bool *out_eq);
 
 /**
  * Returns a sub-slice of a cf_str without copying.
@@ -122,8 +122,61 @@ cf_status cf_string_append_char(cf_string *str, char s);
  */
 cf_status cf_string_append_str(cf_string *str, cf_str s);
 
+/** Returns a cf_str view of the string's current content. Returns empty if string is invalid. */
+cf_str cf_string_as_str(cf_string str);
+
+/**
+ * Clears the string and replaces its content with the given cf_str slice.
+ * Maintains null termination.
+ * @param str  Target string.
+ * @param s    Source string slice to copy in.
+ * @return CF_ERR_NULL if str is null; CF_ERR_STATE if either is invalid; CF_ERR_OOM on failure; CF_OK otherwise.
+ */
 cf_status cf_string_set_str(cf_string *str, cf_str s);
 
-cf_str cf_string_as_str(cf_string str);
+/**
+ * Returns the character at the given index in a cf_str.
+ * @param s       Source string slice.
+ * @param index   Zero-based index.
+ * @param out_ch  Output character.
+ * @return CF_ERR_NULL if out_ch is null; CF_ERR_STATE if slice is invalid; CF_ERR_BOUNDS if index >= len; CF_OK otherwise.
+ */
+cf_status cf_str_at(cf_str s, cf_usize index, char *out_ch);
+
+/**
+ * Returns the character at the given index in a cf_string.
+ * @param str     Source string.
+ * @param index   Zero-based index.
+ * @param out_ch  Output character.
+ * @return CF_ERR_NULL if out_ch is null; CF_ERR_STATE if string is invalid; CF_ERR_BOUNDS if index >= len; CF_OK otherwise.
+ */
+cf_status cf_string_at(cf_string str, cf_usize index, char *out_ch);
+
+/**
+ * Truncates the string to new_len, which must be <= current len.
+ * Maintains null termination.
+ * @param str      Target string.
+ * @param new_len  New length; must not exceed str->len.
+ * @return CF_ERR_NULL if str is null; CF_ERR_STATE if invalid; CF_ERR_BOUNDS if new_len > len; CF_OK otherwise.
+ */
+cf_status cf_string_truncate(cf_string *str, cf_usize new_len);
+
+/**
+ * Checks whether a cf_str starts with the given prefix.
+ * @param s       String to check.
+ * @param prefix  Prefix to look for.
+ * @param out     Set to CF_TRUE if s starts with prefix, CF_FALSE otherwise.
+ * @return CF_ERR_NULL if out is null; CF_ERR_STATE if either is invalid; CF_OK otherwise.
+ */
+cf_status cf_str_starts_with(cf_str s, cf_str prefix, cf_bool *out);
+
+/**
+ * Checks whether a cf_str ends with the given suffix.
+ * @param s       String to check.
+ * @param suffix  Suffix to look for.
+ * @param out     Set to CF_TRUE if s ends with suffix, CF_FALSE otherwise.
+ * @return CF_ERR_NULL if out is null; CF_ERR_STATE if either is invalid; CF_OK otherwise.
+ */
+cf_status cf_str_ends_with(cf_str s, cf_str suffix, cf_bool *out);
 
 #endif // CF_STRING_H

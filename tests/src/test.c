@@ -279,6 +279,44 @@ static void test_cf_buffer_set_and_views(void)
   cf_buffer_destroy(&buf);
 }
 
+static void test_cf_buffer_fill_and_truncate(void)
+{
+  SECTION("cf_buffer fill/truncate");
+
+  cf_u8 raw[5] = {1, 2, 3, 4, 5};
+  cf_bytes_mut bm = cf_bytes_mut_from(raw, 5);
+
+  /* cf_bytes_mut_fill */
+  CHECK("bytes_mut_fill: ok", cf_bytes_mut_fill(bm, 0xAA) == CF_OK);
+  CHECK("bytes_mut_fill: all filled",
+        raw[0] == 0xAA && raw[1] == 0xAA && raw[2] == 0xAA &&
+        raw[3] == 0xAA && raw[4] == 0xAA);
+  CHECK("bytes_mut_fill: empty ok", cf_bytes_mut_fill(cf_bytes_mut_empty(), 0x11) == CF_OK);
+  CHECK("bytes_mut_fill: bad -> ERR_STATE",
+        cf_bytes_mut_fill((cf_bytes_mut){CF_NULL, 3}, 0x22) == CF_ERR_STATE);
+
+  /* cf_buffer_fill / truncate */
+  cf_buffer buf;
+  CHECK("buffer_fill/truncate: init", cf_buffer_init(&buf, 8) == CF_OK);
+  CHECK("buffer_fill/truncate: set bytes",
+        cf_buffer_set_bytes(&buf, cf_bytes_from((const cf_u8 *)"abcd", 4)) == CF_OK);
+
+  CHECK("buffer_fill: ok", cf_buffer_fill(&buf, 0x55) == CF_OK);
+  CHECK("buffer_fill: first 4 filled",
+        buf.data[0] == 0x55 && buf.data[1] == 0x55 &&
+        buf.data[2] == 0x55 && buf.data[3] == 0x55);
+  CHECK("buffer_fill: null -> ERR_NULL", cf_buffer_fill(CF_NULL, 0x33) == CF_ERR_NULL);
+
+  CHECK("buffer_truncate: shrink to 2", cf_buffer_truncate(&buf, 2) == CF_OK);
+  CHECK("buffer_truncate: len == 2", buf.len == 2);
+  CHECK("buffer_truncate: to zero", cf_buffer_truncate(&buf, 0) == CF_OK);
+  CHECK("buffer_truncate: len == 0", buf.len == 0);
+  CHECK("buffer_truncate: too large -> ERR_BOUNDS", cf_buffer_truncate(&buf, 1) == CF_ERR_BOUNDS);
+  CHECK("buffer_truncate: null -> ERR_NULL", cf_buffer_truncate(CF_NULL, 0) == CF_ERR_NULL);
+
+  cf_buffer_destroy(&buf);
+}
+
 /* ------------------------------------------------------------------ */
 /*  cf_string tests                                                    */
 /* ------------------------------------------------------------------ */
@@ -404,6 +442,73 @@ static void test_cf_string_set_and_views(void)
   cf_string_destroy(&str);
 }
 
+static void test_cf_string_queries_and_truncate(void)
+{
+  SECTION("cf_string queries/truncate");
+
+  cf_string str;
+  CHECK("string queries/truncate: init", cf_string_init(&str, 8) == CF_OK);
+  CHECK("string queries/truncate: set hello",
+        cf_string_set_str(&str, cf_str_from("hello", 5)) == CF_OK);
+
+  /* cf_string_as_str */
+  cf_str view = cf_string_as_str(str);
+  CHECK("string_as_str: len", view.len == 5);
+  CHECK("string_as_str: ptr", view.data == str.data);
+  CHECK("string_as_str: content", memcmp(view.data, "hello", 5) == 0);
+
+  /* cf_str_at */
+  {
+    char ch = 0;
+    CHECK("str_at: index 1", cf_str_at(view, 1, &ch) == CF_OK);
+    CHECK("str_at: got 'e'", ch == 'e');
+    CHECK("str_at: null out -> ERR_NULL", cf_str_at(view, 0, CF_NULL) == CF_ERR_NULL);
+    CHECK("str_at: bounds -> ERR_BOUNDS", cf_str_at(view, 5, &ch) == CF_ERR_BOUNDS);
+    CHECK("str_at: bad state -> ERR_STATE",
+          cf_str_at((cf_str){CF_NULL, 3}, 0, &ch) == CF_ERR_STATE);
+  }
+
+  /* cf_string_at */
+  {
+    char ch = 0;
+    CHECK("string_at: index 4", cf_string_at(str, 4, &ch) == CF_OK);
+    CHECK("string_at: got 'o'", ch == 'o');
+    CHECK("string_at: null out -> ERR_NULL", cf_string_at(str, 0, CF_NULL) == CF_ERR_NULL);
+    CHECK("string_at: bounds -> ERR_BOUNDS", cf_string_at(str, 5, &ch) == CF_ERR_BOUNDS);
+  }
+
+  /* cf_str_starts_with */
+  {
+    cf_bool out = CF_FALSE;
+    CHECK("starts_with: he", cf_str_starts_with(view, cf_str_from("he", 2), &out) == CF_OK && out == CF_TRUE);
+    CHECK("starts_with: hi false", cf_str_starts_with(view, cf_str_from("hi", 2), &out) == CF_OK && out == CF_FALSE);
+    CHECK("starts_with: longer false", cf_str_starts_with(view, cf_str_from("hello!", 6), &out) == CF_OK && out == CF_FALSE);
+    CHECK("starts_with: null out", cf_str_starts_with(view, cf_str_from("he", 2), CF_NULL) == CF_ERR_NULL);
+  }
+
+  /* cf_str_ends_with */
+  {
+    cf_bool out = CF_FALSE;
+    CHECK("ends_with: lo", cf_str_ends_with(view, cf_str_from("lo", 2), &out) == CF_OK && out == CF_TRUE);
+    CHECK("ends_with: xx false", cf_str_ends_with(view, cf_str_from("xx", 2), &out) == CF_OK && out == CF_FALSE);
+    CHECK("ends_with: longer false", cf_str_ends_with(view, cf_str_from("ohhello", 7), &out) == CF_OK && out == CF_FALSE);
+    CHECK("ends_with: null out", cf_str_ends_with(view, cf_str_from("lo", 2), CF_NULL) == CF_ERR_NULL);
+  }
+
+  /* cf_string_truncate */
+  CHECK("string_truncate: shrink to 2", cf_string_truncate(&str, 2) == CF_OK);
+  CHECK("string_truncate: len == 2", str.len == 2);
+  CHECK("string_truncate: nul kept", str.data[2] == '\0');
+  CHECK("string_truncate: content kept", str.data[0] == 'h' && str.data[1] == 'e');
+  CHECK("string_truncate: to zero", cf_string_truncate(&str, 0) == CF_OK);
+  CHECK("string_truncate: len == 0", str.len == 0);
+  CHECK("string_truncate: data[0] nul", str.data[0] == '\0');
+  CHECK("string_truncate: too large -> ERR_BOUNDS", cf_string_truncate(&str, 1) == CF_ERR_BOUNDS);
+  CHECK("string_truncate: null -> ERR_NULL", cf_string_truncate(CF_NULL, 0) == CF_ERR_NULL);
+
+  cf_string_destroy(&str);
+}
+
 /* ------------------------------------------------------------------ */
 /*  main                                                               */
 /* ------------------------------------------------------------------ */
@@ -419,6 +524,8 @@ int main(void)
   test_cf_string();
 	test_cf_buffer_set_and_views();
   test_cf_string_set_and_views();
+	test_cf_buffer_fill_and_truncate();
+  test_cf_string_queries_and_truncate();
 
   printf("\n==============================\n");
   printf("Results: %d passed, %d failed\n", g_passed, g_failed);

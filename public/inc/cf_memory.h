@@ -145,10 +145,42 @@ cf_status cf_buffer_append_byte(cf_buffer *buffer, cf_u8 byte);
  */
 cf_status cf_buffer_append_bytes(cf_buffer *buffer, cf_bytes bytes);
 
-cf_status cf_buffer_set_bytes(cf_buffer *buffer, cf_bytes bytes);
-
+/** Returns a cf_bytes view of the buffer's current content. Returns empty if buffer is invalid. */
 cf_bytes cf_buffer_as_bytes(cf_buffer buffer);
 
+/** Returns a cf_bytes_mut view of the buffer's current content. Returns empty if buffer or pointer is null/invalid. */
 cf_bytes_mut cf_buffer_as_bytes_mut(cf_buffer *buffer);
+
+/**
+ * Clears the buffer and replaces its content with the given byte slice.
+ * @param buffer  Target buffer.
+ * @param bytes   Source byte slice to copy in.
+ * @return CF_ERR_NULL if buffer is null; CF_ERR_STATE if either is invalid; CF_ERR_OOM on failure; CF_OK otherwise.
+ */
+cf_status cf_buffer_set_bytes(cf_buffer *buffer, cf_bytes bytes);
+
+/**
+ * Fills every byte in the slice with the given value.
+ * @param bytes  Target mutable slice.
+ * @param value  Byte value to fill with.
+ * @return CF_ERR_STATE if slice is invalid; CF_OK otherwise.
+ */
+cf_status cf_bytes_mut_fill(cf_bytes_mut bytes, cf_u8 value);
+
+/**
+ * Fills every byte in the buffer's current content with the given value.
+ * @param buffer  Target buffer.
+ * @param value   Byte value to fill with.
+ * @return CF_ERR_NULL if buffer is null; CF_ERR_STATE if invalid; CF_OK otherwise.
+ */
+cf_status cf_buffer_fill(cf_buffer *buffer, cf_u8 value);
+
+/**
+ * Truncates the buffer to new_len, which must be <= current len.
+ * @param buffer   Target buffer.
+ * @param new_len  New length; must not exceed buffer->len.
+ * @return CF_ERR_NULL if buffer is null; CF_ERR_STATE if invalid; CF_ERR_BOUNDS if new_len > len; CF_OK otherwise.
+ */
+cf_status cf_buffer_truncate(cf_buffer *buffer, cf_usize new_len);
 
 #endif // CF_MEMORY_H

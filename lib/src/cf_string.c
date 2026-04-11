@@ -128,7 +128,6 @@ cf_status cf_string_append_str(cf_string *str, cf_str s)
   if(str == CF_NULL) return CF_ERR_NULL;
   if(!cf_string_is_valid(*str) || !cf_str_is_valid(s)) return CF_ERR_STATE;
   if(s.len == 0) return CF_OK;
-
   if(str->cap < (str->len + s.len))
   {
     cf_status state;
@@ -143,6 +142,12 @@ cf_status cf_string_append_str(cf_string *str, cf_str s)
   return CF_OK;
 }
 
+cf_str cf_string_as_str(cf_string str)
+{
+  if(!cf_string_is_valid(str)) return cf_str_empty();
+  return cf_str_from(str.data, str.len);
+}
+
 cf_status cf_string_set_str(cf_string *str, cf_str s)
 {
   if(str == CF_NULL) return CF_ERR_NULL;
@@ -152,8 +157,57 @@ cf_status cf_string_set_str(cf_string *str, cf_str s)
   return cf_string_append_str(str, s);
 }
 
-cf_str cf_string_as_str(cf_string str)
+cf_status cf_str_at(cf_str s, cf_usize index, char *out_ch)
 {
-  if(!cf_string_is_valid(str)) return cf_str_empty();
-  return cf_str_from(str.data, str.len);
+  if(out_ch == CF_NULL) return CF_ERR_NULL;
+  if(!cf_str_is_valid(s)) return CF_ERR_STATE;
+  if(index >= s.len) return CF_ERR_BOUNDS;
+  *out_ch = s.data[index];
+  return CF_OK;
+}
+
+cf_status cf_string_at(cf_string str, cf_usize index, char *out_ch)
+{
+  if(out_ch == CF_NULL) return CF_ERR_NULL;
+  if(!cf_string_is_valid(str)) return CF_ERR_STATE;
+  if(index >= str.len) return CF_ERR_BOUNDS;
+  *out_ch = str.data[index];
+  return CF_OK;
+}
+
+cf_status cf_string_truncate(cf_string *str, cf_usize new_len)
+{
+  if(str == CF_NULL) return CF_ERR_NULL;
+  if(!cf_string_is_valid(*str)) return CF_ERR_STATE;
+  if(new_len > str->len) return CF_ERR_BOUNDS;
+  str->len = new_len;
+  str->data[str->len] = '\0';
+  return CF_OK;
+}
+
+cf_status cf_str_starts_with(cf_str s, cf_str prefix, cf_bool *out)
+{
+  if (out == CF_NULL) return CF_ERR_NULL;
+  if(!cf_str_is_valid(s) || !cf_str_is_valid(prefix)) return CF_ERR_STATE;
+  *out = CF_FALSE;
+  if(s.len < prefix.len) return CF_OK;
+  for (cf_usize i = 0; i < prefix.len; i++)
+    if(s.data[i] != prefix.data[i])
+      return CF_OK;
+  *out = CF_TRUE;
+  return CF_OK;
+}
+
+cf_status cf_str_ends_with(cf_str s, cf_str suffix, cf_bool *out)
+{
+  if (out == CF_NULL) return CF_ERR_NULL;
+  if(!cf_str_is_valid(s) || !cf_str_is_valid(suffix)) return CF_ERR_STATE;
+  *out = CF_FALSE;
+  if(s.len < suffix.len) return CF_OK;
+  cf_usize start = s.len - suffix.len;
+  for (cf_usize i = 0; i < suffix.len ; i++)
+    if(s.data[start + i] != suffix.data[i])
+      return CF_OK;
+  *out = CF_TRUE;
+  return CF_OK;
 }
