@@ -122,4 +122,8 @@ cf_status cf_string_append_char(cf_string *str, char s);
  */
 cf_status cf_string_append_str(cf_string *str, cf_str s);
 
+cf_status cf_string_set_str(cf_string *str, cf_str s);
+
+cf_str cf_string_as_str(cf_string str);
+
 #endif // CF_STRING_H

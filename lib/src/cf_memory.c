@@ -146,3 +146,25 @@ cf_status cf_buffer_append_bytes(cf_buffer *buffer, cf_bytes bytes)
   buffer->len += bytes.len;
   return CF_OK;
 }
+
+cf_status cf_buffer_set_bytes(cf_buffer *buffer, cf_bytes bytes)
+{
+  if(buffer == CF_NULL) return CF_ERR_NULL;
+  if(!cf_buffer_is_valid(*buffer) || !cf_bytes_is_valid(bytes)) return CF_ERR_STATE;
+  cf_status state;
+  if((state = cf_buffer_clear(buffer)) != CF_OK) return state;
+  return cf_buffer_append_bytes(buffer, bytes);
+}
+
+cf_bytes cf_buffer_as_bytes(cf_buffer buffer)
+{
+  if(!cf_buffer_is_valid(buffer)) return cf_bytes_empty();
+  return cf_bytes_from(buffer.data, buffer.len);
+}
+
+cf_bytes_mut cf_buffer_as_bytes_mut(cf_buffer *buffer)
+{
+  if(buffer == CF_NULL) return cf_bytes_mut_empty();
+  if(!cf_buffer_is_valid(*buffer)) return cf_bytes_mut_empty();
+  return cf_bytes_mut_from(buffer->data, buffer->len);
+}

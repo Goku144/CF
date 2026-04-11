@@ -145,4 +145,10 @@ cf_status cf_buffer_append_byte(cf_buffer *buffer, cf_u8 byte);
  */
 cf_status cf_buffer_append_bytes(cf_buffer *buffer, cf_bytes bytes);
 
+cf_status cf_buffer_set_bytes(cf_buffer *buffer, cf_bytes bytes);
+
+cf_bytes cf_buffer_as_bytes(cf_buffer buffer);
+
+cf_bytes_mut cf_buffer_as_bytes_mut(cf_buffer *buffer);
+
 #endif // CF_MEMORY_H

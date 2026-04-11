@@ -142,3 +142,18 @@ cf_status cf_string_append_str(cf_string *str, cf_str s)
   str->data[str->len] = '\0';
   return CF_OK;
 }
+
+cf_status cf_string_set_str(cf_string *str, cf_str s)
+{
+  if(str == CF_NULL) return CF_ERR_NULL;
+  if(!cf_string_is_valid(*str) || !cf_str_is_valid(s)) return CF_ERR_STATE;
+  cf_status state;
+  if((state = cf_string_clear(str)) != CF_OK) return state;
+  return cf_string_append_str(str, s);
+}
+
+cf_str cf_string_as_str(cf_string str)
+{
+  if(!cf_string_is_valid(str)) return cf_str_empty();
+  return cf_str_from(str.data, str.len);
+}
