@@ -1,4 +1,3 @@
-./tests/build/test
 Running cf tests...
 
 === cf_bytes ===
@@ -530,6 +529,135 @@ Running cf tests...
   [PASS] string_destroy: cap 0
   [PASS] string_destroy: null safe
 
+=== cf_buffer set/view ===
+  [PASS] buffer_set/view: init
+  [PASS] buffer_set_bytes: first set ok
+  [PASS] buffer_set_bytes: len == 3
+  [PASS] buffer_set_bytes: content first
+  [PASS] buffer_set_bytes: replace ok
+  [PASS] buffer_set_bytes: len == 2 after replace
+  [PASS] buffer_set_bytes: content replaced
+  [PASS] buffer_set_bytes: set empty ok
+  [PASS] buffer_set_bytes: set empty clears len
+  [PASS] buffer_set_bytes: null buffer -> ERR_NULL
+  [PASS] buffer_set_bytes: invalid bytes -> ERR_STATE
+  [PASS] buffer_set_bytes: restore data
+  [PASS] buffer_as_bytes: len matches
+  [PASS] buffer_as_bytes: ptr matches
+  [PASS] buffer_as_bytes_mut: len matches
+  [PASS] buffer_as_bytes_mut: ptr matches
+  [PASS] buffer_as_bytes_mut: mutation visible
+  [PASS] buffer_as_bytes_mut: null -> empty
+
+=== cf_string set/view ===
+  [PASS] string_set/view: init
+  [PASS] string_set_str: first set ok
+  [PASS] string_set_str: len == 5
+  [PASS] string_set_str: content hello
+  [PASS] string_set_str: null term after hello
+  [PASS] string_set_str: replace ok
+  [PASS] string_set_str: len == 2 after replace
+  [PASS] string_set_str: content replaced
+  [PASS] string_set_str: null term after replace
+  [PASS] string_set_str: set empty ok
+  [PASS] string_set_str: set empty clears len
+  [PASS] string_set_str: set empty keeps nul
+  [PASS] string_set_str: null str -> ERR_NULL
+  [PASS] string_set_str: invalid src -> ERR_STATE
+  [PASS] string_set_str: restore data
+  [PASS] string_as_str: len matches
+  [PASS] string_as_str: ptr matches
+  [PASS] string_as_str: content matches
+
+=== cf_buffer fill/truncate ===
+  [PASS] bytes_mut_fill: ok
+  [PASS] bytes_mut_fill: all filled
+  [PASS] bytes_mut_fill: empty ok
+  [PASS] bytes_mut_fill: bad -> ERR_STATE
+  [PASS] buffer_fill/truncate: init
+  [PASS] buffer_fill/truncate: set bytes
+  [PASS] buffer_fill: ok
+  [PASS] buffer_fill: first 4 filled
+  [PASS] buffer_fill: null -> ERR_NULL
+  [PASS] buffer_truncate: shrink to 2
+  [PASS] buffer_truncate: len == 2
+  [PASS] buffer_truncate: to zero
+  [PASS] buffer_truncate: len == 0
+  [PASS] buffer_truncate: too large -> ERR_BOUNDS
+  [PASS] buffer_truncate: null -> ERR_NULL
+
+=== cf_string queries/truncate ===
+  [PASS] string queries/truncate: init
+  [PASS] string queries/truncate: set hello
+  [PASS] string_as_str: len
+  [PASS] string_as_str: ptr
+  [PASS] string_as_str: content
+  [PASS] str_at: index 1
+  [PASS] str_at: got 'e'
+  [PASS] str_at: null out -> ERR_NULL
+  [PASS] str_at: bounds -> ERR_BOUNDS
+  [PASS] str_at: bad state -> ERR_STATE
+  [PASS] string_at: index 4
+  [PASS] string_at: got 'o'
+  [PASS] string_at: null out -> ERR_NULL
+  [PASS] string_at: bounds -> ERR_BOUNDS
+  [PASS] starts_with: he
+  [PASS] starts_with: hi false
+  [PASS] starts_with: longer false
+  [PASS] starts_with: null out
+  [PASS] ends_with: lo
+  [PASS] ends_with: xx false
+  [PASS] ends_with: longer false
+  [PASS] ends_with: null out
+  [PASS] string_truncate: shrink to 2
+  [PASS] string_truncate: len == 2
+  [PASS] string_truncate: nul kept
+  [PASS] string_truncate: content kept
+  [PASS] string_truncate: to zero
+  [PASS] string_truncate: len == 0
+  [PASS] string_truncate: data[0] nul
+  [PASS] string_truncate: too large -> ERR_BOUNDS
+  [PASS] string_truncate: null -> ERR_NULL
+
+=== cf_str find/trim/split/ignore-case ===
+  [PASS] eq_ignore_case: hello/HELLO
+  [PASS] eq_ignore_case: AbC/aBc
+  [PASS] eq_ignore_case: mixed symbols equal
+  [PASS] eq_ignore_case: mixed symbols not equal
+  [PASS] eq_ignore_case: different lengths
+  [PASS] eq_ignore_case: null out
+  [PASS] eq_ignore_case: bad state
+  [PASS] find_char: found 'o'
+  [PASS] find_char: found first 'h'
+  [PASS] find_char: not found
+  [PASS] find_char: null out_index
+  [PASS] find_char: null out_found
+  [PASS] find_char: bad state
+  [PASS] find_str: basic match
+  [PASS] find_str: prefix match
+  [PASS] find_str: overlap case
+  [PASS] find_str: not found
+  [PASS] find_str: needle longer
+  [PASS] find_str: empty needle
+  [PASS] find_str: null out_index
+  [PASS] find_str: null out_found
+  [PASS] trim_left: leading spaces
+  [PASS] trim_right: trailing spaces
+  [PASS] trim: both sides
+  [PASS] trim: tabs/newlines
+  [PASS] trim: empty stays empty
+  [PASS] trim: all whitespace becomes empty
+  [PASS] trim_left: null out
+  [PASS] trim_right: null out
+  [PASS] trim: null out
+  [PASS] split_once: key=value
+  [PASS] split_once: =value
+  [PASS] split_once: key=
+  [PASS] split_once: not found
+  [PASS] split_once: null left
+  [PASS] split_once: null right
+  [PASS] split_once: null out_found
+
 ==============================
-Results: 519 passed, 0 failed
+Results: 638 passed, 0 failed
 ==============================

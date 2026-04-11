@@ -1,4 +1,4 @@
-**/build/*
+**/app/*
 **/bin/*
-!**/bin/.gitkeep
-!**/build/.gitkeep
+**/build/*
+!**/.gitkeep

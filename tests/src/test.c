@@ -509,6 +509,185 @@ static void test_cf_string_queries_and_truncate(void)
   cf_string_destroy(&str);
 }
 
+static void test_cf_str_find_trim_split_and_ignore_case(void)
+{
+  SECTION("cf_str find/trim/split/ignore-case");
+
+  /* --------------------------------------------------------------- */
+  /* cf_str_eq_ignore_case                                           */
+  /* --------------------------------------------------------------- */
+  {
+    cf_bool eq = CF_FALSE;
+
+    CHECK("eq_ignore_case: hello/HELLO",
+          cf_str_eq_ignore_case(cf_str_from("hello", 5), cf_str_from("HELLO", 5), &eq) == CF_OK &&
+          eq == CF_TRUE);
+
+    CHECK("eq_ignore_case: AbC/aBc",
+          cf_str_eq_ignore_case(cf_str_from("AbC", 3), cf_str_from("aBc", 3), &eq) == CF_OK &&
+          eq == CF_TRUE);
+
+    CHECK("eq_ignore_case: mixed symbols equal",
+          cf_str_eq_ignore_case(cf_str_from("A1!", 3), cf_str_from("a1!", 3), &eq) == CF_OK &&
+          eq == CF_TRUE);
+
+    CHECK("eq_ignore_case: mixed symbols not equal",
+          cf_str_eq_ignore_case(cf_str_from("A1!", 3), cf_str_from("a1?", 3), &eq) == CF_OK &&
+          eq == CF_FALSE);
+
+    CHECK("eq_ignore_case: different lengths",
+          cf_str_eq_ignore_case(cf_str_from("hi", 2), cf_str_from("HIGH", 4), &eq) == CF_OK &&
+          eq == CF_FALSE);
+
+    CHECK("eq_ignore_case: null out",
+          cf_str_eq_ignore_case(cf_str_from("abc", 3), cf_str_from("ABC", 3), CF_NULL) == CF_ERR_NULL);
+
+    CHECK("eq_ignore_case: bad state",
+          cf_str_eq_ignore_case((cf_str){CF_NULL, 3}, cf_str_from("ABC", 3), &eq) == CF_ERR_STATE);
+  }
+
+  /* --------------------------------------------------------------- */
+  /* cf_str_find_char / cf_str_find_str                              */
+  /* --------------------------------------------------------------- */
+  {
+    cf_usize index = 999;
+    cf_bool found = CF_FALSE;
+    cf_str s = cf_str_from("hello world", 11);
+
+    CHECK("find_char: found 'o'",
+          cf_str_find_char(s, 'o', &index, &found) == CF_OK &&
+          found == CF_TRUE && index == 4);
+
+    CHECK("find_char: found first 'h'",
+          cf_str_find_char(s, 'h', &index, &found) == CF_OK &&
+          found == CF_TRUE && index == 0);
+
+    CHECK("find_char: not found",
+          cf_str_find_char(s, 'z', &index, &found) == CF_OK &&
+          found == CF_FALSE && index == 0);
+
+    CHECK("find_char: null out_index",
+          cf_str_find_char(s, 'h', CF_NULL, &found) == CF_ERR_NULL);
+
+    CHECK("find_char: null out_found",
+          cf_str_find_char(s, 'h', &index, CF_NULL) == CF_ERR_NULL);
+
+    CHECK("find_char: bad state",
+          cf_str_find_char((cf_str){CF_NULL, 3}, 'h', &index, &found) == CF_ERR_STATE);
+
+    CHECK("find_str: basic match",
+          cf_str_find_str(s, cf_str_from("world", 5), &index, &found) == CF_OK &&
+          found == CF_TRUE && index == 6);
+
+    CHECK("find_str: prefix match",
+          cf_str_find_str(s, cf_str_from("hello", 5), &index, &found) == CF_OK &&
+          found == CF_TRUE && index == 0);
+
+    CHECK("find_str: overlap case",
+          cf_str_find_str(cf_str_from("ababa", 5), cf_str_from("aba", 3), &index, &found) == CF_OK &&
+          found == CF_TRUE && index == 0);
+
+    CHECK("find_str: not found",
+          cf_str_find_str(s, cf_str_from("xyz", 3), &index, &found) == CF_OK &&
+          found == CF_FALSE && index == 0);
+
+    CHECK("find_str: needle longer",
+          cf_str_find_str(cf_str_from("hi", 2), cf_str_from("hello", 5), &index, &found) == CF_OK &&
+          found == CF_FALSE);
+
+    CHECK("find_str: empty needle",
+          cf_str_find_str(s, cf_str_empty(), &index, &found) == CF_OK &&
+          found == CF_FALSE);
+
+    CHECK("find_str: null out_index",
+          cf_str_find_str(s, cf_str_from("he", 2), CF_NULL, &found) == CF_ERR_NULL);
+
+    CHECK("find_str: null out_found",
+          cf_str_find_str(s, cf_str_from("he", 2), &index, CF_NULL) == CF_ERR_NULL);
+  }
+
+  /* --------------------------------------------------------------- */
+  /* cf_str_trim_left / right / trim                                 */
+  /* --------------------------------------------------------------- */
+  {
+    cf_str out = cf_str_empty();
+
+    CHECK("trim_left: leading spaces",
+          cf_str_trim_left(cf_str_from("  hello", 7), &out) == CF_OK &&
+          out.len == 5 && memcmp(out.data, "hello", 5) == 0);
+
+    CHECK("trim_right: trailing spaces",
+          cf_str_trim_right(cf_str_from("hello  ", 7), &out) == CF_OK &&
+          out.len == 5 && memcmp(out.data, "hello", 5) == 0);
+
+    CHECK("trim: both sides",
+          cf_str_trim(cf_str_from("  hello  ", 9), &out) == CF_OK &&
+          out.len == 5 && memcmp(out.data, "hello", 5) == 0);
+
+    CHECK("trim: tabs/newlines",
+          cf_str_trim(cf_str_from("\t\r\n hello \r\n", 12), &out) == CF_OK &&
+          out.len == 5 && memcmp(out.data, "hello", 5) == 0);
+
+    CHECK("trim: empty stays empty",
+          cf_str_trim(cf_str_empty(), &out) == CF_OK &&
+          out.len == 0);
+
+    CHECK("trim: all whitespace becomes empty",
+          cf_str_trim(cf_str_from(" \t\r\n ", 5), &out) == CF_OK &&
+          out.len == 0);
+
+    CHECK("trim_left: null out",
+          cf_str_trim_left(cf_str_from("x", 1), CF_NULL) == CF_ERR_NULL);
+
+    CHECK("trim_right: null out",
+          cf_str_trim_right(cf_str_from("x", 1), CF_NULL) == CF_ERR_NULL);
+
+    CHECK("trim: null out",
+          cf_str_trim(cf_str_from("x", 1), CF_NULL) == CF_ERR_NULL);
+  }
+
+  /* --------------------------------------------------------------- */
+  /* cf_str_split_once_char                                           */
+  /* --------------------------------------------------------------- */
+  {
+    cf_str left = cf_str_empty();
+    cf_str right = cf_str_empty();
+    cf_bool found = CF_FALSE;
+
+    CHECK("split_once: key=value",
+          cf_str_split_once_char(cf_str_from("key=value", 9), '=', &left, &right, &found) == CF_OK &&
+          found == CF_TRUE &&
+          left.len == 3 && memcmp(left.data, "key", 3) == 0 &&
+          right.len == 5 && memcmp(right.data, "value", 5) == 0);
+
+    CHECK("split_once: =value",
+          cf_str_split_once_char(cf_str_from("=value", 6), '=', &left, &right, &found) == CF_OK &&
+          found == CF_TRUE &&
+          left.len == 0 &&
+          right.len == 5 && memcmp(right.data, "value", 5) == 0);
+
+    CHECK("split_once: key=",
+          cf_str_split_once_char(cf_str_from("key=", 4), '=', &left, &right, &found) == CF_OK &&
+          found == CF_TRUE &&
+          left.len == 3 && memcmp(left.data, "key", 3) == 0 &&
+          right.len == 0);
+
+    CHECK("split_once: not found",
+          cf_str_split_once_char(cf_str_from("keyvalue", 8), '=', &left, &right, &found) == CF_OK &&
+          found == CF_FALSE &&
+          left.len == 0 && right.len == 0);
+
+    CHECK("split_once: null left",
+          cf_str_split_once_char(cf_str_from("a=b", 3), '=', CF_NULL, &right, &found) == CF_ERR_NULL);
+
+    CHECK("split_once: null right",
+          cf_str_split_once_char(cf_str_from("a=b", 3), '=', &left, CF_NULL, &found) == CF_ERR_NULL);
+
+    CHECK("split_once: null out_found",
+          cf_str_split_once_char(cf_str_from("a=b", 3), '=', &left, &right, CF_NULL) == CF_ERR_NULL);
+  }
+}
+
 /* ------------------------------------------------------------------ */
 /*  main                                                               */
 /* ------------------------------------------------------------------ */
@@ -526,6 +705,7 @@ int main(void)
   test_cf_string_set_and_views();
 	test_cf_buffer_fill_and_truncate();
   test_cf_string_queries_and_truncate();
+	  test_cf_str_find_trim_split_and_ignore_case();
 
   printf("\n==============================\n");
   printf("Results: %d passed, %d failed\n", g_passed, g_failed);
