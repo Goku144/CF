@@ -1,0 +1,535 @@
+./tests/build/test
+Running cf tests...
+
+=== cf_bytes ===
+  [PASS] bytes_empty: data is null
+  [PASS] bytes_empty: len is 0
+  [PASS] bytes_from: data pointer
+  [PASS] bytes_from: len
+  [PASS] bytes_is_valid: normal
+  [PASS] bytes_is_valid: empty
+  [PASS] bytes_is_valid: bad
+  [PASS] bytes_is_empty: empty
+  [PASS] bytes_is_empty: non-empty
+  [PASS] bytes_eq: equal slices
+  [PASS] bytes_eq: unequal slices
+  [PASS] bytes_eq: diff lengths
+  [PASS] bytes_eq: null out -> ERR_NULL
+  [PASS] bytes_slice: ok
+  [PASS] bytes_slice: correct data
+  [PASS] bytes_slice: out of bounds
+  [PASS] bytes_slice: null dst
+  [PASS] bytes_slice: zero-len ok
+
+=== cf_bytes_mut ===
+  [PASS] bytes_mut_empty: null data
+  [PASS] bytes_mut_empty: len 0
+  [PASS] bytes_mut_from: data ptr
+  [PASS] bytes_mut_from: len
+  [PASS] bytes_mut_is_valid: normal
+  [PASS] bytes_mut_is_valid: empty
+  [PASS] bytes_mut_is_valid: bad
+  [PASS] bytes_mut_is_empty: empty
+  [PASS] bytes_mut_is_empty: non-empty
+  [PASS] bytes_mut_zero: ok
+  [PASS] bytes_mut_zero: all zeroed
+  [PASS] bytes_mut_zero: empty ok
+  [PASS] bytes_mut_zero: bad ERR_STATE
+
+=== cf_buffer ===
+  [PASS] buffer_empty: null data
+  [PASS] buffer_empty: len 0
+  [PASS] buffer_empty: cap 0
+  [PASS] buffer_is_valid: empty
+  [PASS] buffer_is_valid: bad
+  [PASS] buffer_is_empty: empty
+  [PASS] buffer_init: ok
+  [PASS] buffer_init: cap >= 16
+  [PASS] buffer_init: len == 0
+  [PASS] buffer_init: data != null
+  [PASS] buffer_init: null -> ERR_NULL
+  [PASS] buffer_reserve: already enough
+  [PASS] buffer_reserve: grow
+  [PASS] buffer_reserve: null -> ERR_NULL
+  [PASS] buffer_append_byte: ok
+  [PASS] buffer_append_byte: len
+  [PASS] buffer_append_byte: data
+  [PASS] buffer_append_byte: null -> ERR_NULL
+  [PASS] buffer_append_bytes: ok
+  [PASS] buffer_append_bytes: len
+  [PASS] buffer_append_bytes: data[1]
+  [PASS] buffer_append_bytes: null -> ERR_NULL
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow
+  [PASS] buffer auto-grow: len 200
+  [PASS] buffer_clear: ok
+  [PASS] buffer_clear: len 0
+  [PASS] buffer_clear: cap kept
+  [PASS] buffer_clear: null -> ERR_NULL
+  [PASS] buffer_destroy: null data
+  [PASS] buffer_destroy: len 0
+  [PASS] buffer_destroy: cap 0
+  [PASS] buffer_destroy: null safe
+
+=== cf_str ===
+  [PASS] str_empty: null data
+  [PASS] str_empty: len 0
+  [PASS] str_from: data ptr
+  [PASS] str_from: len
+  [PASS] str_is_valid: normal
+  [PASS] str_is_valid: empty
+  [PASS] str_is_valid: bad
+  [PASS] str_is_empty: empty
+  [PASS] str_is_empty: non-empty
+  [PASS] str_eq: equal
+  [PASS] str_eq: unequal
+  [PASS] str_eq: diff lengths
+  [PASS] str_eq: null out
+  [PASS] str_slice: ok
+  [PASS] str_slice: data
+  [PASS] str_slice: out of bounds
+  [PASS] str_slice: null dst
+  [PASS] str_slice: zero-len ok
+
+=== cf_string ===
+  [PASS] string_empty: null data
+  [PASS] string_empty: len 0
+  [PASS] string_empty: cap 0
+  [PASS] string_is_valid: empty
+  [PASS] string_is_empty: empty
+  [PASS] string_init: ok
+  [PASS] string_init: cap >= 16
+  [PASS] string_init: len 0
+  [PASS] string_init: null term
+  [PASS] string_init: null -> ERR_NULL
+  [PASS] string_reserve: already enough
+  [PASS] string_reserve: grow
+  [PASS] string_reserve: null -> ERR_NULL
+  [PASS] string_append_char: 'h'
+  [PASS] string_append_char: 'i'
+  [PASS] string_append_char: len
+  [PASS] string_append_char: content
+  [PASS] string_append_char: null term
+  [PASS] string_append_char: null -> ERR_NULL
+  [PASS] string_append_str: ok
+  [PASS] string_append_str: len
+  [PASS] string_append_str: content
+  [PASS] string_append_str: null term
+  [PASS] string_append_str: null -> ERR_NULL
+  [PASS] string_append_str: empty no-op
+  [PASS] string_append_str: len unchanged
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow
+  [PASS] string auto-grow: len 200
+  [PASS] string auto-grow: null term
+  [PASS] string_clear: ok
+  [PASS] string_clear: len 0
+  [PASS] string_clear: null term
+  [PASS] string_clear: cap kept
+  [PASS] string_clear: null -> ERR_NULL
+  [PASS] string_is_valid: after clear
+  [PASS] string_is_empty: after clear
+  [PASS] string_destroy: null data
+  [PASS] string_destroy: len 0
+  [PASS] string_destroy: cap 0
+  [PASS] string_destroy: null safe
+
+==============================
+Results: 519 passed, 0 failed
+==============================
