@@ -2,6 +2,24 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* ------------------------------------------------------------------ */
+/* Internal helpers                                                    */
+/* ------------------------------------------------------------------ */
+
+static cf_usize cf_next_cap(cf_usize current, cf_usize required)
+{
+  cf_usize cap = current == 0 ? 32 : current;
+  while (cap < required && cap < 2048)
+    cap *= 2;
+  if (cap < required)
+    cap = required;
+  return cap;
+}
+
+/* ------------------------------------------------------------------ */
+/* Construction                                                        */
+/* ------------------------------------------------------------------ */
+
 cf_bytes cf_bytes_empty(void) { return (cf_bytes){CF_NULL, 0}; }
 
 cf_bytes_mut cf_bytes_mut_empty(void) { return (cf_bytes_mut){CF_NULL, 0}; }
@@ -12,17 +30,29 @@ cf_bytes cf_bytes_from(const cf_u8 *data, cf_usize len) { return (cf_bytes){data
 
 cf_bytes_mut cf_bytes_mut_from(cf_u8 *data, cf_usize len) { return (cf_bytes_mut){data, len}; }
 
+/* ------------------------------------------------------------------ */
+/* Validation                                                          */
+/* ------------------------------------------------------------------ */
+
 cf_bool cf_bytes_is_valid(cf_bytes bytes) { return bytes.len > 0 && bytes.data == CF_NULL ? CF_FALSE : CF_TRUE; }
 
 cf_bool cf_bytes_mut_is_valid(cf_bytes_mut bytes) { return bytes.len > 0 && bytes.data == CF_NULL ? CF_FALSE : CF_TRUE; }
 
 cf_bool cf_buffer_is_valid(cf_buffer buffer) { return ((buffer.len > 0 || buffer.cap > 0) && buffer.data == CF_NULL) || (buffer.len > buffer.cap) ? CF_FALSE : CF_TRUE; }
 
+/* ------------------------------------------------------------------ */
+/* Emptiness                                                           */
+/* ------------------------------------------------------------------ */
+
 cf_bool cf_bytes_is_empty(cf_bytes bytes) { return bytes.len == 0; }
 
 cf_bool cf_bytes_mut_is_empty(cf_bytes_mut bytes) { return bytes.len == 0; }
 
 cf_bool cf_buffer_is_empty(cf_buffer buffer) { return buffer.len == 0; }
+
+/* ------------------------------------------------------------------ */
+/* Equality                                                            */
+/* ------------------------------------------------------------------ */
 
 cf_status cf_bytes_eq(cf_bytes b1, cf_bytes b2, cf_bool *out_eq)
 {
@@ -40,15 +70,9 @@ cf_status cf_bytes_eq(cf_bytes b1, cf_bytes b2, cf_bool *out_eq)
   return CF_OK;
 }
 
-cf_status cf_bytes_mut_zero(cf_bytes_mut bytes)
-{
-  if (!cf_bytes_mut_is_valid(bytes))
-    return CF_ERR_STATE;
-  if (bytes.len == 0)
-    return CF_OK;
-  memset(bytes.data, 0, bytes.len);
-  return CF_OK;
-}
+/* ------------------------------------------------------------------ */
+/* Slicing                                                             */
+/* ------------------------------------------------------------------ */
 
 cf_status cf_bytes_slice(cf_bytes src, cf_usize offset, cf_usize len, cf_bytes *dst)
 {
@@ -75,6 +99,46 @@ cf_status cf_bytes_mut_slice(cf_bytes_mut src, cf_usize offset, cf_usize len, cf
   dst->len = len;
   return CF_OK;
 }
+
+/* ------------------------------------------------------------------ */
+/* Fill / Zero                                                         */
+/* ------------------------------------------------------------------ */
+
+cf_status cf_bytes_mut_zero(cf_bytes_mut bytes)
+{
+  if (!cf_bytes_mut_is_valid(bytes))
+    return CF_ERR_STATE;
+  if (bytes.len == 0)
+    return CF_OK;
+  memset(bytes.data, 0, bytes.len);
+  return CF_OK;
+}
+
+cf_status cf_bytes_mut_fill(cf_bytes_mut bytes, cf_u8 value)
+{
+  if (!cf_bytes_mut_is_valid(bytes))
+    return CF_ERR_STATE;
+  if (bytes.len == 0)
+    return CF_OK;
+  memset(bytes.data, value, bytes.len);
+  return CF_OK;
+}
+
+cf_status cf_buffer_fill(cf_buffer *buffer, cf_u8 value)
+{
+  if (buffer == CF_NULL)
+    return CF_ERR_NULL;
+  if (!cf_buffer_is_valid(*buffer))
+    return CF_ERR_STATE;
+  if (buffer->len == 0)
+    return CF_OK;
+  memset(buffer->data, value, buffer->len);
+  return CF_OK;
+}
+
+/* ------------------------------------------------------------------ */
+/* Buffer lifecycle                                                    */
+/* ------------------------------------------------------------------ */
 
 cf_status cf_buffer_init(cf_buffer *buffer, cf_usize cap)
 {
@@ -122,15 +186,9 @@ void cf_buffer_destroy(cf_buffer *buffer)
   *buffer = cf_buffer_empty();
 }
 
-static cf_usize cf_next_cap(cf_usize current, cf_usize required)
-{
-  cf_usize cap = current == 0 ? 32 : current;
-  while (cap < required && cap < 2048)
-    cap *= 2;
-  if (cap < required)
-    cap = required;
-  return cap;
-}
+/* ------------------------------------------------------------------ */
+/* Buffer append / set                                                 */
+/* ------------------------------------------------------------------ */
 
 cf_status cf_buffer_append_byte(cf_buffer *buffer, cf_u8 byte)
 {
@@ -159,7 +217,6 @@ cf_status cf_buffer_append_bytes(cf_buffer *buffer, cf_bytes bytes)
     return CF_ERR_STATE;
   if (bytes.len == 0)
     return CF_OK;
-
   if (buffer->cap < (buffer->len + bytes.len))
   {
     cf_status state;
@@ -172,6 +229,22 @@ cf_status cf_buffer_append_bytes(cf_buffer *buffer, cf_bytes bytes)
   buffer->len += bytes.len;
   return CF_OK;
 }
+
+cf_status cf_buffer_set_bytes(cf_buffer *buffer, cf_bytes bytes)
+{
+  if (buffer == CF_NULL)
+    return CF_ERR_NULL;
+  if (!cf_buffer_is_valid(*buffer) || !cf_bytes_is_valid(bytes))
+    return CF_ERR_STATE;
+  cf_status state;
+  if ((state = cf_buffer_clear(buffer)) != CF_OK)
+    return state;
+  return cf_buffer_append_bytes(buffer, bytes);
+}
+
+/* ------------------------------------------------------------------ */
+/* Buffer views                                                        */
+/* ------------------------------------------------------------------ */
 
 cf_bytes cf_buffer_as_bytes(cf_buffer buffer)
 {
@@ -189,39 +262,9 @@ cf_bytes_mut cf_buffer_as_bytes_mut(cf_buffer *buffer)
   return cf_bytes_mut_from(buffer->data, buffer->len);
 }
 
-cf_status cf_buffer_set_bytes(cf_buffer *buffer, cf_bytes bytes)
-{
-  if (buffer == CF_NULL)
-    return CF_ERR_NULL;
-  if (!cf_buffer_is_valid(*buffer) || !cf_bytes_is_valid(bytes))
-    return CF_ERR_STATE;
-  cf_status state;
-  if ((state = cf_buffer_clear(buffer)) != CF_OK)
-    return state;
-  return cf_buffer_append_bytes(buffer, bytes);
-}
-
-cf_status cf_bytes_mut_fill(cf_bytes_mut bytes, cf_u8 value)
-{
-  if (!cf_bytes_mut_is_valid(bytes))
-    return CF_ERR_STATE;
-  if (bytes.len == 0)
-    return CF_OK;
-  memset(bytes.data, value, bytes.len);
-  return CF_OK;
-}
-
-cf_status cf_buffer_fill(cf_buffer *buffer, cf_u8 value)
-{
-  if (buffer == CF_NULL)
-    return CF_ERR_NULL;
-  if (!cf_buffer_is_valid(*buffer))
-    return CF_ERR_STATE;
-  if (buffer->len == 0)
-    return CF_OK;
-  memset(buffer->data, value, buffer->len);
-  return CF_OK;
-}
+/* ------------------------------------------------------------------ */
+/* Buffer truncate                                                     */
+/* ------------------------------------------------------------------ */
 
 cf_status cf_buffer_truncate(cf_buffer *buffer, cf_usize new_len)
 {
