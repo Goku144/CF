@@ -1,4 +1,4 @@
-tests/build/*
-tests/bin/*
-!tests/bin/.gitkeep
-!tests/build/.gitkeep
+**/build/*
+**/bin/*
+!**/bin/.gitkeep
+!**/build/.gitkeep

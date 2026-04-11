@@ -1,4 +1,6 @@
 #include "cf_string.h"
+#include <stdlib.h>
+#include <string.h>
 
 cf_str cf_str_empty(void) {return (cf_str) {CF_NULL, 0};}
 
@@ -17,11 +19,15 @@ cf_bool cf_string_is_valid(cf_string str)
 {
   if(str.len > str.cap) return CF_FALSE;
   if(str.data == CF_NULL) 
+  {
     if(str.len > 0 || str.cap > 0)
       return CF_FALSE;
+  }
   else
-    if(str.data[str.len] != '\0')
+  {
+  if(str.data[str.len] != '\0')
       return CF_FALSE;
+  }
   return CF_TRUE;
 }
 
