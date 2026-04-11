@@ -225,6 +225,60 @@ static void test_cf_str(void)
   CHECK("str_slice: zero-len ok", cf_str_slice(s, 5, 0, &sl) == CF_OK && sl.len == 0);
 }
 
+static void test_cf_buffer_set_and_views(void)
+{
+  SECTION("cf_buffer set/view");
+
+  cf_buffer buf;
+  CHECK("buffer_set/view: init", cf_buffer_init(&buf, 4) == CF_OK);
+
+  const cf_u8 first_raw[] = {10, 20, 30};
+  const cf_u8 second_raw[] = {7, 8};
+
+  cf_bytes first = cf_bytes_from(first_raw, 3);
+  cf_bytes second = cf_bytes_from(second_raw, 2);
+
+  /* set bytes into empty buffer */
+  CHECK("buffer_set_bytes: first set ok", cf_buffer_set_bytes(&buf, first) == CF_OK);
+  CHECK("buffer_set_bytes: len == 3", buf.len == 3);
+  CHECK("buffer_set_bytes: content first", buf.data[0] == 10 && buf.data[1] == 20 && buf.data[2] == 30);
+
+  /* replace old content with shorter content */
+  CHECK("buffer_set_bytes: replace ok", cf_buffer_set_bytes(&buf, second) == CF_OK);
+  CHECK("buffer_set_bytes: len == 2 after replace", buf.len == 2);
+  CHECK("buffer_set_bytes: content replaced", buf.data[0] == 7 && buf.data[1] == 8);
+
+  /* set empty => buffer becomes empty */
+  CHECK("buffer_set_bytes: set empty ok", cf_buffer_set_bytes(&buf, cf_bytes_empty()) == CF_OK);
+  CHECK("buffer_set_bytes: set empty clears len", buf.len == 0);
+
+  /* null and invalid checks */
+  CHECK("buffer_set_bytes: null buffer -> ERR_NULL", cf_buffer_set_bytes(CF_NULL, first) == CF_ERR_NULL);
+  CHECK("buffer_set_bytes: invalid bytes -> ERR_STATE",
+        cf_buffer_set_bytes(&buf, (cf_bytes){CF_NULL, 2}) == CF_ERR_STATE);
+
+  /* as_bytes on valid buffer */
+  CHECK("buffer_set_bytes: restore data", cf_buffer_set_bytes(&buf, first) == CF_OK);
+  cf_bytes view = cf_buffer_as_bytes(buf);
+  CHECK("buffer_as_bytes: len matches", view.len == buf.len);
+  CHECK("buffer_as_bytes: ptr matches", view.data == buf.data);
+
+  /* as_bytes_mut on valid buffer */
+  cf_bytes_mut mview = cf_buffer_as_bytes_mut(&buf);
+  CHECK("buffer_as_bytes_mut: len matches", mview.len == buf.len);
+  CHECK("buffer_as_bytes_mut: ptr matches", mview.data == buf.data);
+
+  if(mview.len > 0)
+    mview.data[0] = 99;
+  CHECK("buffer_as_bytes_mut: mutation visible", buf.data[0] == 99);
+
+  /* as_bytes_mut null safety */
+  mview = cf_buffer_as_bytes_mut(CF_NULL);
+  CHECK("buffer_as_bytes_mut: null -> empty", mview.data == CF_NULL && mview.len == 0);
+
+  cf_buffer_destroy(&buf);
+}
+
 /* ------------------------------------------------------------------ */
 /*  cf_string tests                                                    */
 /* ------------------------------------------------------------------ */
@@ -308,6 +362,48 @@ static void test_cf_string(void)
   CHECK("string_destroy: null safe", CF_TRUE);
 }
 
+static void test_cf_string_set_and_views(void)
+{
+  SECTION("cf_string set/view");
+
+  cf_string str;
+  CHECK("string_set/view: init", cf_string_init(&str, 4) == CF_OK);
+
+  cf_str hello = cf_str_from("hello", 5);
+  cf_str hi = cf_str_from("hi", 2);
+
+  /* set into empty string */
+  CHECK("string_set_str: first set ok", cf_string_set_str(&str, hello) == CF_OK);
+  CHECK("string_set_str: len == 5", str.len == 5);
+  CHECK("string_set_str: content hello", memcmp(str.data, "hello", 5) == 0);
+  CHECK("string_set_str: null term after hello", str.data[5] == '\0');
+
+  /* replace old content with shorter content */
+  CHECK("string_set_str: replace ok", cf_string_set_str(&str, hi) == CF_OK);
+  CHECK("string_set_str: len == 2 after replace", str.len == 2);
+  CHECK("string_set_str: content replaced", memcmp(str.data, "hi", 2) == 0);
+  CHECK("string_set_str: null term after replace", str.data[2] == '\0');
+
+  /* set empty => string becomes empty */
+  CHECK("string_set_str: set empty ok", cf_string_set_str(&str, cf_str_empty()) == CF_OK);
+  CHECK("string_set_str: set empty clears len", str.len == 0);
+  CHECK("string_set_str: set empty keeps nul", str.data[0] == '\0');
+
+  /* null and invalid checks */
+  CHECK("string_set_str: null str -> ERR_NULL", cf_string_set_str(CF_NULL, hello) == CF_ERR_NULL);
+  CHECK("string_set_str: invalid src -> ERR_STATE",
+        cf_string_set_str(&str, (cf_str){CF_NULL, 3}) == CF_ERR_STATE);
+
+  /* as_str on valid string */
+  CHECK("string_set_str: restore data", cf_string_set_str(&str, hello) == CF_OK);
+  cf_str view = cf_string_as_str(str);
+  CHECK("string_as_str: len matches", view.len == str.len);
+  CHECK("string_as_str: ptr matches", view.data == str.data);
+  CHECK("string_as_str: content matches", memcmp(view.data, "hello", 5) == 0);
+
+  cf_string_destroy(&str);
+}
+
 /* ------------------------------------------------------------------ */
 /*  main                                                               */
 /* ------------------------------------------------------------------ */
@@ -321,6 +417,8 @@ int main(void)
   test_cf_buffer();
   test_cf_str();
   test_cf_string();
+	test_cf_buffer_set_and_views();
+  test_cf_string_set_and_views();
 
   printf("\n==============================\n");
   printf("Results: %d passed, %d failed\n", g_passed, g_failed);
