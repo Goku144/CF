@@ -2,6 +2,7 @@
 #include "cf_string.h"
 #include "cf_status.h"
 #include "cf_alloc.h"
+#include "cf_arena.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -722,6 +723,150 @@ static void test_cf_allocator(void)
 }
 
 /* ------------------------------------------------------------------ */
+/*  cf_arena tests                                                     */
+/* ------------------------------------------------------------------ */
+
+static void test_cf_arena(void)
+{
+  SECTION("cf_arena");
+
+  /* empty / valid / empty-state */
+  cf_arena empty = cf_arena_empty();
+  CHECK("arena_empty: data null", empty.data == CF_NULL);
+  CHECK("arena_empty: cap 0", empty.cap == 0);
+  CHECK("arena_empty: offset 0", empty.offset == 0);
+  CHECK("arena_empty: backing allocator null", empty.backing_allocator == CF_NULL);
+  CHECK("arena_empty: valid", cf_arena_is_valid(empty) == CF_TRUE);
+  CHECK("arena_empty: empty", cf_arena_is_empty(empty) == CF_TRUE);
+
+  /* clearly bad arena */
+  {
+    cf_arena bad = cf_arena_empty();
+    bad.cap = 8;
+    bad.offset = 9;
+    CHECK("arena_is_valid: offset > cap bad", cf_arena_is_valid(bad) == CF_FALSE);
+  }
+
+  /* init with default allocator */
+  {
+    cf_arena arena;
+    CHECK("arena_init: ok", cf_arena_init(&arena, 64) == CF_OK);
+    CHECK("arena_init: valid", cf_arena_is_valid(arena) == CF_TRUE);
+    CHECK("arena_init: data not null", arena.data != CF_NULL);
+    CHECK("arena_init: cap == 64", arena.cap == 64);
+    CHECK("arena_init: offset == 0", arena.offset == 0);
+    CHECK("arena_init: empty after init", cf_arena_is_empty(arena) == CF_TRUE);
+    CHECK("arena_init: backing allocator set", arena.backing_allocator == cf_default_allocator());
+
+    cf_arena_destroy(&arena);
+    CHECK("arena_destroy: back to null data", arena.data == CF_NULL);
+    CHECK("arena_destroy: back to cap 0", arena.cap == 0);
+    CHECK("arena_destroy: back to offset 0", arena.offset == 0);
+    CHECK("arena_destroy: valid empty", cf_arena_is_valid(arena) == CF_TRUE);
+  }
+
+  /* init_ex with custom counting allocator */
+  {
+    test_alloc_stats stats = {0};
+    cf_allocator alloc = {
+      .ctx = &stats,
+      .alloc = test_counting_alloc,
+      .realloc = test_counting_realloc,
+      .free = test_counting_free
+    };
+
+    cf_arena arena = cf_arena_empty();
+
+    CHECK("arena_init_ex: ok", cf_arena_init_ex(&arena, 32, &alloc) == CF_OK);
+    CHECK("arena_init_ex: alloc called once", stats.alloc_calls == 1);
+    CHECK("arena_init_ex: valid", cf_arena_is_valid(arena) == CF_TRUE);
+    CHECK("arena_init_ex: backing allocator stored", arena.backing_allocator == &alloc);
+
+    cf_arena_destroy(&arena);
+    CHECK("arena_destroy: free called once", stats.free_calls == 1);
+  }
+
+  /* null / bad init */
+  {
+    cf_allocator bad = {CF_NULL, CF_NULL, CF_NULL, CF_NULL};
+    cf_arena arena = cf_arena_empty();
+
+    CHECK("arena_init_ex: null arena -> ERR_NULL",
+          cf_arena_init_ex(CF_NULL, 16, cf_default_allocator()) == CF_ERR_NULL);
+
+    CHECK("arena_init_ex: bad allocator -> ERR_STATE",
+          cf_arena_init_ex(&arena, 16, &bad) == CF_ERR_STATE);
+  }
+
+  /* alloc primitive */
+  {
+    cf_arena arena;
+    CHECK("arena_alloc test: init", cf_arena_init(&arena, 32) == CF_OK);
+
+    void *p1 = cf_arena_alloc(&arena, 8);
+    CHECK("arena_alloc: first alloc non-null", p1 != CF_NULL);
+    CHECK("arena_alloc: offset 8", arena.offset == 8);
+    CHECK("arena_is_empty: false after alloc", cf_arena_is_empty(arena) == CF_FALSE);
+
+    void *p2 = cf_arena_alloc(&arena, 12);
+    CHECK("arena_alloc: second alloc non-null", p2 != CF_NULL);
+    CHECK("arena_alloc: offset 20", arena.offset == 20);
+    CHECK("arena_alloc: monotonic addresses", (cf_u8 *)p2 == (cf_u8 *)p1 + 8);
+
+    void *p3 = cf_arena_alloc(&arena, 13);
+    CHECK("arena_alloc: too large returns null", p3 == CF_NULL);
+    CHECK("arena_alloc: offset unchanged on fail", arena.offset == 20);
+
+    CHECK("arena_alloc: size 0 returns null", cf_arena_alloc(&arena, 0) == CF_NULL);
+    CHECK("arena_alloc: null ctx returns null", cf_arena_alloc(CF_NULL, 4) == CF_NULL);
+
+    cf_arena_destroy(&arena);
+  }
+
+  /* reset */
+  {
+    cf_arena arena;
+    CHECK("arena_reset test: init", cf_arena_init(&arena, 24) == CF_OK);
+    CHECK("arena_reset test: alloc", cf_arena_alloc(&arena, 10) != CF_NULL);
+    CHECK("arena_reset test: offset advanced", arena.offset == 10);
+
+    cf_arena_reset(&arena);
+    CHECK("arena_reset: offset back to 0", arena.offset == 0);
+    CHECK("arena_reset: empty again", cf_arena_is_empty(arena) == CF_TRUE);
+
+    cf_arena_destroy(&arena);
+  }
+
+  /* allocator view */
+  {
+    cf_arena arena;
+    CHECK("arena_allocator test: init", cf_arena_init(&arena, 40) == CF_OK);
+
+    const cf_allocator *a = cf_arena_allocator(&arena);
+    CHECK("arena_allocator: not null", a != CF_NULL);
+    CHECK("arena_allocator: alloc fn set", a->alloc == cf_arena_alloc);
+    CHECK("arena_allocator: realloc fn set", a->realloc == cf_arena_realloc);
+    CHECK("arena_allocator: free fn set", a->free == cf_arena_free);
+    CHECK("arena_allocator: ctx points to arena", a->ctx == &arena);
+
+    void *p = a->alloc(a->ctx, 6);
+    CHECK("arena_allocator: alloc through allocator works", p != CF_NULL);
+    CHECK("arena_allocator: offset advanced through allocator", arena.offset == 6);
+
+    CHECK("arena_realloc: unsupported returns null", a->realloc(a->ctx, p, 12) == CF_NULL);
+
+    a->free(a->ctx, p);
+    CHECK("arena_free: no-op does not break state", cf_arena_is_valid(arena) == CF_TRUE);
+
+    cf_arena_destroy(&arena);
+  }
+
+  /* destroy null-safe */
+  cf_arena_destroy(CF_NULL);
+  CHECK("arena_destroy: null safe", CF_TRUE);
+}
+
+/* ------------------------------------------------------------------ */
 /*  main                                                               */
 /* ------------------------------------------------------------------ */
 
@@ -741,6 +886,7 @@ int main(void)
   test_cf_str_find_trim_split_and_ignore_case();
   test_cf_status();
 	test_cf_allocator();
+	test_cf_arena();
 
   printf("\n==============================\n");
   printf("Results: %d passed, %d failed\n", g_passed, g_failed);
