@@ -3,6 +3,7 @@
 
 #include "cf_types.h"
 #include "cf_status.h"
+#include "cf_alloc.h"
 
 /* 
  * borrowed
@@ -38,6 +39,7 @@ typedef struct cf_buffer
   cf_u8 *data;
   cf_usize len;
   cf_usize cap;
+  const cf_allocator *allocator;
 } cf_buffer;
 
 
@@ -159,6 +161,8 @@ cf_status cf_buffer_fill(cf_buffer *buffer, cf_u8 value);
 /* ------------------------------------------------------------------ */
 /* Buffer lifecycle                                                    */
 /* ------------------------------------------------------------------ */
+
+cf_status cf_buffer_init_ex(cf_buffer *buffer, cf_usize cap, const cf_allocator *allocator);
 
 /**
  * Allocates a cf_buffer with at least the given initial capacity.

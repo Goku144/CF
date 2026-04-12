@@ -1,4 +1,6 @@
 #include "cf_string.h"
+#include "cf_alloc.h"
+
 #include <stdlib.h>
 #include <string.h>
 
@@ -55,10 +57,15 @@ cf_bool cf_str_is_valid(cf_str str)
   return CF_TRUE;
 }
 
-cf_bool cf_string_is_valid(cf_string str) 
+cf_bool cf_string_is_valid(cf_string str)
 {
-  if(str.len > str.cap) return CF_FALSE;
-  if(str.data == CF_NULL) 
+  if(str.data == CF_NULL && str.len == 0 && str.cap == 0 && str.allocator == CF_NULL)
+    return CF_TRUE;
+
+  if(str.len > str.cap)
+    return CF_FALSE;
+
+  if(str.data == CF_NULL)
   {
     if(str.len > 0 || str.cap > 0)
       return CF_FALSE;
@@ -68,6 +75,10 @@ cf_bool cf_string_is_valid(cf_string str)
     if(str.data[str.len] != '\0')
       return CF_FALSE;
   }
+
+  if(!cf_allocator_is_valid(str.allocator))
+    return CF_FALSE;
+
   return CF_TRUE;
 }
 
@@ -288,11 +299,17 @@ cf_status cf_str_split_once_char(cf_str s, char sep, cf_str *left, cf_str *right
 /* String lifecycle                                                    */
 /* ------------------------------------------------------------------ */
 
-cf_status cf_string_init(cf_string *str, cf_usize cap)
+cf_status cf_string_init_ex(cf_string *str, cf_usize cap, const cf_allocator *allocator)
 {
   if(str == CF_NULL) return CF_ERR_NULL;
   *str = cf_string_empty();
+  str->allocator = allocator;
   return cf_string_reserve(str, cap);
+}
+
+cf_status cf_string_init(cf_string *str, cf_usize cap)
+{
+  return cf_string_init_ex(str, cap, cf_default_allocator());
 }
 
 cf_status cf_string_reserve(cf_string *str, cf_usize min_cap)
@@ -301,8 +318,8 @@ cf_status cf_string_reserve(cf_string *str, cf_usize min_cap)
   if(!cf_string_is_valid(*str)) return CF_ERR_STATE;
   if(str->cap >= min_cap) return CF_OK;
   char *tmp;
-  if(str->data == CF_NULL) tmp = malloc((min_cap + 1) * sizeof (char));
-  else tmp = realloc(str->data, (min_cap + 1) * sizeof (char));
+  if(str->data == CF_NULL) tmp = str->allocator->alloc(str->allocator->ctx, (min_cap + 1) * sizeof (char));
+  else tmp = str->allocator->realloc(str->allocator->ctx, str->data, (min_cap + 1) * sizeof (char));
   if(tmp == CF_NULL) return CF_ERR_OOM;
   str->data = tmp;
   str->data[str->len] = '\0';
@@ -322,7 +339,7 @@ cf_status cf_string_clear(cf_string *str)
 void cf_string_destroy(cf_string *str)
 {
   if(str == CF_NULL) return;
-  free(str->data);
+  str->allocator->free(str->allocator->ctx, str->data);
   *str = cf_string_empty();
 }
 

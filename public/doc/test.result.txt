@@ -671,6 +671,37 @@ Running cf tests...
   [PASS] handler: extended context forwarded
   [PASS] handler: removed, sentinel unchanged
 
+=== cf_allocator ===
+  [PASS] allocator: default not null
+  [PASS] allocator: default valid
+  [PASS] allocator: null invalid
+  [PASS] allocator: all-null invalid
+  [PASS] allocator: missing realloc invalid
+  [PASS] buffer_init_ex: ok
+  [PASS] buffer_init_ex: allocator stored
+  [PASS] buffer_init_ex: alloc called
+  [PASS] buffer_init_ex: no realloc yet
+  [PASS] buffer_init_ex: data not null
+  [PASS] buffer_init_ex: cap >= 16
+  [PASS] buffer_reserve: growth uses realloc
+  [PASS] buffer_reserve: realloc called
+  [PASS] buffer_reserve: cap >= 64
+  [PASS] buffer_destroy: free called once
+  [PASS] string_init_ex: ok
+  [PASS] string_init_ex: allocator stored
+  [PASS] string_init_ex: alloc called
+  [PASS] string_init_ex: no realloc yet
+  [PASS] string_init_ex: data not null
+  [PASS] string_init_ex: nul byte
+  [PASS] string_reserve: growth uses realloc
+  [PASS] string_reserve: realloc called
+  [PASS] string_reserve: cap >= 32
+  [PASS] string_destroy: free called once
+  [PASS] buffer_init_ex: bad allocator -> ERR_STATE
+  [PASS] string_init_ex: bad allocator -> ERR_STATE
+  [PASS] buffer_init_ex: null buffer -> ERR_NULL
+  [PASS] string_init_ex: null string -> ERR_NULL
+
 ==============================
-Results: 648 passed, 0 failed
+Results: 677 passed, 0 failed
 ==============================
