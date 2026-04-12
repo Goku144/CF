@@ -36,7 +36,7 @@ lib/bin/%.o: lib/src/%.c
 test: runTests
 
 runTests: tests/build/test
-	./$< > public/doc/test.result.txt
+	./$< > public/doc/test.result.txt 2>> public/doc/test.result.txt
 
 tests/build/test: tests/bin/test.o $(OBJS)
 	$(CC) $^ -o $@
