@@ -20,7 +20,7 @@
 #define CF_UNUSED(x) ((void)(x))
 // works only on array defined a[] no pointer defined *a
 #define CF_ARRAY_COUNT(x) (sizeof(x) / sizeof((x)[0]))
-// 
+// check types integrity
 #define CF_STATIC_ASSERT(expr, msg) _Static_assert((expr), msg)
 
 // typedef the unsigned types
@@ -36,6 +36,7 @@ typedef int8_t cf_i8;
 typedef int16_t cf_i16;
 typedef int32_t cf_i32;
 typedef int64_t cf_i64;
+typedef __int128_t cf_i128;
 typedef intptr_t cf_iptr;
 typedef ptrdiff_t cf_isize;
 
