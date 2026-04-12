@@ -535,17 +535,17 @@ Running cf tests...
   [PASS] buffer_set_bytes: len == 3
   [PASS] buffer_set_bytes: content first
   [PASS] buffer_set_bytes: replace ok
-  [PASS] buffer_set_bytes: len == 2 after replace
+  [PASS] buffer_set_bytes: len == 2
   [PASS] buffer_set_bytes: content replaced
   [PASS] buffer_set_bytes: set empty ok
-  [PASS] buffer_set_bytes: set empty clears len
-  [PASS] buffer_set_bytes: null buffer -> ERR_NULL
-  [PASS] buffer_set_bytes: invalid bytes -> ERR_STATE
-  [PASS] buffer_set_bytes: restore data
-  [PASS] buffer_as_bytes: len matches
-  [PASS] buffer_as_bytes: ptr matches
-  [PASS] buffer_as_bytes_mut: len matches
-  [PASS] buffer_as_bytes_mut: ptr matches
+  [PASS] buffer_set_bytes: set empty len
+  [PASS] buffer_set_bytes: null -> ERR_NULL
+  [PASS] buffer_set_bytes: bad -> ERR_STATE
+  [PASS] buffer_set_bytes: restore
+  [PASS] buffer_as_bytes: len
+  [PASS] buffer_as_bytes: ptr
+  [PASS] buffer_as_bytes_mut: len
+  [PASS] buffer_as_bytes_mut: ptr
   [PASS] buffer_as_bytes_mut: mutation visible
   [PASS] buffer_as_bytes_mut: null -> empty
 
@@ -554,20 +554,20 @@ Running cf tests...
   [PASS] string_set_str: first set ok
   [PASS] string_set_str: len == 5
   [PASS] string_set_str: content hello
-  [PASS] string_set_str: null term after hello
+  [PASS] string_set_str: null term hello
   [PASS] string_set_str: replace ok
-  [PASS] string_set_str: len == 2 after replace
+  [PASS] string_set_str: len == 2
   [PASS] string_set_str: content replaced
-  [PASS] string_set_str: null term after replace
+  [PASS] string_set_str: null term replace
   [PASS] string_set_str: set empty ok
-  [PASS] string_set_str: set empty clears len
-  [PASS] string_set_str: set empty keeps nul
-  [PASS] string_set_str: null str -> ERR_NULL
-  [PASS] string_set_str: invalid src -> ERR_STATE
-  [PASS] string_set_str: restore data
-  [PASS] string_as_str: len matches
-  [PASS] string_as_str: ptr matches
-  [PASS] string_as_str: content matches
+  [PASS] string_set_str: set empty len
+  [PASS] string_set_str: set empty nul
+  [PASS] string_set_str: null -> ERR_NULL
+  [PASS] string_set_str: bad -> ERR_STATE
+  [PASS] string_set_str: restore
+  [PASS] string_as_str: len
+  [PASS] string_as_str: ptr
+  [PASS] string_as_str: content
 
 === cf_buffer fill/truncate ===
   [PASS] bytes_mut_fill: ok
@@ -577,7 +577,7 @@ Running cf tests...
   [PASS] buffer_fill/truncate: init
   [PASS] buffer_fill/truncate: set bytes
   [PASS] buffer_fill: ok
-  [PASS] buffer_fill: first 4 filled
+  [PASS] buffer_fill: filled
   [PASS] buffer_fill: null -> ERR_NULL
   [PASS] buffer_truncate: shrink to 2
   [PASS] buffer_truncate: len == 2
@@ -587,28 +587,28 @@ Running cf tests...
   [PASS] buffer_truncate: null -> ERR_NULL
 
 === cf_string queries/truncate ===
-  [PASS] string queries/truncate: init
-  [PASS] string queries/truncate: set hello
+  [PASS] init
+  [PASS] set hello
   [PASS] string_as_str: len
   [PASS] string_as_str: ptr
   [PASS] string_as_str: content
   [PASS] str_at: index 1
   [PASS] str_at: got 'e'
-  [PASS] str_at: null out -> ERR_NULL
+  [PASS] str_at: null -> ERR_NULL
   [PASS] str_at: bounds -> ERR_BOUNDS
-  [PASS] str_at: bad state -> ERR_STATE
+  [PASS] str_at: bad -> ERR_STATE
   [PASS] string_at: index 4
   [PASS] string_at: got 'o'
-  [PASS] string_at: null out -> ERR_NULL
+  [PASS] string_at: null -> ERR_NULL
   [PASS] string_at: bounds -> ERR_BOUNDS
   [PASS] starts_with: he
   [PASS] starts_with: hi false
-  [PASS] starts_with: longer false
-  [PASS] starts_with: null out
+  [PASS] starts_with: longer
+  [PASS] starts_with: null
   [PASS] ends_with: lo
   [PASS] ends_with: xx false
-  [PASS] ends_with: longer false
-  [PASS] ends_with: null out
+  [PASS] ends_with: longer
+  [PASS] ends_with: null
   [PASS] string_truncate: shrink to 2
   [PASS] string_truncate: len == 2
   [PASS] string_truncate: nul kept
@@ -616,7 +616,7 @@ Running cf tests...
   [PASS] string_truncate: to zero
   [PASS] string_truncate: len == 0
   [PASS] string_truncate: data[0] nul
-  [PASS] string_truncate: too large -> ERR_BOUNDS
+  [PASS] string_truncate: too large
   [PASS] string_truncate: null -> ERR_NULL
 
 === cf_str find/trim/split/ignore-case ===
@@ -628,25 +628,25 @@ Running cf tests...
   [PASS] eq_ignore_case: null out
   [PASS] eq_ignore_case: bad state
   [PASS] find_char: found 'o'
-  [PASS] find_char: found first 'h'
+  [PASS] find_char: found 'h'
   [PASS] find_char: not found
-  [PASS] find_char: null out_index
-  [PASS] find_char: null out_found
+  [PASS] find_char: null index
+  [PASS] find_char: null found
   [PASS] find_char: bad state
   [PASS] find_str: basic match
   [PASS] find_str: prefix match
-  [PASS] find_str: overlap case
+  [PASS] find_str: overlap
   [PASS] find_str: not found
   [PASS] find_str: needle longer
   [PASS] find_str: empty needle
-  [PASS] find_str: null out_index
-  [PASS] find_str: null out_found
+  [PASS] find_str: null index
+  [PASS] find_str: null found
   [PASS] trim_left: leading spaces
   [PASS] trim_right: trailing spaces
   [PASS] trim: both sides
   [PASS] trim: tabs/newlines
   [PASS] trim: empty stays empty
-  [PASS] trim: all whitespace becomes empty
+  [PASS] trim: all whitespace
   [PASS] trim_left: null out
   [PASS] trim_right: null out
   [PASS] trim: null out
@@ -656,8 +656,21 @@ Running cf tests...
   [PASS] split_once: not found
   [PASS] split_once: null left
   [PASS] split_once: null right
-  [PASS] split_once: null out_found
+  [PASS] split_once: null found
+
+=== cf_status_print ===
+  (following lines go to stderr — expected)
+  [PASS] status_print: all built-ins don't crash
+  [PASS] status_print: context prefix doesn't crash
+  [PASS] status_print: unknown code doesn't crash
+  [PASS] handler: was called
+  [PASS] handler: context forwarded
+  [PASS] handler: CF_TRUE claimed
+  [PASS] handler: CF_FALSE records call
+  [PASS] handler: extended code received
+  [PASS] handler: extended context forwarded
+  [PASS] handler: removed, sentinel unchanged
 
 ==============================
-Results: 638 passed, 0 failed
+Results: 648 passed, 0 failed
 ==============================
