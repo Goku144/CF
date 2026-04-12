@@ -3,6 +3,7 @@
 
 #include "cf_types.h"
 #include "cf_status.h"
+#include "cf_alloc.h"
 
 /*
  * borrowed
@@ -29,6 +30,7 @@ typedef struct cf_string
     char *data;
     cf_usize len;
     cf_usize cap;
+    const cf_allocator *allocator;
 } cf_string;
 
 
@@ -230,6 +232,8 @@ cf_status cf_str_split_once_char(cf_str s, char sep, cf_str *left, cf_str *right
 /* ------------------------------------------------------------------ */
 /* String lifecycle                                                    */
 /* ------------------------------------------------------------------ */
+
+cf_status cf_string_init_ex(cf_string *str, cf_usize cap, const cf_allocator *allocator);
 
 /**
  * Allocates a cf_string with at least the given initial capacity.

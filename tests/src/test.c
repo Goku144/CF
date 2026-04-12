@@ -1,9 +1,11 @@
 #include "cf_memory.h"
 #include "cf_string.h"
 #include "cf_status.h"
+#include "cf_alloc.h"
 
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 
 /* ------------------------------------------------------------------ */
 /*  Minimal test harness                                               */
@@ -115,7 +117,7 @@ static void test_cf_buffer(void)
   CHECK("buffer_empty: cap 0",      empty.cap  == 0);
 
   CHECK("buffer_is_valid: empty",   cf_buffer_is_valid(empty) == CF_TRUE);
-  cf_buffer bad = {CF_NULL, 1, 4};
+  cf_buffer bad = {CF_NULL, 1, 4, CF_NULL};
   CHECK("buffer_is_valid: bad",     cf_buffer_is_valid(bad)   == CF_FALSE);
 
   CHECK("buffer_is_empty: empty",   cf_buffer_is_empty(empty) == CF_TRUE);
@@ -580,6 +582,146 @@ static void test_cf_status(void)
 }
 
 /* ------------------------------------------------------------------ */
+/*  cf_allocator tests                                                 */
+/* ------------------------------------------------------------------ */
+
+typedef struct test_alloc_stats
+{
+  cf_usize alloc_calls;
+  cf_usize realloc_calls;
+  cf_usize free_calls;
+  cf_usize last_alloc_size;
+  cf_usize last_realloc_size;
+} test_alloc_stats;
+
+static void *test_counting_alloc(void *ctx, cf_usize size)
+{
+  test_alloc_stats *stats = (test_alloc_stats *)ctx;
+  if(stats != CF_NULL)
+  {
+    stats->alloc_calls++;
+    stats->last_alloc_size = size;
+  }
+  return malloc(size);
+}
+
+static void *test_counting_realloc(void *ctx, void *ptr, cf_usize new_size)
+{
+  test_alloc_stats *stats = (test_alloc_stats *)ctx;
+  if(stats != CF_NULL)
+  {
+    stats->realloc_calls++;
+    stats->last_realloc_size = new_size;
+  }
+  return realloc(ptr, new_size);
+}
+
+static void test_counting_free(void *ctx, void *ptr)
+{
+  test_alloc_stats *stats = (test_alloc_stats *)ctx;
+  if(stats != CF_NULL)
+    stats->free_calls++;
+  free(ptr);
+}
+
+static void test_cf_allocator(void)
+{
+  SECTION("cf_allocator");
+
+  /* default allocator */
+  {
+    const cf_allocator *alloc = cf_default_allocator();
+    CHECK("allocator: default not null", alloc != CF_NULL);
+    CHECK("allocator: default valid", cf_allocator_is_valid(alloc) == CF_TRUE);
+    CHECK("allocator: null invalid", cf_allocator_is_valid(CF_NULL) == CF_FALSE);
+  }
+
+  /* clearly invalid allocators */
+  {
+    cf_allocator bad1 = {CF_NULL, CF_NULL, CF_NULL, CF_NULL};
+    cf_allocator bad2 = {CF_NULL, test_counting_alloc, CF_NULL, test_counting_free};
+    CHECK("allocator: all-null invalid", cf_allocator_is_valid(&bad1) == CF_FALSE);
+    CHECK("allocator: missing realloc invalid", cf_allocator_is_valid(&bad2) == CF_FALSE);
+  }
+
+  /* custom counting allocator + buffer */
+  {
+    test_alloc_stats stats = {0};
+    cf_allocator alloc = {
+      .ctx = &stats,
+      .alloc = test_counting_alloc,
+      .realloc = test_counting_realloc,
+      .free = test_counting_free
+    };
+
+    cf_buffer buf = cf_buffer_empty();
+
+    CHECK("buffer_init_ex: ok", cf_buffer_init_ex(&buf, 16, &alloc) == CF_OK);
+    CHECK("buffer_init_ex: allocator stored", buf.allocator == &alloc);
+    CHECK("buffer_init_ex: alloc called", stats.alloc_calls == 1);
+    CHECK("buffer_init_ex: no realloc yet", stats.realloc_calls == 0);
+    CHECK("buffer_init_ex: data not null", buf.data != CF_NULL);
+    CHECK("buffer_init_ex: cap >= 16", buf.cap >= 16);
+
+    CHECK("buffer_reserve: growth uses realloc", cf_buffer_reserve(&buf, 64) == CF_OK);
+    CHECK("buffer_reserve: realloc called", stats.realloc_calls == 1);
+    CHECK("buffer_reserve: cap >= 64", buf.cap >= 64);
+
+    cf_buffer_destroy(&buf);
+    CHECK("buffer_destroy: free called once", stats.free_calls == 1);
+  }
+
+  /* custom counting allocator + string */
+  {
+    test_alloc_stats stats = {0};
+    cf_allocator alloc = {
+      .ctx = &stats,
+      .alloc = test_counting_alloc,
+      .realloc = test_counting_realloc,
+      .free = test_counting_free
+    };
+
+    cf_string str = cf_string_empty();
+
+    CHECK("string_init_ex: ok", cf_string_init_ex(&str, 8, &alloc) == CF_OK);
+    CHECK("string_init_ex: allocator stored", str.allocator == &alloc);
+    CHECK("string_init_ex: alloc called", stats.alloc_calls == 1);
+    CHECK("string_init_ex: no realloc yet", stats.realloc_calls == 0);
+    CHECK("string_init_ex: data not null", str.data != CF_NULL);
+    CHECK("string_init_ex: nul byte", str.data[0] == '\0');
+
+    CHECK("string_reserve: growth uses realloc", cf_string_reserve(&str, 32) == CF_OK);
+    CHECK("string_reserve: realloc called", stats.realloc_calls == 1);
+    CHECK("string_reserve: cap >= 32", str.cap >= 32);
+
+    cf_string_destroy(&str);
+    CHECK("string_destroy: free called once", stats.free_calls == 1);
+  }
+
+  /* invalid allocator rejected */
+  {
+    cf_allocator bad = {CF_NULL, CF_NULL, CF_NULL, CF_NULL};
+    cf_buffer buf = cf_buffer_empty();
+    cf_string str = cf_string_empty();
+
+    CHECK("buffer_init_ex: bad allocator -> ERR_STATE",
+          cf_buffer_init_ex(&buf, 8, &bad) == CF_ERR_STATE);
+
+    CHECK("string_init_ex: bad allocator -> ERR_STATE",
+          cf_string_init_ex(&str, 8, &bad) == CF_ERR_STATE);
+  }
+
+  /* null ptr handling */
+  {
+    CHECK("buffer_init_ex: null buffer -> ERR_NULL",
+          cf_buffer_init_ex(CF_NULL, 8, cf_default_allocator()) == CF_ERR_NULL);
+
+    CHECK("string_init_ex: null string -> ERR_NULL",
+          cf_string_init_ex(CF_NULL, 8, cf_default_allocator()) == CF_ERR_NULL);
+  }
+}
+
+/* ------------------------------------------------------------------ */
 /*  main                                                               */
 /* ------------------------------------------------------------------ */
 
@@ -598,6 +740,7 @@ int main(void)
   test_cf_string_queries_and_truncate();
   test_cf_str_find_trim_split_and_ignore_case();
   test_cf_status();
+	test_cf_allocator();
 
   printf("\n==============================\n");
   printf("Results: %d passed, %d failed\n", g_passed, g_failed);

@@ -11,4 +11,8 @@ typedef struct cf_allocator
   void (*free)(void *ctx, void *ptr);
 } cf_allocator;
 
+cf_bool cf_allocator_is_valid(const cf_allocator *alloc);
+
+const cf_allocator *cf_default_allocator(void);
+
 #endif // CF_ALLOC_H

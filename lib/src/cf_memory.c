@@ -1,4 +1,5 @@
 #include "cf_memory.h"
+#include "cf_alloc.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -24,7 +25,7 @@ cf_bytes cf_bytes_empty(void) { return (cf_bytes){CF_NULL, 0}; }
 
 cf_bytes_mut cf_bytes_mut_empty(void) { return (cf_bytes_mut){CF_NULL, 0}; }
 
-cf_buffer cf_buffer_empty(void) { return (cf_buffer){CF_NULL, 0, 0}; }
+cf_buffer cf_buffer_empty(void) { return (cf_buffer){CF_NULL, 0, 0, CF_NULL}; }
 
 cf_bytes cf_bytes_from(const cf_u8 *data, cf_usize len) { return (cf_bytes){data, len}; }
 
@@ -38,7 +39,22 @@ cf_bool cf_bytes_is_valid(cf_bytes bytes) { return bytes.len > 0 && bytes.data =
 
 cf_bool cf_bytes_mut_is_valid(cf_bytes_mut bytes) { return bytes.len > 0 && bytes.data == CF_NULL ? CF_FALSE : CF_TRUE; }
 
-cf_bool cf_buffer_is_valid(cf_buffer buffer) { return ((buffer.len > 0 || buffer.cap > 0) && buffer.data == CF_NULL) || (buffer.len > buffer.cap) ? CF_FALSE : CF_TRUE; }
+cf_bool cf_buffer_is_valid(cf_buffer buffer)
+{
+  if(buffer.data == CF_NULL && buffer.len == 0 && buffer.cap == 0 && buffer.allocator == CF_NULL)
+    return CF_TRUE;
+
+  if(buffer.len > buffer.cap)
+    return CF_FALSE;
+
+  if((buffer.len > 0 || buffer.cap > 0) && buffer.data == CF_NULL)
+    return CF_FALSE;
+
+  if(!cf_allocator_is_valid(buffer.allocator))
+    return CF_FALSE;
+
+  return CF_TRUE;
+}
 
 /* ------------------------------------------------------------------ */
 /* Emptiness                                                           */
@@ -140,12 +156,17 @@ cf_status cf_buffer_fill(cf_buffer *buffer, cf_u8 value)
 /* Buffer lifecycle                                                    */
 /* ------------------------------------------------------------------ */
 
+cf_status cf_buffer_init_ex(cf_buffer *buffer, cf_usize cap, const cf_allocator *allocator)
+{
+  if (buffer == CF_NULL) return CF_ERR_NULL;
+  *buffer = cf_buffer_empty();
+  buffer->allocator = allocator;
+  return cf_buffer_reserve(buffer, cap);
+}
+
 cf_status cf_buffer_init(cf_buffer *buffer, cf_usize cap)
 {
-  if (buffer == CF_NULL)
-    return CF_ERR_NULL;
-  *buffer = cf_buffer_empty();
-  return cf_buffer_reserve(buffer, cap);
+  return cf_buffer_init_ex(buffer, cap, cf_default_allocator());
 }
 
 cf_status cf_buffer_reserve(cf_buffer *buffer, cf_usize min_cap)
@@ -158,9 +179,9 @@ cf_status cf_buffer_reserve(cf_buffer *buffer, cf_usize min_cap)
     return CF_OK;
   cf_u8 *tmp;
   if (buffer->data == CF_NULL)
-    tmp = malloc(min_cap * sizeof(cf_u8));
+    tmp = buffer->allocator->alloc(buffer->allocator->ctx, min_cap * sizeof(cf_u8));
   else
-    tmp = realloc(buffer->data, min_cap * sizeof(cf_u8));
+    tmp = buffer->allocator->realloc(buffer->allocator->ctx, buffer->data, min_cap * sizeof(cf_u8));
   if (tmp == CF_NULL)
     return CF_ERR_OOM;
   buffer->data = tmp;
@@ -182,7 +203,7 @@ void cf_buffer_destroy(cf_buffer *buffer)
 {
   if (buffer == CF_NULL)
     return;
-  free(buffer->data);
+  buffer->allocator->free(buffer->allocator->ctx, buffer->data);
   *buffer = cf_buffer_empty();
 }
 
