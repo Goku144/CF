@@ -702,6 +702,60 @@ Running cf tests...
   [PASS] buffer_init_ex: null buffer -> ERR_NULL
   [PASS] string_init_ex: null string -> ERR_NULL
 
+=== cf_arena ===
+  [PASS] arena_empty: data null
+  [PASS] arena_empty: cap 0
+  [PASS] arena_empty: offset 0
+  [PASS] arena_empty: backing allocator null
+  [PASS] arena_empty: valid
+  [PASS] arena_empty: empty
+  [PASS] arena_is_valid: offset > cap bad
+  [PASS] arena_init: ok
+  [PASS] arena_init: valid
+  [PASS] arena_init: data not null
+  [PASS] arena_init: cap == 64
+  [PASS] arena_init: offset == 0
+  [PASS] arena_init: empty after init
+  [PASS] arena_init: backing allocator set
+  [PASS] arena_destroy: back to null data
+  [PASS] arena_destroy: back to cap 0
+  [PASS] arena_destroy: back to offset 0
+  [PASS] arena_destroy: valid empty
+  [PASS] arena_init_ex: ok
+  [PASS] arena_init_ex: alloc called once
+  [PASS] arena_init_ex: valid
+  [PASS] arena_init_ex: backing allocator stored
+  [PASS] arena_destroy: free called once
+  [PASS] arena_init_ex: null arena -> ERR_NULL
+  [PASS] arena_init_ex: bad allocator -> ERR_STATE
+  [PASS] arena_alloc test: init
+  [PASS] arena_alloc: first alloc non-null
+  [PASS] arena_alloc: offset 8
+  [PASS] arena_is_empty: false after alloc
+  [PASS] arena_alloc: second alloc non-null
+  [PASS] arena_alloc: offset 20
+  [PASS] arena_alloc: monotonic addresses
+  [PASS] arena_alloc: too large returns null
+  [PASS] arena_alloc: offset unchanged on fail
+  [PASS] arena_alloc: size 0 returns null
+  [PASS] arena_alloc: null ctx returns null
+  [PASS] arena_reset test: init
+  [PASS] arena_reset test: alloc
+  [PASS] arena_reset test: offset advanced
+  [PASS] arena_reset: offset back to 0
+  [PASS] arena_reset: empty again
+  [PASS] arena_allocator test: init
+  [PASS] arena_allocator: not null
+  [PASS] arena_allocator: alloc fn set
+  [PASS] arena_allocator: realloc fn set
+  [PASS] arena_allocator: free fn set
+  [PASS] arena_allocator: ctx points to arena
+  [PASS] arena_allocator: alloc through allocator works
+  [PASS] arena_allocator: offset advanced through allocator
+  [PASS] arena_realloc: unsupported returns null
+  [PASS] arena_free: no-op does not break state
+  [PASS] arena_destroy: null safe
+
 ==============================
-Results: 677 passed, 0 failed
+Results: 729 passed, 0 failed
 ==============================
