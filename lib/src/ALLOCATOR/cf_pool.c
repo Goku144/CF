@@ -1,5 +1,10 @@
 #include "ALLOCATOR/cf_pool.h"
+
 #include <stdlib.h>
+
+/********************************************************************/
+/* allocators                                                       */
+/********************************************************************/
 
 static void *cf_pool_alloc(void *ctx, cf_usize size)
 {
@@ -39,10 +44,18 @@ static void cf_pool_free(void *ctx, void *ptr)
   --pool->slot_used;
 }
 
+/********************************************************************/
+/* construction                                                     */
+/********************************************************************/
+
 cf_pool cf_pool_create_empty()
 {
   return (cf_pool) {CF_NULL, CF_NULL, 0, 0, 0, (cf_alloc) {CF_NULL, cf_pool_alloc, cf_pool_realloc, cf_pool_free}};
 }
+
+/********************************************************************/
+/* validation                                                       */
+/********************************************************************/
 
 cf_bool cf_pool_is_valid(cf_pool *pool)
 {
@@ -79,6 +92,19 @@ cf_status cf_pool_new(cf_pool *pool, cf_usize slot_total, cf_usize slot_size)
   return cf_pool_reset(pool);
 }
 
+void cf_pool_destroy(cf_pool *pool)
+{
+  if(pool == CF_NULL) return;
+  if(!cf_pool_is_valid(pool)) return;
+  if(pool->data == CF_NULL) return;
+  free(pool->data);
+  *pool = cf_pool_create_empty();
+}
+
+/********************************************************************/
+/* operations                                                       */
+/********************************************************************/
+
 cf_status cf_pool_reset(cf_pool *pool)
 {
   if(pool == CF_NULL) return CF_ERR_NULL;
@@ -94,13 +120,4 @@ cf_status cf_pool_reset(cf_pool *pool)
   *(void **) pool->list = CF_NULL;
   pool->list = pool->data;
   return CF_OK;
-}
-
-void cf_pool_destroy(cf_pool *pool)
-{
-  if(pool == CF_NULL) return;
-  if(!cf_pool_is_valid(pool)) return;
-  if(pool->data == CF_NULL) return;
-  free(pool->data);
-  *pool = cf_pool_create_empty();
 }
