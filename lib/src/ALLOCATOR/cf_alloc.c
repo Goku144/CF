@@ -3,6 +3,10 @@
 
 #include <stdlib.h>
 
+/********************************************************************/
+/* allocators                                                       */
+/********************************************************************/
+
 static void *cf_alloc_alloc(void *ctx, cf_usize size)
 {
   CF_UNUSED(ctx);
@@ -21,10 +25,23 @@ static void cf_alloc_free(void *ctx, void *ptr)
   free(ptr);
 }
 
+/********************************************************************/
+/* construction                                                     */
+/********************************************************************/
+
 cf_alloc cf_alloc_create_empty()
 {
   return  (cf_alloc) {CF_NULL, cf_alloc_alloc, cf_alloc_realloc, cf_alloc_free};
 }
+
+cf_alloc cf_alloc_new()
+{
+  return cf_alloc_create_empty();
+}
+
+/********************************************************************/
+/* validation                                                       */
+/********************************************************************/
 
 cf_bool cf_alloc_is_valid(const cf_alloc *allocator)
 {
@@ -33,9 +50,4 @@ cf_bool cf_alloc_is_valid(const cf_alloc *allocator)
   if (allocator->realloc == CF_NULL) return CF_FALSE;
   if (allocator->free == CF_NULL) return CF_FALSE;
   return CF_TRUE;
-}
-
-cf_alloc cf_alloc_new()
-{
-  return cf_alloc_create_empty();
 }

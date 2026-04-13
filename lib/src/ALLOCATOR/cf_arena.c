@@ -2,6 +2,10 @@
 
 #include<stdlib.h>
 
+/********************************************************************/
+/* allocators                                                       */
+/********************************************************************/
+
 static void *cf_arena_alloc(void *ctx, cf_usize size)
 {
   if(ctx == CF_NULL || size == 0) return CF_NULL;
@@ -29,10 +33,18 @@ static void cf_arena_free(void *ctx, void *ptr)
   CF_UNUSED(ptr);
 }
 
+/********************************************************************/
+/* construction                                                     */
+/********************************************************************/
+
 static cf_arena cf_arena_create_empty()
 {
   return (cf_arena) {CF_NULL, 0, 0, 0, (cf_alloc) {CF_NULL, cf_arena_alloc, cf_arena_realloc, cf_arena_free}};
 }
+
+/********************************************************************/
+/* validation                                                       */
+/********************************************************************/
 
 cf_bool cf_arena_is_valid(cf_arena *arena)
 {
@@ -52,6 +64,10 @@ cf_bool cf_arena_is_valid(cf_arena *arena)
   return CF_TRUE;
 }
 
+/********************************************************************/
+/* lifecycle                                                        */
+/********************************************************************/
+
 cf_status cf_arena_new(cf_arena *arena, cf_usize size)
 {
   if(arena == CF_NULL) return CF_ERR_NULL;
@@ -64,6 +80,17 @@ cf_status cf_arena_new(cf_arena *arena, cf_usize size)
   return CF_OK;
 }
 
+void cf_arena_destroy(cf_arena *arena)
+{
+  if(arena == CF_NULL) return;
+  free(arena->data);
+  *arena = cf_arena_create_empty();
+}
+
+/********************************************************************/
+/* operations                                                       */
+/********************************************************************/
+
 cf_status cf_arena_reset(cf_arena *arena)
 {
   if(arena == CF_NULL) return CF_ERR_NULL;
@@ -71,11 +98,4 @@ cf_status cf_arena_reset(cf_arena *arena)
   arena->offset = 0;
   arena->last_usable = 0;
   return CF_OK;
-}
-
-void cf_arena_destroy(cf_arena *arena)
-{
-  if(arena == CF_NULL) return;
-  free(arena->data);
-  *arena = cf_arena_create_empty();
 }

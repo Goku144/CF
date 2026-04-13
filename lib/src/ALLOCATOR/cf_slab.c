@@ -1,6 +1,11 @@
 #include "ALLOCATOR/cf_slab.h"
 #include "ALLOCATOR/cf_alloc.h"
+
 #include <stdlib.h>
+
+/********************************************************************/
+/* allocators                                                       */
+/********************************************************************/
 
 static void *cf_slab_alloc(void *ctx, cf_usize size)
 {
@@ -56,6 +61,10 @@ static void cf_slab_free(void *ctx, void *ptr)
   }
 }
 
+/********************************************************************/
+/* construction                                                     */
+/********************************************************************/
+
 static cf_slab cf_slab_create_empty()
 {
   cf_slab slab;
@@ -69,6 +78,10 @@ static cf_slab cf_slab_create_empty()
   return slab;
 }
 
+/********************************************************************/
+/* validation                                                       */
+/********************************************************************/
+
 cf_bool cf_slab_is_valid(cf_slab *slab)
 {
   if(slab == CF_NULL) return CF_FALSE;
@@ -81,6 +94,10 @@ cf_bool cf_slab_is_valid(cf_slab *slab)
   }
   return CF_TRUE;
 }
+
+/********************************************************************/
+/* lifecycle                                                        */
+/********************************************************************/
 
 cf_status cf_slab_new(cf_slab *slab, cf_usize slots_total[], cf_usize slots_size[], cf_usize n)
 {
@@ -117,6 +134,19 @@ cf_status cf_slab_new(cf_slab *slab, cf_usize slots_total[], cf_usize slots_size
   return CF_OK;
 }
 
+void cf_slab_destroy(cf_slab *slab)
+{
+  if(slab == CF_NULL) return;
+  if(!cf_slab_is_valid(slab)) return;
+  for (cf_usize i = 0; i < slab->class_count; i++)
+    cf_pool_destroy(&slab->class[i].pool);
+  *slab = cf_slab_create_empty();
+}
+
+/********************************************************************/
+/* operations                                                       */
+/********************************************************************/
+
 cf_status cf_slab_reset(cf_slab *slab)
 {
   if(slab == CF_NULL) return CF_ERR_NULL;
@@ -128,13 +158,4 @@ cf_status cf_slab_reset(cf_slab *slab)
       return state;
   }
   return CF_OK;
-}
-
-void cf_slab_destroy(cf_slab *slab)
-{
-  if(slab == CF_NULL) return;
-  if(!cf_slab_is_valid(slab)) return;
-  for (cf_usize i = 0; i < slab->class_count; i++)
-    cf_pool_destroy(&slab->class[i].pool);
-  *slab = cf_slab_create_empty();
 }
