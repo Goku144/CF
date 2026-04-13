@@ -15,4 +15,4 @@ typedef enum cf_status
   CF_ERR_INTERNAL     /* Unexpected internal failure */
 } cf_status;
 
-#endif // CF_STATUS_H
+#endif /* CF_STATUS_H */

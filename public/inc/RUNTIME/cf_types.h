@@ -43,4 +43,4 @@ typedef ptrdiff_t cf_isize;
 //typedef logic types
 typedef bool cf_bool;
 
-#endif // CF_TYPES_H
+#endif /* CF_TYPES_H */

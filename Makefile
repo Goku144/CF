@@ -10,7 +10,7 @@ OBJS := $(patsubst lib/src/%.c, lib/bin/%.o, $(SRCS))
 app: runApp
 
 runApp: app/build/app
-	./$
+	./$<
 
 app/build/app: app/bin/app.o $(OBJS)
 	@mkdir -p $(dir $@)
