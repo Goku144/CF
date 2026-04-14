@@ -37,7 +37,7 @@ static void cf_arena_free(void *ctx, void *ptr)
 /* construction                                                     */
 /********************************************************************/
 
-static cf_arena cf_arena_create_empty()
+static cf_arena cf_arena_create_empty(void)
 {
   return (cf_arena) {CF_NULL, 0, 0, 0, (cf_alloc) {CF_NULL, cf_arena_alloc, cf_arena_realloc, cf_arena_free}};
 }

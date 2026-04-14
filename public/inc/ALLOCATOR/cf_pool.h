@@ -50,7 +50,7 @@ typedef struct cf_pool
  *
  * @return  An empty, valid cf_pool.
  */
-cf_pool cf_pool_create_empty();
+cf_pool cf_pool_create_empty(void);
 
 /********************************************************************/
 /* validation                                                       */
@@ -72,7 +72,6 @@ cf_pool cf_pool_create_empty();
  *          CF_FALSE otherwise.
  */
 cf_bool cf_pool_is_valid(cf_pool *pool);
-
 
 /********************************************************************/
 /* lifecycle                                                        */
