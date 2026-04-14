@@ -49,12 +49,12 @@ static void cf_alloc_free(void *ctx, void *ptr)
 
 cf_alloc cf_alloc_create_empty(void)
 {
-  return  (cf_alloc) {CF_NULL, cf_alloc_alloc, cf_alloc_realloc, cf_alloc_free};
+  return (cf_alloc) {CF_NULL, cf_alloc_alloc, CF_NULL, CF_NULL};
 }
 
-cf_alloc cf_alloc_new()
+cf_alloc cf_alloc_new(void)
 {
-  return cf_alloc_create_empty();
+  return (cf_alloc) {CF_NULL, cf_alloc_alloc, cf_alloc_realloc, cf_alloc_free};
 }
 
 /********************************************************************/
@@ -65,7 +65,5 @@ cf_bool cf_alloc_is_valid(const cf_alloc *allocator)
 {
   if (allocator == CF_NULL) return CF_FALSE;
   if (allocator->alloc == CF_NULL) return CF_FALSE;
-  if (allocator->realloc == CF_NULL) return CF_FALSE;
-  if (allocator->free == CF_NULL) return CF_FALSE;
   return CF_TRUE;
 }

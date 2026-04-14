@@ -3,6 +3,7 @@
 #include "ALLOCATOR/cf_arena.h"
 #include "ALLOCATOR/cf_pool.h"
 #include "ALLOCATOR/cf_slab.h"
+#include "RUNTIME/cf_types.h"
 #include "RUNTIME/cf_status.h"
 
 int main(void)
