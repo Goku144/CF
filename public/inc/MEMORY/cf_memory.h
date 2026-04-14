@@ -23,6 +23,8 @@
 #include "RUNTIME/cf_status.h"
 #include "ALLOCATOR/cf_alloc.h"
 
+#define CF_APPEND_BYTE_SIZE 32
+
 /**
  * not allocated by me
  * offer view scop
@@ -106,5 +108,27 @@ cf_status cf_buffer_reserve(cf_buffer *buffer, cf_usize size);
 void cf_buffer_clear(cf_buffer *buffer);
 
 void cf_buffer_destroy(cf_buffer *buffer);
+
+/* ------------------------------------------------------------------ */
+/* Buffer append / set                                                 */
+/* ------------------------------------------------------------------ */
+
+cf_status cf_buffer_append_bytes(cf_buffer *dst_buffer, cf_bytes *src_bytes);
+
+cf_status cf_buffer_append_byte(cf_buffer *dst_buffer, cf_u8 byte);
+
+/* ------------------------------------------------------------------ */
+/* Bytes/Buffer copys/views                                            */
+/* ------------------------------------------------------------------ */
+
+cf_status  cf_bytes_copy_as_buffer(cf_buffer *dst_buffer, cf_bytes *src_bytes);
+
+cf_status cf_buffer_view_as_bytes(cf_bytes *dst_bytes, cf_buffer *src_buffer);
+
+/* ------------------------------------------------------------------ */
+/* Buffer truncate                                                     */
+/* ------------------------------------------------------------------ */
+
+cf_status cf_buffer_truncate(cf_buffer *buffer, cf_usize new_len);
 
 #endif /* CF_MEMOEY_H */

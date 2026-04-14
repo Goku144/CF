@@ -620,6 +620,238 @@ static void test_buffer_destroy(void)
     CHECK("destroy null does not crash",     CF_TRUE);
 }
 
+static void test_buffer_append_bytes(void)
+{
+    section("cf_buffer_append_bytes");
+
+    cf_alloc alloc = cf_alloc_new();
+    cf_buffer buffer = cf_buffer_create_empty();
+    cf_status st = cf_buffer_init(&buffer, &alloc, 8);
+
+    CHECK("init returns CF_OK", st == CF_OK);
+
+    cf_u8 src_data[3] = {10, 20, 30};
+    cf_bytes src = {src_data, 3};
+
+    st = cf_buffer_append_bytes(&buffer, &src);
+    CHECK("append returns CF_OK", st == CF_OK);
+    CHECK("len becomes 3",        buffer.len == 3);
+    CHECK("byte 0 correct",       buffer.data[0] == 10);
+    CHECK("byte 1 correct",       buffer.data[1] == 20);
+    CHECK("byte 2 correct",       buffer.data[2] == 30);
+
+    cf_buffer_destroy(&buffer);
+}
+
+static void test_buffer_append_byte(void)
+{
+    section("cf_buffer_append_byte");
+
+    cf_alloc alloc = cf_alloc_new();
+    cf_buffer buffer = cf_buffer_create_empty();
+    cf_status st = cf_buffer_init(&buffer, &alloc, 4);
+
+    CHECK("init returns CF_OK", st == CF_OK);
+
+    st = cf_buffer_append_byte(&buffer, 0xAB);
+    CHECK("append byte returns CF_OK", st == CF_OK);
+    CHECK("len becomes 1",             buffer.len == 1);
+    CHECK("stored byte correct",       buffer.data[0] == 0xAB);
+
+    st = cf_buffer_append_byte(&buffer, 0xCD);
+    CHECK("second append byte returns CF_OK", st == CF_OK);
+    CHECK("len becomes 2",                    buffer.len == 2);
+    CHECK("stored second byte correct",       buffer.data[1] == 0xCD);
+
+    cf_buffer_destroy(&buffer);
+}
+
+static void test_buffer_append_bytes_null(void)
+{
+    section("cf_buffer_append_bytes_null");
+
+    cf_alloc alloc = cf_alloc_new();
+    cf_buffer buffer = cf_buffer_create_empty();
+    cf_status st = cf_buffer_init(&buffer, &alloc, 8);
+
+    CHECK("init returns CF_OK", st == CF_OK);
+
+    cf_u8 src_data[2] = {1, 2};
+    cf_bytes src = {src_data, 2};
+
+    st = cf_buffer_append_bytes(CF_NULL, &src);
+    CHECK("null dst returns CF_ERR_NULL", st == CF_ERR_NULL);
+
+    st = cf_buffer_append_bytes(&buffer, CF_NULL);
+    CHECK("null src returns CF_ERR_NULL", st == CF_ERR_NULL);
+
+    cf_buffer_destroy(&buffer);
+}
+
+static void test_buffer_append_bytes_invalid_src(void)
+{
+    section("cf_buffer_append_bytes_invalid_src");
+
+    cf_alloc alloc = cf_alloc_new();
+    cf_buffer buffer = cf_buffer_create_empty();
+    cf_status st = cf_buffer_init(&buffer, &alloc, 8);
+
+    CHECK("init returns CF_OK", st == CF_OK);
+
+    cf_bytes bad_src = {CF_NULL, 2};
+
+    st = cf_buffer_append_bytes(&buffer, &bad_src);
+    CHECK("invalid src returns CF_ERR_STATE", st == CF_ERR_STATE);
+
+    cf_buffer_destroy(&buffer);
+}
+
+static void test_buffer_append_bytes_multiple(void)
+{
+    section("cf_buffer_append_bytes_multiple");
+
+    cf_alloc alloc = cf_alloc_new();
+    cf_buffer buffer = cf_buffer_create_empty();
+    cf_status st = cf_buffer_init(&buffer, &alloc, 8);
+
+    CHECK("init returns CF_OK", st == CF_OK);
+
+    cf_u8 a_data[2] = {1, 2};
+    cf_u8 b_data[3] = {3, 4, 5};
+
+    cf_bytes a = {a_data, 2};
+    cf_bytes b = {b_data, 3};
+
+    st = cf_buffer_append_bytes(&buffer, &a);
+    CHECK("first append returns CF_OK", st == CF_OK);
+
+    st = cf_buffer_append_bytes(&buffer, &b);
+    CHECK("second append returns CF_OK", st == CF_OK);
+
+    CHECK("len becomes 5", buffer.len == 5);
+    CHECK("byte 0 correct", buffer.data[0] == 1);
+    CHECK("byte 1 correct", buffer.data[1] == 2);
+    CHECK("byte 2 correct", buffer.data[2] == 3);
+    CHECK("byte 3 correct", buffer.data[3] == 4);
+    CHECK("byte 4 correct", buffer.data[4] == 5);
+
+    cf_buffer_destroy(&buffer);
+}
+
+static void test_buffer_append_bytes_grow(void)
+{
+    section("cf_buffer_append_bytes_grow");
+
+    cf_alloc alloc = cf_alloc_new();
+    cf_buffer buffer = cf_buffer_create_empty();
+    cf_status st = cf_buffer_init(&buffer, &alloc, 4);
+
+    CHECK("init returns CF_OK", st == CF_OK);
+
+    cf_u8 a_data[3] = {1, 2, 3};
+    cf_u8 b_data[3] = {4, 5, 6};
+
+    cf_bytes a = {a_data, 3};
+    cf_bytes b = {b_data, 3};
+
+    st = cf_buffer_append_bytes(&buffer, &a);
+    CHECK("first append returns CF_OK", st == CF_OK);
+
+    st = cf_buffer_append_bytes(&buffer, &b);
+    CHECK("second append requiring grow returns CF_OK", st == CF_OK);
+
+    CHECK("len becomes 6", buffer.len == 6);
+    CHECK("byte 0 correct", buffer.data[0] == 1);
+    CHECK("byte 1 correct", buffer.data[1] == 2);
+    CHECK("byte 2 correct", buffer.data[2] == 3);
+    CHECK("byte 3 correct", buffer.data[3] == 4);
+    CHECK("byte 4 correct", buffer.data[4] == 5);
+    CHECK("byte 5 correct", buffer.data[5] == 6);
+
+    cf_buffer_destroy(&buffer);
+}
+
+static void test_bytes_copy_as_buffer(void)
+{
+    section("cf_bytes_copy_as_buffer");
+
+    cf_alloc alloc = cf_alloc_new();
+    cf_buffer buffer = cf_buffer_create_empty();
+    cf_status st = cf_buffer_init(&buffer, &alloc, 2);
+
+    CHECK("init returns CF_OK", st == CF_OK);
+
+    cf_u8 src_data[4] = {10,20,30,40};
+    cf_bytes src = {src_data, 4};
+
+    st = cf_bytes_copy_as_buffer(&buffer, &src);
+    CHECK("copy returns CF_OK",     st == CF_OK);
+    CHECK("buffer len becomes 4",   buffer.len == 4);
+    CHECK("buffer cap >= 4",        buffer.cap >= 4);
+    CHECK("byte 0 correct",         buffer.data[0] == 10);
+    CHECK("byte 1 correct",         buffer.data[1] == 20);
+    CHECK("byte 2 correct",         buffer.data[2] == 30);
+    CHECK("byte 3 correct",         buffer.data[3] == 40);
+
+    src_data[0] = 99;
+    CHECK("copy is independent from source", buffer.data[0] == 10);
+
+    cf_buffer_destroy(&buffer);
+}
+
+static void test_buffer_view_as_bytes(void)
+{
+    section("cf_buffer_view_as_bytes");
+
+    cf_alloc alloc = cf_alloc_new();
+    cf_u8 data[6] = {1,2,3,4,5,6};
+    cf_buffer buffer = {data, 4, 6, alloc};
+    cf_bytes bytes;
+    cf_status st;
+
+    st = cf_buffer_view_as_bytes(&bytes, &buffer);
+    CHECK("view returns CF_OK",         st == CF_OK);
+    CHECK("view points to same data",   bytes.data == buffer.data);
+    CHECK("view len equals buffer len", bytes.len == buffer.len);
+    CHECK("view byte 0 correct",        bytes.data[0] == 1);
+    CHECK("view byte 3 correct",        bytes.data[3] == 4);
+
+    buffer.data[1] = 99;
+    CHECK("view reflects buffer changes", bytes.data[1] == 99);
+}
+
+static void test_buffer_truncate(void)
+{
+    section("cf_buffer_truncate");
+
+    cf_alloc alloc = cf_alloc_new();
+    cf_u8 data[8] = {10,20,30,40,50,60,70,80};
+    cf_buffer buffer = {data, 5, 8, alloc};
+    cf_status st;
+
+    st = cf_buffer_truncate(&buffer, 3);
+    CHECK("truncate returns CF_OK",  st == CF_OK);
+    CHECK("len becomes 3",           buffer.len == 3);
+    CHECK("cap unchanged",           buffer.cap == 8);
+    CHECK("data unchanged",          buffer.data == data);
+    CHECK("byte 0 unchanged",        buffer.data[0] == 10);
+    CHECK("byte 2 unchanged",        buffer.data[2] == 30);
+
+    st = cf_buffer_truncate(&buffer, 3);
+    CHECK("truncate same len CF_OK", st == CF_OK);
+    CHECK("len still 3",             buffer.len == 3);
+
+    st = cf_buffer_truncate(&buffer, 0);
+    CHECK("truncate to zero CF_OK",  st == CF_OK);
+    CHECK("len becomes 0",           buffer.len == 0);
+
+    st = cf_buffer_truncate(&buffer, 1);
+    CHECK("truncate past len returns CF_ERR_BOUNDS", st == CF_ERR_BOUNDS);
+
+    st = cf_buffer_truncate(CF_NULL, 0);
+    CHECK("null buffer returns CF_ERR_NULL", st == CF_ERR_NULL);
+}
+
 /* =========================================================================
  * main
  * =========================================================================
@@ -633,11 +865,9 @@ int main(void)
     test_alloc_new();
     test_alloc_is_valid();
     test_alloc_dispatch();
-
     test_arena_validation_model();
     test_pool_validation_model();
     test_slab_validation_model();
-
     test_debug_new_model();
     test_debug_alloc_free_full_backing();
 
@@ -658,7 +888,15 @@ int main(void)
     test_buffer_reserve();
     test_buffer_clear();
     test_buffer_destroy();
-
+    test_buffer_append_bytes();
+    test_buffer_append_byte();
+    test_buffer_append_bytes_null();
+    test_buffer_append_bytes_invalid_src();
+    test_buffer_append_bytes_multiple();
+    test_buffer_append_bytes_grow();
+    test_bytes_copy_as_buffer();
+    test_buffer_view_as_bytes();
+    test_buffer_truncate();
     summary();
     return s_failed == 0 ? 0 : 1;
 }
