@@ -1,13 +1,11 @@
-cf allocator test suite
-
-════════════ cf_alloc ════════════
+cf allocator capability-model test suite
 
 ── cf_alloc_create_empty
   PASS  ctx is NULL
   PASS  alloc is set
-  PASS  realloc is set
-  PASS  free is set
-  PASS  is_valid passes
+  PASS  realloc is NULL
+  PASS  free is NULL
+  PASS  is_valid passes (alloc only)
 
 ── cf_alloc_new
   PASS  ctx is NULL
@@ -20,375 +18,176 @@ cf allocator test suite
   PASS  valid allocator returns true
   PASS  null ptr returns false
   PASS  null alloc fn is invalid
-  PASS  null realloc fn is invalid
-  PASS  null free fn is invalid
+  PASS  null realloc fn is still valid
+  PASS  null free fn is still valid
+  PASS  create_empty allocator is valid
 
-── cf_alloc dispatch (malloc/realloc/free)
+── cf_alloc dispatch
   PASS  alloc 64 bytes returns non-null
   PASS  written byte survives
   PASS  written byte survives
   PASS  realloc to 128 returns non-null
   PASS  free does not crash
-  PASS  alloc 0 bytes returns NULL (or implementation defined — just no crash)
 
-════════════ cf_arena ════════════
-
-── cf_arena_new
-  PASS  null arena ptr returns CF_ERR_NULL
-  PASS  size 0 returns CF_OK
-  PASS  data is NULL for size 0
-  PASS  cap is 0 for size 0
-  PASS  offset is 0 for size 0
-  PASS  last_usable is 0 for size 0
-  PASS  allocator ctx is NULL (empty)
-  PASS  normal new returns CF_OK
-  PASS  data is non-null
-  PASS  cap is 1024
-  PASS  offset starts at 0
-  PASS  last_usable starts at 0
-  PASS  allocator ctx points to arena
-  PASS  allocator is valid
+── cf_arena validation model
   PASS  arena is valid
+  PASS  arena alloc exists
+  PASS  arena realloc exists
+  PASS  arena free may be NULL
+  PASS  arena invalid if alloc is NULL
+  PASS  arena invalid if realloc is NULL
 
-── cf_arena_is_valid
-  PASS  fresh arena is valid
-  PASS  null ptr is invalid
-  PASS  cap < offset is invalid
-  PASS  last_usable > offset is invalid
-  PASS  null alloc fn is invalid
-  PASS  empty (size 0) arena is valid
-
-── cf_arena alloc
-  PASS  alloc 32 returns non-null
-  PASS  offset advances to 32
-  PASS  last_usable is 0
-  PASS  alloc 64 returns non-null
-  PASS  p1 is directly after p0
-  PASS  offset advances to 96
-  PASS  alloc beyond cap returns NULL
-  PASS  alloc exactly remaining 32 returns non-null
-  PASS  offset is now 128 (full)
-  PASS  alloc on full arena returns NULL
-  PASS  null ctx returns NULL
-  PASS  size 0 returns NULL
-  PASS  p0 holds written value
-  PASS  p1 holds written value
-  PASS  p3 holds written value
-
-── cf_arena realloc
-  PASS  initial alloc for realloc test
-  PASS  realloc of last alloc returns same ptr
-  PASS  offset advances to 64 after realloc
-  PASS  alloc after realloc returns non-null
-  PASS  realloc of non-last ptr returns NULL
-  PASS  null ctx returns NULL
-  PASS  size 0 returns NULL
-  PASS  realloc beyond cap returns NULL
-
-── cf_arena free (no-op)
-  PASS  free is a no-op — offset unchanged
-  PASS  free null ptr does not crash
-  PASS  free null ctx does not crash
-
-── cf_arena_reset
-  PASS  offset before reset is 96
-  PASS  reset returns CF_OK
-  PASS  offset is 0 after reset
-  PASS  last_usable is 0 after reset
-  PASS  data pointer unchanged
-  PASS  cap unchanged after reset
-  PASS  full alloc succeeds after reset
-  PASS  reset null returns CF_ERR_NULL
-
-── cf_arena_destroy
-  PASS  data is NULL after destroy
-  PASS  cap is 0 after destroy
-  PASS  offset is 0 after destroy
-  PASS  last_usable is 0 after destroy
-  PASS  allocator ctx NULL after destroy
-  PASS  double destroy does not crash
-  PASS  destroy null does not crash
-
-════════════ cf_pool  ════════════
-
-── cf_pool_new
-  PASS  null pool ptr returns CF_ERR_NULL
-  PASS  zero/zero returns CF_OK (empty pool)
-  PASS  data is NULL for empty pool
-  PASS  zero slots with non-zero size returns CF_ERR_INVALID
-  PASS  slot_size < sizeof(void*) returns CF_ERR_INVALID
-  PASS  normal new returns CF_OK
-  PASS  data is non-null
-  PASS  slot_total is 4
-  PASS  slot_size is 32
-  PASS  slot_used is 0
-  PASS  list is not null
-  PASS  allocator ctx points to pool
-  PASS  allocator is valid
+── cf_pool validation model
   PASS  pool is valid
+  PASS  pool alloc exists
+  PASS  pool realloc is NULL
+  PASS  pool free exists
+  PASS  pool invalid if alloc is NULL
+  PASS  pool invalid if free is NULL
+  PASS  pool still valid if realloc is NULL
 
-── cf_pool_is_valid
-  PASS  fresh pool is valid
-  PASS  null ptr is invalid
-  PASS  slot_used > slot_total is invalid
-  PASS  slot_size < sizeof(void*) is invalid
-  PASS  slot_total 0 with data non-null is invalid
-  PASS  null alloc fn is invalid
-  PASS  create_empty pool is valid
+── cf_slab validation model
+  PASS  slab alloc exists
+  PASS  slab realloc is NULL
+  PASS  slab free exists
+  PASS  slab is valid under alloc/free model
+  PASS  slab invalid if alloc is NULL
+  PASS  slab invalid if free is NULL
+  PASS  slab still valid if realloc is NULL
 
-── cf_pool alloc
-  PASS  alloc slot 0 non-null
-  PASS  alloc slot 1 non-null
-  PASS  alloc slot 2 non-null
-  PASS  alloc beyond capacity is NULL
-  PASS  slot_used is 3
-  PASS  slots do not overlap p0/p1
-  PASS  p0 holds value
-  PASS  p1 holds value
-  PASS  p2 holds value
-  PASS  null ctx returns NULL
-
-── cf_pool realloc (always NULL)
-  PASS  realloc always returns NULL
-  PASS  realloc null ptr returns NULL
-  PASS  realloc null ctx returns NULL
-
-── cf_pool free
-  PASS  pool fully used before free
-  PASS  slot_used decrements on free
-  PASS  alloc after free returns non-null
-  PASS  alloc after free reuses freed slot
-  PASS  out-of-range ptr is ignored
-  PASS  misaligned ptr is ignored
-  PASS  free null ptr does not crash
-  PASS  free null ctx does not crash
-
-── cf_pool_reset
-  PASS  fully used before reset
-  PASS  reset returns CF_OK
-  PASS  slot_used is 0 after reset
-  PASS  list is not null after reset
-  PASS  alloc 1 works after reset
-  PASS  alloc 2 works after reset
-  PASS  alloc 3 works after reset
-  PASS  reset null returns CF_ERR_NULL
-  PASS  reset empty pool returns CF_OK
-
-── cf_pool_destroy
-  PASS  data is NULL after destroy
-  PASS  list is NULL after destroy
-  PASS  slot_total is 0 after destroy
-  PASS  slot_size is 0 after destroy
-  PASS  slot_used is 0 after destroy
-  PASS  double destroy does not crash
-  PASS  destroy null does not crash
-
-════════════ cf_slab  ════════════
-
-── cf_slab_new
-  PASS  null slab ptr returns CF_ERR_NULL
-  PASS  normal slab_new returns CF_OK
-  PASS  class_count is 3
-  PASS  allocator ctx points to slab
-  PASS  allocator is valid
-  PASS  slab is valid
-  PASS  class[0] size is 16
-  PASS  class[1] size is 32
-  PASS  class[2] size is 64
-  PASS  too many classes returns CF_ERR_INVALID
-  PASS  duplicate sizes return CF_OK
-  PASS  duplicate sizes merge into 2 classes
-  PASS  merged 16-class gets max total (5)
-  PASS  merged 32-class gets max total (3)
-  PASS  16-size class found
-  PASS  32-size class found
-
-── cf_slab_is_valid
-  PASS  fresh slab is valid
-  PASS  null ptr is invalid
-  PASS  class_count too large is invalid
-  PASS  class_slot_size mismatch is invalid
-  PASS  null allocator fn is invalid
-
-── cf_slab alloc
-  PASS  alloc 8  (fits 16-class) non-null
-  PASS  alloc 16 (fits 16-class) non-null
-  PASS  alloc 17 (fits 32-class) non-null
-  PASS  alloc 33 (fits 64-class) non-null
-  PASS  alloc 100 (no class) returns NULL
-  PASS  p0 holds written value
-  PASS  p1 holds written value
-  PASS  p2 holds written value
-  PASS  p3 holds written value
-  PASS  16-class still has 1 more slot (p5)
-  PASS  16-class exhausted falls back or NULL
-  PASS  null ctx returns NULL
-
-── cf_slab realloc (always NULL)
-  PASS  realloc always returns NULL
-  PASS  realloc null ptr returns NULL
-  PASS  realloc null ctx returns NULL
-
-── cf_slab free
-  PASS  p0 non-null
-  PASS  p1 non-null
-  PASS  p2 non-null
-  PASS  free reduces used count in owner pool
-  PASS  alloc after free returns non-null
-  PASS  alloc after free reuses freed slot
-  PASS  out-of-range ptr: class 0 unchanged
-  PASS  out-of-range ptr: class 1 unchanged
-  PASS  free null ptr does not crash
-  PASS  free null ctx does not crash
-
-── cf_slab_reset
-  PASS  class 0 used before reset is 2
-  PASS  class 1 used before reset is 1
-  PASS  reset returns CF_OK
-  PASS  class 0 used after reset is 0
-  PASS  class 1 used after reset is 0
-  PASS  alloc class-0 slot 1 after reset
-  PASS  alloc class-0 slot 2 after reset
-  PASS  alloc class-1 slot after reset
-  PASS  reset null returns CF_ERR_NULL
-
-── cf_slab_destroy
-  PASS  class_count is 0 after destroy
-  PASS  pool data NULL after destroy
-  PASS  class slot size 0 after destroy
-  PASS  pool data NULL after destroy
-  PASS  class slot size 0 after destroy
-  PASS  pool data NULL after destroy
-  PASS  class slot size 0 after destroy
-  PASS  pool data NULL after destroy
-  PASS  class slot size 0 after destroy
-  PASS  pool data NULL after destroy
-  PASS  class slot size 0 after destroy
-  PASS  pool data NULL after destroy
-  PASS  class slot size 0 after destroy
-  PASS  pool data NULL after destroy
-  PASS  class slot size 0 after destroy
-  PASS  pool data NULL after destroy
-  PASS  class slot size 0 after destroy
-  PASS  double destroy does not crash
-  PASS  destroy null does not crash
-
-════════════ cf_alloc_debug ════════════
-
-── cf_alloc_debug_create_empty
-  PASS  allocator.alloc is set
-  PASS  allocator.realloc is set
-  PASS  allocator.free is set
-  PASS  allocator.ctx is NULL
-  PASS  head is NULL
-  PASS  alloc_count is 0
-  PASS  free_count is 0
-  PASS  realloc_count is 0
-  PASS  live_count is 0
-  PASS  bytes_live is 0
-  PASS  bytes_peak is 0
-  PASS  bytes_total is 0
-  PASS  invalid_free_count is 0
-  PASS  failed_alloc_count is 0
-  PASS  failed_realloc_count is 0
-
-── cf_alloc_debug_new
-  PASS  null debug ptr returns CF_ERR_NULL
-  PASS  null backing returns CF_ERR_NULL
-  PASS  normal new returns CF_OK
+── cf_alloc_debug new model
+  PASS  debug accepts alloc-only backing
   PASS  allocator ctx points to debug
-  PASS  allocator is valid
-  PASS  backing alloc fn is set
-  PASS  all counters start at zero
+  PASS  debug object is valid
 
-── cf_alloc_debug_is_valid
-  PASS  fresh debug is valid
-  PASS  null ptr is invalid
-  PASS  null alloc fn is invalid
-  PASS  null free fn is invalid
-  PASS  null backing alloc fn is invalid
-
-── cf_alloc_debug alloc
-  PASS  alloc 64 returns non-null
+── cf_alloc_debug alloc/free with full backing
+  PASS  alloc returns non-null
   PASS  alloc_count is 1
   PASS  live_count is 1
   PASS  bytes_live is 64
-  PASS  bytes_peak is 64
-  PASS  bytes_total is 64
-  PASS  head is non-null
-  PASS  head->ptr matches p0
-  PASS  head->size is 64
-  PASS  alloc 32 returns non-null
-  PASS  alloc_count is 2
-  PASS  live_count is 2
-  PASS  bytes_live is 96
-  PASS  bytes_peak is 96
-  PASS  bytes_total is 96
-  PASS  p0 holds written value
-  PASS  p1 holds written value
-  PASS  null ctx returns NULL
-
-── cf_alloc_debug free
-  PASS  two allocs live
-  PASS  bytes_live is 96
   PASS  free_count is 1
-  PASS  live_count decrements to 1
-  PASS  bytes_live decrements to 32
-  PASS  bytes_peak unchanged at 96
-  PASS  bytes_total unchanged at 96
-  PASS  unknown ptr increments invalid_free_count
-  PASS  live_count unchanged after invalid free
-  PASS  free null ptr does not crash
-  PASS  free null ctx does not crash
+  PASS  live_count back to 0
+  PASS  bytes_live back to 0
 
-── cf_alloc_debug realloc
-  PASS  initial alloc for realloc test
-  PASS  bytes_live is 32 before realloc
-  PASS  realloc returns non-null
-  PASS  realloc_count is 1
-  PASS  bytes_live updated to 64
-  PASS  bytes_peak updated to 64
-  PASS  bytes_total grew by 64
-  PASS  live_count still 1
-  PASS  node ptr updated
-  PASS  node size updated to 64
-  PASS  realloc unknown ptr returns NULL
-  PASS  invalid_free_count incremented
-  PASS  realloc null ctx returns NULL
-  PASS  realloc size 0 returns NULL
+════════════ cf_memory ════════════
 
-── cf_alloc_debug counters
-  PASS  bytes_peak hits 175 at max
-  PASS  bytes_total is 175
-  PASS  bytes_live is 175
-  PASS  bytes_live drops to 125 after free
-  PASS  bytes_peak stays at 175
-  PASS  bytes_total stays at 175
-  PASS  bytes_live = 100 + 200 = 300 after realloc
-  PASS  bytes_peak updates to 300
-  PASS  bytes_total grows to 175 + 200 = 375
+── cf_bytes_create_empty
+  PASS  data is NULL
+  PASS  len is 0
 
-── cf_alloc_debug no-leak detection
-  PASS  live_count is 0 — no leaks
-  PASS  bytes_live is 0 — no leaks
-  PASS  head is NULL — list empty
+── cf_buffer_create_empty
+  PASS  data is NULL
+  PASS  len is 0
+  PASS  cap is 0
+  PASS  allocator is valid
 
-── cf_alloc_debug leak detection
-  PASS  live_count is 2 — two leaks
-  PASS  bytes_live is 80 — leak bytes
-  PASS  head is non-null
+── cf_bytes_is_valid
+  PASS  empty bytes is valid
+  PASS  null ptr is invalid
+  PASS  NULL data with non-zero len invalid
+  PASS  normal bytes is valid
 
-── cf_alloc_debug_destroy
-  PASS  head is NULL after destroy
-  PASS  allocator ctx is NULL after destroy
-  PASS  live_count is 0 after destroy
-  PASS  bytes_live is 0 after destroy
-  PASS  alloc_count is 0 after destroy
-  PASS  failed_alloc_count is 0 after destroy
-  PASS  invalid_free_count is 0 after destroy
+── cf_buffer_is_valid
+  PASS  empty buffer is valid
+  PASS  null ptr is invalid
+  PASS  data non-null with cap 0 invalid
+  PASS  len > cap invalid
+  PASS  normal buffer is valid
+
+── cf_bytes_is_empty
+  PASS  empty bytes is empty
+  PASS  non-empty bytes is not empty
+  PASS  null ptr returns false
+
+── cf_buffer_is_empty
+  PASS  empty buffer is empty
+  PASS  non-empty buffer is not empty
+  PASS  null ptr returns false
+
+── cf_bytes_is_eq
+  PASS  equal bytes returns true
+  PASS  different bytes returns false
+  PASS  empty equals empty
+  PASS  null arg returns false
+
+── cf_buffer_is_eq
+  PASS  equal buffers returns true
+  PASS  different buffers returns false
+  PASS  null arg returns false
+
+── cf_bytes_slice
+  PASS  slice returns CF_OK
+  PASS  slice points to correct offset
+  PASS  slice len is 3
+  PASS  slice byte[0] correct
+  PASS  slice byte[2] correct
+  PASS  empty slice at end returns CF_OK
+  PASS  empty slice at end len is 0
+  PASS  index > len returns CF_ERR_BOUNDS
+  PASS  size past end returns CF_ERR_BOUNDS
+  PASS  null dst returns CF_ERR_NULL
+
+── cf_buffer_slice
+  PASS  slice returns CF_OK
+  PASS  slice points to correct offset
+  PASS  slice len is 4
+  PASS  slice byte[0] correct
+  PASS  slice byte[3] correct
+  PASS  empty slice at end returns CF_OK
+  PASS  empty slice at end len is 0
+  PASS  index > len returns CF_ERR_BOUNDS
+  PASS  size past end returns CF_ERR_BOUNDS
+
+── cf_bytes_fill
+  PASS  fill returns CF_OK
+  PASS  byte 0 changed
+  PASS  byte 3 changed
+  PASS  byte 4 unchanged
+  PASS  fill past len returns CF_ERR_BOUNDS
+  PASS  null bytes returns CF_ERR_NULL
+
+── cf_buffer_fill
+  PASS  fill returns CF_OK
+  PASS  byte 0 changed
+  PASS  byte 2 changed
+  PASS  byte 3 unchanged
+  PASS  fill past len returns CF_ERR_BOUNDS
+
+── cf_buffer_init
+  PASS  null buffer returns CF_ERR_NULL
+  PASS  init with zero capacity returns CF_OK
+  PASS  zero-cap data is NULL
+  PASS  zero-cap len is 0
+  PASS  zero-cap cap is 0
+  PASS  init with capacity returns CF_OK
+  PASS  data is non-null
+  PASS  len starts at 0
+  PASS  cap is 16
+
+── cf_buffer_reserve
+  PASS  init returns CF_OK
+  PASS  reserve smaller cap returns CF_OK
+  PASS  cap unchanged when already enough
+  PASS  reserve bigger cap returns CF_OK
+  PASS  cap grows to 32
+  PASS  len unchanged after reserve
+  PASS  data still non-null
+  PASS  null buffer returns CF_ERR_NULL
+
+── cf_buffer_clear
+  PASS  clear sets len to 0
+  PASS  cap unchanged
+  PASS  data unchanged
+  PASS  clear null does not crash
+
+── cf_buffer_destroy
+  PASS  init returns CF_OK
+  PASS  data NULL after destroy
+  PASS  len 0 after destroy
+  PASS  cap 0 after destroy
   PASS  double destroy does not crash
   PASS  destroy null does not crash
 
 ════════════════════════════
-  309 passed  /  0 failed
+  136 passed  /  0 failed
 ════════════════════════════

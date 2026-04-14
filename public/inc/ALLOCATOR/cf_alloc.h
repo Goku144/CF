@@ -52,19 +52,19 @@ typedef struct cf_alloc
 /**
  * cf_alloc_create_empty
  *
- * Return a cf_alloc wired to the system heap (malloc / realloc / free)
+ * Return a cf_alloc wired to the system heap (malloc / realloc (NULL) / free (NULL)
  * with ctx set to CF_NULL.
  * The returned value is fully usable immediately; no further
  * initialisation is required.
  *
- * @return  A ready-to-use heap allocator.
+ * @return  A ready-to-fill heap allocator.
  */
 cf_alloc cf_alloc_create_empty();
 
 /**
  * cf_alloc_new
  *
- * Alias for cf_alloc_create_empty().
+ * Return a cf_alloc wired to the system heap (malloc / realloc (NULL) / free (NULL)
  * Provided so callers can follow the same new / destroy naming
  * convention used by the rest of the library.
  *

@@ -45,19 +45,13 @@ static void *cf_arena_realloc(void *ctx, void *ptr, cf_usize size)
   return ptr;
 }
 
-static void cf_arena_free(void *ctx, void *ptr)
-{
-  CF_UNUSED(ctx);
-  CF_UNUSED(ptr);
-}
-
 /********************************************************************/
 /* construction                                                     */
 /********************************************************************/
 
 static cf_arena cf_arena_create_empty(void)
 {
-  return (cf_arena) {CF_NULL, 0, 0, 0, (cf_alloc) {CF_NULL, cf_arena_alloc, cf_arena_realloc, cf_arena_free}};
+  return (cf_arena) {CF_NULL, 0, 0, 0, (cf_alloc) {CF_NULL, cf_arena_alloc, cf_arena_realloc, CF_NULL}};
 }
 
 /********************************************************************/
@@ -78,7 +72,8 @@ cf_bool cf_arena_is_valid(cf_arena *arena)
     if(arena->cap < arena->offset) return CF_FALSE;
     if(arena->offset < arena->last_usable) return CF_FALSE;
   }
-  if(!cf_alloc_is_valid(&arena->allocator)) return CF_FALSE;
+  if(arena->allocator.alloc == CF_NULL) return CF_FALSE;
+  if(arena->allocator.realloc == CF_NULL) return CF_FALSE;
   return CF_TRUE;
 }
 

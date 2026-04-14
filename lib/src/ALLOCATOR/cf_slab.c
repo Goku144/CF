@@ -52,14 +52,6 @@ static void *cf_slab_alloc(void *ctx, cf_usize size)
   return CF_NULL;
 }
 
-static void *cf_slab_realloc(void *ctx, void *ptr, cf_usize size)
-{
-  CF_UNUSED(ctx);
-  CF_UNUSED(ptr);
-  CF_UNUSED(size);
-  return CF_NULL;
-}
-
 static void cf_slab_free(void *ctx, void *ptr)
 {
   if(ctx == CF_NULL || ptr == CF_NULL) return;
@@ -92,7 +84,7 @@ static cf_slab cf_slab_create_empty(void)
     slab.class[i].pool = cf_pool_create_empty();
     slab.class[i].class_slot_size = 0;
   }
-  slab.allocator = (cf_alloc) {CF_NULL, cf_slab_alloc, cf_slab_realloc, cf_slab_free};
+  slab.allocator = (cf_alloc) {CF_NULL, cf_slab_alloc, CF_NULL, cf_slab_free};
   return slab;
 }
 
@@ -104,7 +96,8 @@ cf_bool cf_slab_is_valid(cf_slab *slab)
 {
   if(slab == CF_NULL) return CF_FALSE;
   if(slab->class_count > CF_SLAB_MAX_CLASS) return CF_FALSE;
-  if(!cf_alloc_is_valid(&slab->allocator)) return CF_FALSE;
+  if(slab->allocator.alloc == CF_NULL) return CF_FALSE;
+  if(slab->allocator.free == CF_NULL) return CF_FALSE;
   for (cf_usize i = 0; i < slab->class_count; i++)
   {
     if(!cf_pool_is_valid(&slab->class[i].pool)) return CF_FALSE;

@@ -38,14 +38,6 @@ static void *cf_pool_alloc(void *ctx, cf_usize size)
   return ptr;
 }
 
-static void *cf_pool_realloc(void *ctx, void *ptr, cf_usize size)
-{
-  CF_UNUSED(ctx);
-  CF_UNUSED(ptr);
-  CF_UNUSED(size);
-  return CF_NULL;
-}
-
 static void cf_pool_free(void *ctx, void *ptr)
 {
   if(ctx == CF_NULL) return;
@@ -68,7 +60,7 @@ static void cf_pool_free(void *ctx, void *ptr)
 
 cf_pool cf_pool_create_empty(void)
 {
-  return (cf_pool) {CF_NULL, CF_NULL, 0, 0, 0, (cf_alloc) {CF_NULL, cf_pool_alloc, cf_pool_realloc, cf_pool_free}};
+  return (cf_pool) {CF_NULL, CF_NULL, 0, 0, 0, (cf_alloc) {CF_NULL, cf_pool_alloc, CF_NULL, cf_pool_free}};
 }
 
 /********************************************************************/
@@ -91,7 +83,8 @@ cf_bool cf_pool_is_valid(cf_pool *pool)
     if(pool->slot_total == 0 || pool->slot_size == 0) return CF_FALSE;
     if(pool->slot_total < pool->slot_used) return CF_FALSE;
   }
-  if(!cf_alloc_is_valid(&pool->allocator)) return CF_FALSE;
+  if(pool->allocator.alloc == CF_NULL) return CF_FALSE;
+  if(pool->allocator.free == CF_NULL) return CF_FALSE;
   return CF_TRUE;
 }
 
