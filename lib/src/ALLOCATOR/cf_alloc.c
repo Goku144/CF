@@ -29,7 +29,7 @@ static void cf_alloc_free(void *ctx, void *ptr)
 /* construction                                                     */
 /********************************************************************/
 
-cf_alloc cf_alloc_create_empty()
+cf_alloc cf_alloc_create_empty(void)
 {
   return  (cf_alloc) {CF_NULL, cf_alloc_alloc, cf_alloc_realloc, cf_alloc_free};
 }

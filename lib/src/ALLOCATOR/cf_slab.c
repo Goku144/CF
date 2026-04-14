@@ -65,7 +65,7 @@ static void cf_slab_free(void *ctx, void *ptr)
 /* construction                                                     */
 /********************************************************************/
 
-static cf_slab cf_slab_create_empty()
+static cf_slab cf_slab_create_empty(void)
 {
   cf_slab slab;
   slab.class_count = 0;

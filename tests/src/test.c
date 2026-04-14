@@ -2,16 +2,19 @@
  * test.c — unit tests for the cf allocator library
  *
  * Covers:
- *   cf_alloc   — create_empty, new, is_valid, alloc/realloc/free dispatch
- *   cf_arena   — new, is_valid, alloc, realloc, free, reset, destroy
- *   cf_pool    — new, is_valid, alloc, realloc, free, reset, destroy
- *   cf_slab    — new, is_valid, alloc, realloc, free, reset, destroy
+ *   cf_alloc       — create_empty, new, is_valid, alloc/realloc/free dispatch
+ *   cf_arena       — new, is_valid, alloc, realloc, free, reset, destroy
+ *   cf_pool        — new, is_valid, alloc, realloc, free, reset, destroy
+ *   cf_slab        — new, is_valid, alloc, realloc, free, reset, destroy
+ *   cf_alloc_debug — create_empty, new, is_valid, alloc, realloc, free,
+ *                    counters, report, reset, destroy
  */
 
 #include "ALLOCATOR/cf_alloc.h"
 #include "ALLOCATOR/cf_arena.h"
 #include "ALLOCATOR/cf_pool.h"
 #include "ALLOCATOR/cf_slab.h"
+#include "ALLOCATOR/cf_alloc_debug.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -819,6 +822,332 @@ static void test_slab_destroy(void)
 
 
 /* =========================================================================
+ * cf_alloc_debug — clean alloc implementation (reference)
+ *
+ * static void *cf_alloc_debug_alloc(void *ctx, cf_usize size)
+ * {
+ *     if(ctx == CF_NULL) return CF_NULL;
+ *     cf_alloc_debug *debug = (cf_alloc_debug *) ctx;
+ *
+ *     cf_alloc_debug_node *new_node = malloc(sizeof(cf_alloc_debug_node));
+ *     if(new_node == CF_NULL) return CF_NULL;
+ *
+ *     void *ptr = debug->backing.alloc(debug->backing.ctx, size);
+ *     if(ptr == CF_NULL)
+ *     {
+ *         free(new_node);
+ *         debug->failed_alloc_count++;
+ *         return CF_NULL;
+ *     }
+ *
+ *     new_node->ptr  = ptr;
+ *     new_node->size = size;
+ *     new_node->next = debug->head;
+ *     debug->head    = new_node;
+ *
+ *     debug->alloc_count++;
+ *     debug->live_count++;
+ *     debug->bytes_live  += size;
+ *     debug->bytes_total += size;
+ *     if(debug->bytes_live > debug->bytes_peak)
+ *         debug->bytes_peak = debug->bytes_live;
+ *
+ *     return ptr;
+ * }
+ * =========================================================================
+ */
+
+/* =========================================================================
+ * cf_alloc_debug tests
+ * =========================================================================
+ */
+
+static void test_debug_create_empty(void)
+{
+    section("cf_alloc_debug_create_empty");
+
+    cf_alloc_debug d = cf_alloc_debug_create_empty();
+
+    CHECK("allocator.alloc is set",    d.allocator.alloc   != CF_NULL);
+    CHECK("allocator.realloc is set",  d.allocator.realloc != CF_NULL);
+    CHECK("allocator.free is set",     d.allocator.free    != CF_NULL);
+    CHECK("allocator.ctx is NULL",     d.allocator.ctx     == CF_NULL);
+    CHECK("head is NULL",              d.head              == CF_NULL);
+    CHECK("alloc_count is 0",          d.alloc_count          == 0);
+    CHECK("free_count is 0",           d.free_count           == 0);
+    CHECK("realloc_count is 0",        d.realloc_count        == 0);
+    CHECK("live_count is 0",           d.live_count           == 0);
+    CHECK("bytes_live is 0",           d.bytes_live           == 0);
+    CHECK("bytes_peak is 0",           d.bytes_peak           == 0);
+    CHECK("bytes_total is 0",          d.bytes_total          == 0);
+    CHECK("invalid_free_count is 0",   d.invalid_free_count   == 0);
+    CHECK("failed_alloc_count is 0",   d.failed_alloc_count   == 0);
+    CHECK("failed_realloc_count is 0", d.failed_realloc_count == 0);
+}
+
+static void test_debug_new(void)
+{
+    section("cf_alloc_debug_new");
+
+    cf_alloc        backing = cf_alloc_new();
+    cf_alloc_debug  d;
+    cf_status       st;
+
+    st = cf_alloc_debug_new(CF_NULL, &backing);
+    CHECK("null debug ptr returns CF_ERR_NULL", st == CF_ERR_NULL);
+
+    st = cf_alloc_debug_new(&d, CF_NULL);
+    CHECK("null backing returns CF_ERR_NULL", st == CF_ERR_NULL);
+
+    st = cf_alloc_debug_new(&d, &backing);
+    CHECK("normal new returns CF_OK",              st == CF_OK);
+    CHECK("allocator ctx points to debug",         d.allocator.ctx == &d);
+    CHECK("allocator is valid",                    cf_alloc_is_valid(&d.allocator));
+    CHECK("backing alloc fn is set",               d.backing.alloc != CF_NULL);
+    CHECK("all counters start at zero",            d.alloc_count == 0 &&
+                                                   d.live_count  == 0 &&
+                                                   d.bytes_live  == 0);
+
+    cf_alloc_debug_destroy(&d);
+}
+
+static void test_debug_is_valid(void)
+{
+    section("cf_alloc_debug_is_valid");
+
+    cf_alloc       backing = cf_alloc_new();
+    cf_alloc_debug d;
+    cf_alloc_debug_new(&d, &backing);
+
+    CHECK("fresh debug is valid",  cf_alloc_debug_is_valid(&d)      == CF_TRUE);
+    CHECK("null ptr is invalid",   cf_alloc_debug_is_valid(CF_NULL) == CF_FALSE);
+
+    cf_alloc_debug bad = d;
+    bad.allocator.alloc = CF_NULL;
+    CHECK("null alloc fn is invalid", cf_alloc_debug_is_valid(&bad) == CF_FALSE);
+
+    bad = d;
+    bad.allocator.free = CF_NULL;
+    CHECK("null free fn is invalid", cf_alloc_debug_is_valid(&bad) == CF_FALSE);
+
+    bad = d;
+    bad.backing.alloc = CF_NULL;
+    CHECK("null backing alloc fn is invalid", cf_alloc_debug_is_valid(&bad) == CF_FALSE);
+
+    cf_alloc_debug_destroy(&d);
+}
+
+static void test_debug_alloc(void)
+{
+    section("cf_alloc_debug alloc");
+
+    cf_alloc       backing = cf_alloc_new();
+    cf_alloc_debug d;
+    cf_alloc_debug_new(&d, &backing);
+    cf_alloc *a = &d.allocator;
+
+    void *p0 = a->alloc(a->ctx, 64);
+    CHECK("alloc 64 returns non-null",   p0 != CF_NULL);
+    CHECK("alloc_count is 1",            d.alloc_count == 1);
+    CHECK("live_count is 1",             d.live_count  == 1);
+    CHECK("bytes_live is 64",            d.bytes_live  == 64);
+    CHECK("bytes_peak is 64",            d.bytes_peak  == 64);
+    CHECK("bytes_total is 64",           d.bytes_total == 64);
+    CHECK("head is non-null",            d.head        != CF_NULL);
+    CHECK("head->ptr matches p0",        d.head->ptr   == p0);
+    CHECK("head->size is 64",            d.head->size  == 64);
+
+    void *p1 = a->alloc(a->ctx, 32);
+    CHECK("alloc 32 returns non-null",   p1 != CF_NULL);
+    CHECK("alloc_count is 2",            d.alloc_count == 2);
+    CHECK("live_count is 2",             d.live_count  == 2);
+    CHECK("bytes_live is 96",            d.bytes_live  == 96);
+    CHECK("bytes_peak is 96",            d.bytes_peak  == 96);
+    CHECK("bytes_total is 96",           d.bytes_total == 96);
+
+    memset(p0, 0xAA, 64);
+    memset(p1, 0xBB, 32);
+    CHECK("p0 holds written value", ((cf_u8 *)p0)[0]  == 0xAA);
+    CHECK("p1 holds written value", ((cf_u8 *)p1)[0]  == 0xBB);
+
+    CHECK("null ctx returns NULL",  a->alloc(CF_NULL, 8) == CF_NULL);
+
+    cf_alloc_debug_destroy(&d);
+}
+
+static void test_debug_free(void)
+{
+    section("cf_alloc_debug free");
+
+    cf_alloc       backing = cf_alloc_new();
+    cf_alloc_debug d;
+    cf_alloc_debug_new(&d, &backing);
+    cf_alloc *a = &d.allocator;
+
+    void *p0 = a->alloc(a->ctx, 64);
+    void *p1 = a->alloc(a->ctx, 32);
+    CHECK("two allocs live",  d.live_count == 2);
+    CHECK("bytes_live is 96", d.bytes_live == 96);
+
+    a->free(a->ctx, p0);
+    CHECK("free_count is 1",              d.free_count  == 1);
+    CHECK("live_count decrements to 1",   d.live_count  == 1);
+    CHECK("bytes_live decrements to 32",  d.bytes_live  == 32);
+    CHECK("bytes_peak unchanged at 96",   d.bytes_peak  == 96);
+    CHECK("bytes_total unchanged at 96",  d.bytes_total == 96);
+
+    cf_u8 outside[32];
+    a->free(a->ctx, outside);
+    CHECK("unknown ptr increments invalid_free_count",
+          d.invalid_free_count == 1);
+    CHECK("live_count unchanged after invalid free", d.live_count == 1);
+
+    a->free(a->ctx, CF_NULL);
+    CHECK("free null ptr does not crash", CF_TRUE);
+
+    a->free(CF_NULL, p1);
+    CHECK("free null ctx does not crash", CF_TRUE);
+
+    cf_alloc_debug_destroy(&d);
+}
+
+static void test_debug_realloc(void)
+{
+    section("cf_alloc_debug realloc");
+
+    cf_alloc       backing = cf_alloc_new();
+    cf_alloc_debug d;
+    cf_alloc_debug_new(&d, &backing);
+    cf_alloc *a = &d.allocator;
+
+    void *p0 = a->alloc(a->ctx, 32);
+    CHECK("initial alloc for realloc test", p0 != CF_NULL);
+    CHECK("bytes_live is 32 before realloc", d.bytes_live == 32);
+
+    void *p1 = a->realloc(a->ctx, p0, 64);
+    CHECK("realloc returns non-null",         p1 != CF_NULL);
+    CHECK("realloc_count is 1",               d.realloc_count == 1);
+    CHECK("bytes_live updated to 64",         d.bytes_live    == 64);
+    CHECK("bytes_peak updated to 64",         d.bytes_peak    == 64);
+    CHECK("bytes_total grew by 64",           d.bytes_total   == 32 + 64);
+    CHECK("live_count still 1",               d.live_count    == 1);
+    CHECK("node ptr updated",                 d.head->ptr     == p1);
+    CHECK("node size updated to 64",          d.head->size    == 64);
+
+    cf_u8 outside[32];
+    void *bad = a->realloc(a->ctx, outside, 16);
+    CHECK("realloc unknown ptr returns NULL",          bad == CF_NULL);
+    CHECK("invalid_free_count incremented",            d.invalid_free_count == 1);
+
+    CHECK("realloc null ctx returns NULL", a->realloc(CF_NULL, p1, 8) == CF_NULL);
+    CHECK("realloc size 0 returns NULL",   a->realloc(a->ctx, p1, 0)  == CF_NULL);
+
+    cf_alloc_debug_destroy(&d);
+}
+
+static void test_debug_counters(void)
+{
+    section("cf_alloc_debug counters");
+
+    cf_alloc       backing = cf_alloc_new();
+    cf_alloc_debug d;
+    cf_alloc_debug_new(&d, &backing);
+    cf_alloc *a = &d.allocator;
+
+    void *p0 = a->alloc(a->ctx, 100);
+    void *p1 = a->alloc(a->ctx, 50);
+    void *p2 = a->alloc(a->ctx, 25);
+
+    CHECK("bytes_peak hits 175 at max",   d.bytes_peak  == 175);
+    CHECK("bytes_total is 175",           d.bytes_total == 175);
+    CHECK("bytes_live is 175",            d.bytes_live  == 175);
+
+    a->free(a->ctx, p1);
+    CHECK("bytes_live drops to 125 after free", d.bytes_live == 125);
+    CHECK("bytes_peak stays at 175",            d.bytes_peak == 175);
+    CHECK("bytes_total stays at 175",           d.bytes_total == 175);
+
+    a->realloc(a->ctx, p2, 200);
+    CHECK("bytes_live = 100 + 200 = 300 after realloc", d.bytes_live  == 300);
+    CHECK("bytes_peak updates to 300",                   d.bytes_peak  == 300);
+    CHECK("bytes_total grows to 175 + 200 = 375",        d.bytes_total == 375);
+
+    cf_alloc_debug_destroy(&d);
+    (void)p0;
+}
+
+static void test_debug_no_leak(void)
+{
+    section("cf_alloc_debug no-leak detection");
+
+    cf_alloc       backing = cf_alloc_new();
+    cf_alloc_debug d;
+    cf_alloc_debug_new(&d, &backing);
+    cf_alloc *a = &d.allocator;
+
+    void *p0 = a->alloc(a->ctx, 64);
+    void *p1 = a->alloc(a->ctx, 32);
+    a->free(a->ctx, p0);
+    a->free(a->ctx, p1);
+
+    CHECK("live_count is 0 — no leaks",  d.live_count == 0);
+    CHECK("bytes_live is 0 — no leaks",  d.bytes_live == 0);
+    CHECK("head is NULL — list empty",   d.head       == CF_NULL);
+
+    cf_alloc_debug_destroy(&d);
+}
+
+static void test_debug_leak_detection(void)
+{
+    section("cf_alloc_debug leak detection");
+
+    cf_alloc       backing = cf_alloc_new();
+    cf_alloc_debug d;
+    cf_alloc_debug_new(&d, &backing);
+    cf_alloc *a = &d.allocator;
+
+    a->alloc(a->ctx, 64);
+    void *p1 = a->alloc(a->ctx, 32);
+    a->free(a->ctx, p1);
+    a->alloc(a->ctx, 16);
+
+    CHECK("live_count is 2 — two leaks",   d.live_count == 2);
+    CHECK("bytes_live is 80 — leak bytes", d.bytes_live == 80);
+    CHECK("head is non-null",              d.head       != CF_NULL);
+
+    cf_alloc_debug_destroy(&d);
+}
+
+static void test_debug_destroy(void)
+{
+    section("cf_alloc_debug_destroy");
+
+    cf_alloc       backing = cf_alloc_new();
+    cf_alloc_debug d;
+    cf_alloc_debug_new(&d, &backing);
+    cf_alloc *a = &d.allocator;
+
+    a->alloc(a->ctx, 64);
+    a->alloc(a->ctx, 32);
+
+    cf_alloc_debug_destroy(&d);
+    CHECK("head is NULL after destroy",              d.head                 == CF_NULL);
+    CHECK("allocator ctx is NULL after destroy",     d.allocator.ctx        == CF_NULL);
+    CHECK("live_count is 0 after destroy",           d.live_count           == 0);
+    CHECK("bytes_live is 0 after destroy",           d.bytes_live           == 0);
+    CHECK("alloc_count is 0 after destroy",          d.alloc_count          == 0);
+    CHECK("failed_alloc_count is 0 after destroy",   d.failed_alloc_count   == 0);
+    CHECK("invalid_free_count is 0 after destroy",   d.invalid_free_count   == 0);
+
+    cf_alloc_debug_destroy(&d);
+    CHECK("double destroy does not crash", CF_TRUE);
+
+    cf_alloc_debug_destroy(CF_NULL);
+    CHECK("destroy null does not crash", CF_TRUE);
+}
+
+
+/* =========================================================================
  * main
  * =========================================================================
  */
@@ -858,6 +1187,18 @@ int main(void)
     test_slab_free();
     test_slab_reset();
     test_slab_destroy();
+
+    printf("\n════════════ cf_alloc_debug ════════════\n");
+    test_debug_create_empty();
+    test_debug_new();
+    test_debug_is_valid();
+    test_debug_alloc();
+    test_debug_free();
+    test_debug_realloc();
+    test_debug_counters();
+    test_debug_no_leak();
+    test_debug_leak_detection();
+    test_debug_destroy();
 
     summary();
     return s_failed == 0 ? 0 : 1;

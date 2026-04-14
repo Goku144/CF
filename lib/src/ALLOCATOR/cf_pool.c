@@ -48,7 +48,7 @@ static void cf_pool_free(void *ctx, void *ptr)
 /* construction                                                     */
 /********************************************************************/
 
-cf_pool cf_pool_create_empty()
+cf_pool cf_pool_create_empty(void)
 {
   return (cf_pool) {CF_NULL, CF_NULL, 0, 0, 0, (cf_alloc) {CF_NULL, cf_pool_alloc, cf_pool_realloc, cf_pool_free}};
 }

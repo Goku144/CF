@@ -273,6 +273,122 @@ cf allocator test suite
   PASS  double destroy does not crash
   PASS  destroy null does not crash
 
+════════════ cf_alloc_debug ════════════
+
+── cf_alloc_debug_create_empty
+  PASS  allocator.alloc is set
+  PASS  allocator.realloc is set
+  PASS  allocator.free is set
+  PASS  allocator.ctx is NULL
+  PASS  head is NULL
+  PASS  alloc_count is 0
+  PASS  free_count is 0
+  PASS  realloc_count is 0
+  PASS  live_count is 0
+  PASS  bytes_live is 0
+  PASS  bytes_peak is 0
+  PASS  bytes_total is 0
+  PASS  invalid_free_count is 0
+  PASS  failed_alloc_count is 0
+  PASS  failed_realloc_count is 0
+
+── cf_alloc_debug_new
+  PASS  null debug ptr returns CF_ERR_NULL
+  PASS  null backing returns CF_ERR_NULL
+  PASS  normal new returns CF_OK
+  PASS  allocator ctx points to debug
+  PASS  allocator is valid
+  PASS  backing alloc fn is set
+  PASS  all counters start at zero
+
+── cf_alloc_debug_is_valid
+  PASS  fresh debug is valid
+  PASS  null ptr is invalid
+  PASS  null alloc fn is invalid
+  PASS  null free fn is invalid
+  PASS  null backing alloc fn is invalid
+
+── cf_alloc_debug alloc
+  PASS  alloc 64 returns non-null
+  PASS  alloc_count is 1
+  PASS  live_count is 1
+  PASS  bytes_live is 64
+  PASS  bytes_peak is 64
+  PASS  bytes_total is 64
+  PASS  head is non-null
+  PASS  head->ptr matches p0
+  PASS  head->size is 64
+  PASS  alloc 32 returns non-null
+  PASS  alloc_count is 2
+  PASS  live_count is 2
+  PASS  bytes_live is 96
+  PASS  bytes_peak is 96
+  PASS  bytes_total is 96
+  PASS  p0 holds written value
+  PASS  p1 holds written value
+  PASS  null ctx returns NULL
+
+── cf_alloc_debug free
+  PASS  two allocs live
+  PASS  bytes_live is 96
+  PASS  free_count is 1
+  PASS  live_count decrements to 1
+  PASS  bytes_live decrements to 32
+  PASS  bytes_peak unchanged at 96
+  PASS  bytes_total unchanged at 96
+  PASS  unknown ptr increments invalid_free_count
+  PASS  live_count unchanged after invalid free
+  PASS  free null ptr does not crash
+  PASS  free null ctx does not crash
+
+── cf_alloc_debug realloc
+  PASS  initial alloc for realloc test
+  PASS  bytes_live is 32 before realloc
+  PASS  realloc returns non-null
+  PASS  realloc_count is 1
+  PASS  bytes_live updated to 64
+  PASS  bytes_peak updated to 64
+  PASS  bytes_total grew by 64
+  PASS  live_count still 1
+  PASS  node ptr updated
+  PASS  node size updated to 64
+  PASS  realloc unknown ptr returns NULL
+  PASS  invalid_free_count incremented
+  PASS  realloc null ctx returns NULL
+  PASS  realloc size 0 returns NULL
+
+── cf_alloc_debug counters
+  PASS  bytes_peak hits 175 at max
+  PASS  bytes_total is 175
+  PASS  bytes_live is 175
+  PASS  bytes_live drops to 125 after free
+  PASS  bytes_peak stays at 175
+  PASS  bytes_total stays at 175
+  PASS  bytes_live = 100 + 200 = 300 after realloc
+  PASS  bytes_peak updates to 300
+  PASS  bytes_total grows to 175 + 200 = 375
+
+── cf_alloc_debug no-leak detection
+  PASS  live_count is 0 — no leaks
+  PASS  bytes_live is 0 — no leaks
+  PASS  head is NULL — list empty
+
+── cf_alloc_debug leak detection
+  PASS  live_count is 2 — two leaks
+  PASS  bytes_live is 80 — leak bytes
+  PASS  head is non-null
+
+── cf_alloc_debug_destroy
+  PASS  head is NULL after destroy
+  PASS  allocator ctx is NULL after destroy
+  PASS  live_count is 0 after destroy
+  PASS  bytes_live is 0 after destroy
+  PASS  alloc_count is 0 after destroy
+  PASS  failed_alloc_count is 0 after destroy
+  PASS  invalid_free_count is 0 after destroy
+  PASS  double destroy does not crash
+  PASS  destroy null does not crash
+
 ════════════════════════════
-  215 passed  /  0 failed
+  309 passed  /  0 failed
 ════════════════════════════
