@@ -188,6 +188,88 @@ cf allocator capability-model test suite
   PASS  double destroy does not crash
   PASS  destroy null does not crash
 
+── cf_buffer_append_bytes
+  PASS  init returns CF_OK
+  PASS  append returns CF_OK
+  PASS  len becomes 3
+  PASS  byte 0 correct
+  PASS  byte 1 correct
+  PASS  byte 2 correct
+
+── cf_buffer_append_byte
+  PASS  init returns CF_OK
+  PASS  append byte returns CF_OK
+  PASS  len becomes 1
+  PASS  stored byte correct
+  PASS  second append byte returns CF_OK
+  PASS  len becomes 2
+  PASS  stored second byte correct
+
+── cf_buffer_append_bytes_null
+  PASS  init returns CF_OK
+  PASS  null dst returns CF_ERR_NULL
+  PASS  null src returns CF_ERR_NULL
+
+── cf_buffer_append_bytes_invalid_src
+  PASS  init returns CF_OK
+  PASS  invalid src returns CF_ERR_STATE
+
+── cf_buffer_append_bytes_multiple
+  PASS  init returns CF_OK
+  PASS  first append returns CF_OK
+  PASS  second append returns CF_OK
+  PASS  len becomes 5
+  PASS  byte 0 correct
+  PASS  byte 1 correct
+  PASS  byte 2 correct
+  PASS  byte 3 correct
+  PASS  byte 4 correct
+
+── cf_buffer_append_bytes_grow
+  PASS  init returns CF_OK
+  PASS  first append returns CF_OK
+  PASS  second append requiring grow returns CF_OK
+  PASS  len becomes 6
+  PASS  byte 0 correct
+  PASS  byte 1 correct
+  PASS  byte 2 correct
+  PASS  byte 3 correct
+  PASS  byte 4 correct
+  PASS  byte 5 correct
+
+── cf_bytes_copy_as_buffer
+  PASS  init returns CF_OK
+  PASS  copy returns CF_OK
+  PASS  buffer len becomes 4
+  PASS  buffer cap >= 4
+  PASS  byte 0 correct
+  PASS  byte 1 correct
+  PASS  byte 2 correct
+  PASS  byte 3 correct
+  PASS  copy is independent from source
+
+── cf_buffer_view_as_bytes
+  PASS  view returns CF_OK
+  PASS  view points to same data
+  PASS  view len equals buffer len
+  PASS  view byte 0 correct
+  PASS  view byte 3 correct
+  PASS  view reflects buffer changes
+
+── cf_buffer_truncate
+  PASS  truncate returns CF_OK
+  PASS  len becomes 3
+  PASS  cap unchanged
+  PASS  data unchanged
+  PASS  byte 0 unchanged
+  PASS  byte 2 unchanged
+  PASS  truncate same len CF_OK
+  PASS  len still 3
+  PASS  truncate to zero CF_OK
+  PASS  len becomes 0
+  PASS  truncate past len returns CF_ERR_BOUNDS
+  PASS  null buffer returns CF_ERR_NULL
+
 ════════════════════════════
-  136 passed  /  0 failed
+  200 passed  /  0 failed
 ════════════════════════════

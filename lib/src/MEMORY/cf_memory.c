@@ -17,6 +17,7 @@
  */
 
 #include "MEMORY/cf_memory.h"
+#include <string.h>
 
 /* ------------------------------------------------------------------ */
 /* Internal helpers                                                    */
@@ -94,10 +95,7 @@ cf_bool cf_bytes_is_eq(cf_bytes *b1, cf_bytes *b2)
   if(!cf_bytes_is_valid(b1) || !cf_bytes_is_valid(b2)) 
     return CF_FALSE;
   if(b1->len != b2->len) return CF_FALSE;
-  for (cf_usize i = 0; i < b1->len; i++)
-    if(b1->data[i] != b2->data[i]) 
-      return CF_FALSE;
-  return CF_TRUE;
+  return memcmp(b1->data, b2->data, b1->len) != 0 ? CF_FALSE :  CF_TRUE;
 }
 
 cf_bool cf_buffer_is_eq(cf_buffer *buf1, cf_buffer *buf2)
@@ -106,10 +104,7 @@ cf_bool cf_buffer_is_eq(cf_buffer *buf1, cf_buffer *buf2)
   if(!cf_buffer_is_valid(buf1) || !cf_buffer_is_valid(buf2)) 
     return CF_FALSE;
   if(buf1->len != buf2->len) return CF_FALSE;
-  for (cf_usize i = 0; i < buf1->len; i++)
-    if(buf1->data[i] != buf2->data[i]) 
-      return CF_FALSE;
-  return CF_TRUE;
+  return memcmp(buf1->data, buf2->data, buf1->len) != 0 ? CF_FALSE :  CF_TRUE;
 }
 
 /* ------------------------------------------------------------------ */
@@ -149,8 +144,7 @@ cf_status cf_bytes_fill(cf_bytes *bytes, cf_u8 fill, cf_usize size)
   if(bytes == CF_NULL) return CF_ERR_NULL;
   if(!cf_bytes_is_valid(bytes)) return CF_ERR_STATE;
   if(size > bytes->len) return CF_ERR_BOUNDS;
-  for (cf_usize i = 0; i < size; i++)
-    bytes->data[i] = fill;
+  memset(bytes->data, fill, size);
   return CF_OK;
 }
 
@@ -159,8 +153,7 @@ cf_status cf_buffer_fill(cf_buffer *buffer, cf_u8 fill, cf_usize size)
   if(buffer == CF_NULL) return CF_ERR_NULL;
   if(!cf_buffer_is_valid(buffer)) return CF_ERR_STATE;
   if(size > buffer->len) return CF_ERR_BOUNDS;
-  for (cf_usize i = 0; i < size; i++)
-    buffer->data[i] = fill;
+  memset(buffer->data, fill, size);
   return CF_OK;
 }
 
@@ -178,9 +171,8 @@ cf_status cf_buffer_init(cf_buffer *buffer, cf_alloc *allocator, cf_usize capaci
     buffer->allocator = *allocator;
   }
   if(capacity == 0) return CF_OK;
-  void *ptr = buffer->allocator.alloc(buffer->allocator.ctx, capacity);
-  if(ptr == CF_NULL) return CF_ERR_OOM;
-  buffer->data = ptr;
+  buffer->data  = buffer->allocator.alloc(buffer->allocator.ctx, capacity);
+  if(buffer->data == CF_NULL) return CF_ERR_OOM;
   buffer->cap = capacity;
   return CF_OK;
 }
@@ -192,7 +184,7 @@ cf_status cf_buffer_reserve(cf_buffer *buffer, cf_usize size)
   if(size > buffer->cap)
   {
     if(buffer->allocator.realloc == CF_NULL) return CF_ERR_OOM;
-    void *ptr = buffer->allocator.realloc(buffer->allocator.ctx, buffer->data, size);
+    void *ptr = buffer->allocator.realloc(buffer->allocator.ctx, buffer->data, size + size % CF_APPEND_BYTE_SIZE);
     if(ptr == CF_NULL) return CF_ERR_OOM;
     buffer->data = ptr;
     buffer->cap = size;
@@ -220,15 +212,53 @@ void cf_buffer_destroy(cf_buffer *buffer)
 /* Buffer append / set                                                 */
 /* ------------------------------------------------------------------ */
 
+cf_status cf_buffer_append_bytes(cf_buffer *dst_buffer, cf_bytes *src_bytes)
+{
+  if(dst_buffer == CF_NULL || src_bytes == CF_NULL) return CF_ERR_NULL;
+  if(!cf_buffer_is_valid(dst_buffer) || !cf_bytes_is_valid(src_bytes)) return CF_ERR_STATE;
+  if(src_bytes->len > dst_buffer->cap - dst_buffer->len)
+  {
+    cf_usize reserve_len = dst_buffer->cap + src_bytes->len;
+    cf_status state = cf_buffer_reserve(dst_buffer,  reserve_len);
+    if(state != CF_OK) return state;
+  }
+  memcpy(dst_buffer->data + dst_buffer->len, src_bytes->data, src_bytes->len);
+  dst_buffer->len += src_bytes->len;
+  return CF_OK;
+}
 
+cf_status cf_buffer_append_byte(cf_buffer *dst_buffer, cf_u8 byte)
+{
+  return cf_buffer_append_bytes(dst_buffer, &(cf_bytes) {&byte, 1});
+}
 
 /* ------------------------------------------------------------------ */
-/* Buffer views                                                        */
+/* Bytes/Buffer copys/views                                            */
 /* ------------------------------------------------------------------ */
 
+cf_status  cf_bytes_copy_as_buffer(cf_buffer *dst_buffer, cf_bytes *src_bytes)
+{
+  cf_status state;
+  if((state = cf_buffer_reserve(dst_buffer, src_bytes->len)) != CF_OK) return state;
+  memcpy(dst_buffer->data, src_bytes->data, src_bytes->len);
+  dst_buffer->len = src_bytes->len;
+  return CF_OK;
+}
 
+cf_status cf_buffer_view_as_bytes(cf_bytes *dst_bytes, cf_buffer *src_buffer)
+{
+  return cf_buffer_slice(dst_bytes, src_buffer, 0, src_buffer->len);
+}
 
 /* ------------------------------------------------------------------ */
 /* Buffer truncate                                                     */
 /* ------------------------------------------------------------------ */
 
+cf_status cf_buffer_truncate(cf_buffer *buffer, cf_usize new_len)
+{
+  if(buffer == CF_NULL) return CF_ERR_NULL;
+  if(!cf_buffer_is_valid(buffer)) return CF_ERR_STATE;
+  if(new_len > buffer->len) return CF_ERR_BOUNDS;
+  buffer->len = new_len;
+  return CF_OK;
+}
