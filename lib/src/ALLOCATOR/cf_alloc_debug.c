@@ -17,200 +17,162 @@
  */
 
 #include "ALLOCATOR/cf_alloc_debug.h"
+#include "ALLOCATOR/cf_alloc.h"
 
-#include <stdio.h>
 #include <stdlib.h>
+#include <stdio.h>
 
 static void *cf_alloc_debug_alloc(void *ctx, cf_usize size)
 {
   if(ctx == CF_NULL) return CF_NULL;
-  cf_alloc_debug *debug = (cf_alloc_debug *) ctx;
-  cf_alloc_debug_node *new_node = malloc(sizeof(cf_alloc_debug_node));
-  if(new_node == CF_NULL) return CF_NULL;
-  void *ptr = debug->backing.alloc(debug->backing.ctx, size);
-  if(ptr == CF_NULL)
-  {
-    free(new_node);
-    debug->failed_alloc_count++;
-    return CF_NULL;
-  }
-  new_node->ptr  = ptr;
-  new_node->size = size;
-  new_node->next = debug->head;
-  debug->head = new_node;
-  debug->alloc_count++;
-  debug->live_count++;
-  debug->bytes_live  += size;
-  debug->bytes_total += size;
-  if(debug->bytes_live > debug->bytes_peak)
-    debug->bytes_peak = debug->bytes_live;
+  cf_alloc_debug *alloc_debug = (cf_alloc_debug *) ctx;
+  CF_ASSERT_TYPE_SIZE(*alloc_debug, cf_alloc_debug);
+
+  void *ptr = alloc_debug->internal_allocator.alloc(alloc_debug->internal_allocator.ctx, size);
+  if(ptr == CF_NULL) {alloc_debug->ptr_internal_invalid_alloc++; return CF_NULL;}
+
+  if(alloc_debug->ptr_free > 0) 
+    alloc_debug->ptr_free--;
+  else 
+    alloc_debug->ptr_live++;
+  alloc_debug->ptr_all_live++;
+  alloc_debug->latest_valid_ptr = ptr;
+  if(alloc_debug->ptr_max_live < alloc_debug->ptr_live)
+    alloc_debug->ptr_max_live = alloc_debug->ptr_live;
+
+  cf_alloc_debug_node *new_node = malloc(sizeof (cf_alloc_debug_node));
+  if(new_node == CF_NULL) {alloc_debug->ptr_invalid_alloc++; return ptr;}
+
+  new_node->ptr = ptr;
+  new_node->next = alloc_debug->head;
+  alloc_debug->head = new_node;
   return ptr;
 }
 
 static void *cf_alloc_debug_realloc(void *ctx, void *ptr, cf_usize size)
 {
-  if(ctx == CF_NULL || size == 0) return CF_NULL;
-  cf_alloc_debug *debug = (cf_alloc_debug *) ctx;
-  cf_alloc_debug_node *curr = debug->head;
-  while(curr != CF_NULL)
+  if(ctx == CF_NULL) return CF_NULL;
+  cf_alloc_debug *alloc_debug = (cf_alloc_debug *) ctx;
+  cf_alloc_debug_node *node = alloc_debug->head;
+
+  while (node != CF_NULL)
   {
-    if(curr->ptr == ptr)
+    if(node->ptr == ptr)
     {
-      void *new_ptr = debug->backing.realloc(debug->backing.ctx, ptr, size);
-      if(new_ptr == CF_NULL)
-      {
-        debug->failed_realloc_count++;
-        return CF_NULL;
-      }
-      debug->bytes_live  -= curr->size;
-      debug->bytes_live  += size;
-      debug->bytes_total += size;
-      debug->realloc_count++;
-
-      if(debug->bytes_live > debug->bytes_peak)
-        debug->bytes_peak = debug->bytes_live;
-
-      curr->ptr  = new_ptr;
-      curr->size = size;
-      return new_ptr;
+      void *ptr_realloc = alloc_debug->internal_allocator.realloc(alloc_debug->internal_allocator.ctx, ptr, size);
+      if(ptr_realloc == CF_NULL) {alloc_debug->ptr_internal_invalid_realloc++; return CF_NULL;}
+      node->ptr = ptr_realloc;
+      alloc_debug->latest_valid_ptr = ptr_realloc;
+      return ptr_realloc;
     }
-    curr = curr->next;
+    node = node->next;
   }
-  debug->invalid_free_count++;
+
   return CF_NULL;
 }
 
 static void cf_alloc_debug_free(void *ctx, void *ptr)
 {
-  if(ctx == CF_NULL || ptr == CF_NULL) return;
-  cf_alloc_debug *debug = (cf_alloc_debug *) ctx;
-  cf_alloc_debug_node *prev = CF_NULL;
-  cf_alloc_debug_node *curr = debug->head;
-  while(curr != CF_NULL)
+  if(ctx == CF_NULL) return;
+  cf_alloc_debug *alloc_debug = (cf_alloc_debug *) ctx;
+  cf_alloc_debug_node *node = alloc_debug->head;
+  cf_alloc_debug_node *old_node = CF_NULL;
+  while (node != CF_NULL)
   {
-    if(curr->ptr == ptr)
+    if(node->ptr == ptr)
     {
-      if(prev == CF_NULL)
-        debug->head = curr->next;
+      if(old_node == CF_NULL) 
+        alloc_debug->head = node->next;
+      else 
+        old_node->next = node->next;
+      
+      if(alloc_debug->ptr_live > 0) 
+        alloc_debug->ptr_live--;
       else
-        prev->next = curr->next;
-      debug->bytes_live -= curr->size;
-      debug->live_count--;
-      debug->free_count++;
-      free(curr);
-      debug->backing.free(debug->backing.ctx, ptr);
+        alloc_debug->ptr_free++;
+      alloc_debug->ptr_all_free++;
+      alloc_debug->latest_valid_ptr = alloc_debug->head != CF_NULL ? alloc_debug->head->ptr : CF_NULL;
+
+      if(alloc_debug->ptr_max_free < alloc_debug->ptr_free)
+        alloc_debug->ptr_max_free = alloc_debug->ptr_free;
+
+      alloc_debug->internal_allocator.free(alloc_debug->internal_allocator.ctx, ptr);
+      free(node);
       return;
     }
-    prev = curr;
-    curr = curr->next;
+    old_node = node;
+    node = node->next;
   }
-  debug->invalid_free_count++;
+  alloc_debug->ptr_internal_invalid_free++;
 }
 
-/********************************************************************/
-/* construction                                                     */
-/********************************************************************/
 
-cf_alloc_debug cf_alloc_debug_create_empty(void)
+static cf_alloc_debug cf_alloc_debug_create(void)
 {
-  cf_alloc_debug debug;
-  debug.backing = cf_alloc_create_empty();
-  debug.allocator = (cf_alloc) {
-    CF_NULL,
-    cf_alloc_debug_alloc,
-    cf_alloc_debug_realloc,
-    cf_alloc_debug_free
+  cf_alloc_debug alloc_debug = {0};
+  alloc_debug.allocator = (cf_alloc) 
+  {
+    .ctx = CF_NULL,
+    .alloc = cf_alloc_debug_alloc,
+    .realloc = cf_alloc_debug_realloc,
+    .free = cf_alloc_debug_free,
   };
-  debug.head = CF_NULL;
-  debug.alloc_count = 0;
-  debug.free_count = 0;
-  debug.realloc_count = 0;
-  debug.live_count = 0;
-  debug.bytes_live = 0;
-  debug.bytes_peak = 0;
-  debug.bytes_total = 0;
-  debug.invalid_free_count = 0;
-  debug.failed_alloc_count = 0;
-  debug.failed_realloc_count = 0;
-  return debug;
+  return alloc_debug;
 }
 
-/********************************************************************/
-/* validation                                                       */
-/********************************************************************/
-
-cf_bool cf_alloc_debug_is_valid(cf_alloc_debug *debug)
+void cf_alloc_debug_new(cf_alloc_debug *alloc_debug, cf_alloc *alloc, char* statement)
 {
-  if(debug == CF_NULL) return CF_FALSE;
-  if(!cf_alloc_is_valid(&debug->backing)) return CF_FALSE;
-  if(!cf_alloc_is_valid(&debug->allocator)) return CF_FALSE;
-  if(debug->live_count > debug->alloc_count) return CF_FALSE;
-  if(debug->free_count > debug->alloc_count + debug->realloc_count) return CF_FALSE;
-  if(debug->bytes_live > debug->bytes_total) return CF_FALSE;
-  if(debug->bytes_peak < debug->bytes_live) return CF_FALSE;
-
-  return CF_TRUE;
+  if (alloc_debug == CF_NULL || alloc == CF_NULL) return;
+  CF_ASSERT_TYPE_SIZE(*alloc_debug, cf_alloc_debug);
+  CF_ASSERT_TYPE_SIZE(*alloc, cf_alloc);
+  *alloc_debug = cf_alloc_debug_create();
+  alloc_debug->allocator.ctx = alloc_debug;
+  alloc_debug->internal_allocator = *alloc;
+  alloc_debug->statement = statement == CF_NULL ? "NO STATEMENT DECLARED" : statement;
 }
 
-/********************************************************************/
-/* lifecycle                                                        */
-/********************************************************************/
-
-cf_status cf_alloc_debug_new(cf_alloc_debug *debug, cf_alloc *backing)
-{
-  if(debug == CF_NULL || backing == CF_NULL) return CF_ERR_NULL;
-  if(!cf_alloc_is_valid(backing)) return CF_ERR_INVALID;
-  *debug = cf_alloc_debug_create_empty();
-  debug->backing = *backing;
-  debug->allocator.ctx = debug;
-  return CF_OK;
-}
-
-void cf_alloc_debug_destroy(cf_alloc_debug *debug)
+void cf_alloc_debug_log(cf_alloc_debug *debug, int line)
 {
   if(debug == CF_NULL) return;
-  cf_alloc_debug_node *curr = debug->head;
-  while(curr != CF_NULL)
-  {
-    cf_alloc_debug_node *next = curr->next;
-    debug->backing.free(debug->backing.ctx, curr->ptr);
-    free(curr);
-    curr = next;
-  }
-  *debug = cf_alloc_debug_create_empty();
-}
-
-/********************************************************************/
-/* operations                                                       */
-/********************************************************************/
-
-void cf_alloc_debug_report(cf_alloc_debug *debug)
-{
-  if(debug == CF_NULL) return;
-  printf("=== cf_alloc_debug report ===\n");
-  printf("  alloc_count          : %zu\n", debug->alloc_count);
-  printf("  realloc_count        : %zu\n", debug->realloc_count);
-  printf("  free_count           : %zu\n", debug->free_count);
-  printf("  live_count           : %zu\n", debug->live_count);
-  printf("  bytes_live           : %zu\n", debug->bytes_live);
-  printf("  bytes_peak           : %zu\n", debug->bytes_peak);
-  printf("  bytes_total          : %zu\n", debug->bytes_total);
-  printf("  invalid_free_count   : %zu\n", debug->invalid_free_count);
-  printf("  failed_alloc_count   : %zu\n", debug->failed_alloc_count);
-  printf("  failed_realloc_count : %zu\n", debug->failed_realloc_count);
-  if(debug->live_count == 0)
-  {
-    printf("  [OK] no leaks detected\n");
-  }
-  else
-  {
-    printf("  [LEAK] %zu allocation(s) still live:\n", debug->live_count);
-    cf_alloc_debug_node *curr = debug->head;
-    while(curr != CF_NULL)
-    {
-      printf("    ptr=%p  size=%zu\n", curr->ptr, curr->size);
-      curr = curr->next;
-    }
-  }
-  printf("=============================\n");
+  CF_ASSERT_TYPE_SIZE(*debug, cf_alloc_debug);
+  printf
+    (
+"================== Debug log Line(%d) ==================\n\
+      \n\
+      statement (string): %s\n\
+      \n\
+        Tested allocator (pointer): %p\n\
+        Debug allocator (pointer): %p\n\
+      \n\
+      live/free (diffr): (%zu/%zu)\n\
+      Max lived (count): %zu\n\
+      Max freed (count): %zu\n\
+      All lived (count): %zu\n\
+      All freed (count): %zu\n\
+      \n\
+      Invalid allocation by debuger   (count): %zu\n\
+      Invalid allocation by Tested    (count): %zu\n\
+      Invalid reallocation by Tested  (count): %zu\n\
+      Invalid free by Tested          (count): %zu\n\
+      \n\
+      latest valid by Tested (pointer): %p\n\
+========================================================\n"
+    ,
+    line,
+    debug->statement,
+    (void *)&debug->internal_allocator,
+    (void *)&debug->allocator,
+    debug->ptr_live,
+    debug->ptr_free,
+    debug->ptr_max_live,
+    debug->ptr_max_free,
+    debug->ptr_all_live,
+    debug->ptr_all_free,
+    debug->ptr_invalid_alloc,
+    debug->ptr_internal_invalid_alloc,
+    debug->ptr_internal_invalid_realloc,
+    debug->ptr_internal_invalid_free,
+    debug->latest_valid_ptr
+  );
+  
 }

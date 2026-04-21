@@ -17,13 +17,11 @@
  */
 
 #include "ALLOCATOR/cf_alloc.h"
+
 #include "RUNTIME/cf_types.h"
 
 #include <stdlib.h>
-
-/********************************************************************/
-/* allocators                                                       */
-/********************************************************************/
+#include <stdarg.h>
 
 static void *cf_alloc_alloc(void *ctx, cf_usize size)
 {
@@ -43,27 +41,20 @@ static void cf_alloc_free(void *ctx, void *ptr)
   free(ptr);
 }
 
-/********************************************************************/
-/* construction                                                     */
-/********************************************************************/
-
-cf_alloc cf_alloc_create_empty(void)
+static cf_alloc cf_alloc_create(void)
 {
-  return (cf_alloc) {CF_NULL, cf_alloc_alloc, CF_NULL, CF_NULL};
+  return (cf_alloc) 
+  {
+    .ctx = CF_NULL,
+    .alloc = cf_alloc_alloc,
+    .realloc = cf_alloc_realloc,
+    .free = cf_alloc_free,
+  };
 }
 
-cf_alloc cf_alloc_new(void)
+void cf_alloc_new(cf_alloc *alloc)
 {
-  return (cf_alloc) {CF_NULL, cf_alloc_alloc, cf_alloc_realloc, cf_alloc_free};
-}
-
-/********************************************************************/
-/* validation                                                       */
-/********************************************************************/
-
-cf_bool cf_alloc_is_valid(const cf_alloc *allocator)
-{
-  if (allocator == CF_NULL) return CF_FALSE;
-  if (allocator->alloc == CF_NULL) return CF_FALSE;
-  return CF_TRUE;
+  if(alloc == CF_NULL) return;
+  CF_ASSERT_TYPE_SIZE(*alloc, cf_alloc);
+  *alloc = cf_alloc_create();
 }

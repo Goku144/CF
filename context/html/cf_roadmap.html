@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CF Library Roadmap</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --color-bg: #ffffff;
+  --color-bg-secondary: #f5f4f0;
+  --color-text-primary: #1a1a18;
+  --color-text-secondary: #5a5955;
+  --color-text-tertiary: #8a8880;
+  --color-border: rgba(0,0,0,0.10);
+  --color-border-secondary: rgba(0,0,0,0.18);
+  --font-mono: 'JetBrains Mono', 'Fira Mono', 'Cascadia Code', monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-bg: #141412;
+    --color-bg-secondary: #1e1e1b;
+    --color-text-primary: #e8e6df;
+    --color-text-secondary: #9a9890;
+    --color-text-tertiary: #6a6860;
+    --color-border: rgba(255,255,255,0.10);
+    --color-border-secondary: rgba(255,255,255,0.18);
+  }
+}
+
+body {
+  font-family: var(--font-mono);
+  background: var(--color-bg);
+  color: var(--color-text-primary);
+  padding: 28px 24px 40px;
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+h1 {
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+  margin-bottom: 20px;
+}
+
+.legend { display: flex; gap: 14px; margin-bottom: 18px; flex-wrap: wrap; }
+.legend-item { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--color-text-secondary); }
+.ld { width: 10px; height: 10px; border-radius: 3px; }
+.ld-done { background: #5DCAA5; }
+.ld-next { background: #EF9F27; }
+.ld-future { background: var(--color-bg-secondary); border: 1px dashed var(--color-border-secondary); }
+
+.phase-label {
+  font-size: 10px; font-weight: 500; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--color-text-tertiary);
+  margin-bottom: 6px; padding-left: 2px;
+}
+.layer {
+  border: 1px solid var(--color-border);
+  border-radius: 12px; padding: 12px 12px 8px; margin-bottom: 8px;
+}
+.layer-title {
+  font-size: 10px; font-weight: 500; letter-spacing: .1em;
+  text-transform: uppercase; color: var(--color-text-tertiary); margin-bottom: 10px;
+}
+.grid { display: grid; gap: 7px; }
+.g2 { grid-template-columns: 1fr 1fr; }
+.g3 { grid-template-columns: 1fr 1fr 1fr; }
+.g4 { grid-template-columns: repeat(4, minmax(0,1fr)); }
+
+.card {
+  border-radius: 8px; padding: 9px 11px 8px;
+  cursor: pointer; border: 1px solid transparent;
+  transition: opacity .15s;
+}
+.card:hover { opacity: .82; }
+.card-name { font-size: 12px; font-weight: 500; line-height: 1.3; }
+.card-sub { font-size: 10.5px; line-height: 1.45; margin-top: 3px; opacity: .8; }
+.badge {
+  display: inline-block; font-size: 9px; font-weight: 500;
+  letter-spacing: .06em; text-transform: uppercase;
+  padding: 1px 5px; border-radius: 4px; margin-bottom: 4px;
+}
+.dep-row { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 5px; }
+.dep-pill {
+  font-size: 9px; padding: 1px 5px; border-radius: 20px;
+  background: var(--color-bg-secondary); color: var(--color-text-tertiary);
+  border: 1px solid var(--color-border);
+}
+.arrow { text-align: center; font-size: 11px; color: var(--color-text-tertiary); margin: 2px 0; }
+
+.l-lang  { background: color-mix(in srgb,#534AB7 6%,transparent); border-color: color-mix(in srgb,#534AB7 18%,transparent); }
+.l-mem   { background: color-mix(in srgb,#0F6E56 6%,transparent); border-color: color-mix(in srgb,#0F6E56 18%,transparent); }
+.l-text  { background: color-mix(in srgb,#185FA5 6%,transparent); border-color: color-mix(in srgb,#185FA5 18%,transparent); }
+.l-arena { background: color-mix(in srgb,#BA7517 6%,transparent); border-color: color-mix(in srgb,#BA7517 18%,transparent); }
+.l-util  { background: color-mix(in srgb,#993C1D 6%,transparent); border-color: color-mix(in srgb,#993C1D 18%,transparent); }
+.l-sec   { background: color-mix(in srgb,#A32D2D 6%,transparent); border-color: color-mix(in srgb,#A32D2D 18%,transparent); }
+.l-ai    { background: color-mix(in srgb,#3B6D11 6%,transparent); border-color: color-mix(in srgb,#3B6D11 18%,transparent); }
+
+/* Card themes */
+.c-pur-d { background:#EEEDFE; color:#26215C; }
+.c-pur-d .badge { background:#9FE1CB; color:#04342C; }
+.c-pur-n { background:color-mix(in srgb,#EEEDFE 60%,transparent); color:#3C3489; border-color:#AFA9EC !important; border-style:dashed !important; }
+.c-pur-n .badge { background:#FAC775; color:#412402; }
+.c-tel-d { background:#E1F5EE; color:#04342C; }
+.c-tel-d .badge { background:#9FE1CB; color:#04342C; }
+.c-tel-n { background:color-mix(in srgb,#E1F5EE 60%,transparent); color:#085041; border-color:#5DCAA5 !important; border-style:dashed !important; }
+.c-tel-n .badge { background:#FAC775; color:#412402; }
+.c-blu-d { background:#E6F1FB; color:#042C53; }
+.c-blu-d .badge { background:#9FE1CB; color:#04342C; }
+.c-blu-n { background:color-mix(in srgb,#E6F1FB 60%,transparent); color:#0C447C; border-color:#85B7EB !important; border-style:dashed !important; }
+.c-blu-n .badge { background:#FAC775; color:#412402; }
+.c-amb-d { background:#FAEEDA; color:#412402; }
+.c-amb-d .badge { background:#9FE1CB; color:#04342C; }
+.c-amb-n { background:color-mix(in srgb,#FAEEDA 60%,transparent); color:#633806; border-color:#EF9F27 !important; border-style:dashed !important; }
+.c-amb-n .badge { background:#FAC775; color:#412402; }
+.c-cor-n { background:color-mix(in srgb,#FAECE7 60%,transparent); color:#712B13; border-color:#F0997B !important; border-style:dashed !important; }
+.c-cor-n .badge { background:#FAC775; color:#412402; }
+.c-fut { background:color-mix(in srgb,#F1EFE8 50%,transparent); color:#5F5E5A; border-color:#B4B2A9 !important; border-style:dashed !important; opacity:.65; }
+.c-fut .badge { background:#D3D1C7; color:#2C2C2A; }
+
+@media (prefers-color-scheme: dark) {
+  .c-pur-d { background:#26215C; color:#CECBF6; }
+  .c-pur-n { background:color-mix(in srgb,#26215C 50%,transparent); color:#AFA9EC; border-color:#534AB7 !important; }
+  .c-tel-d { background:#04342C; color:#9FE1CB; }
+  .c-tel-n { background:color-mix(in srgb,#04342C 50%,transparent); color:#5DCAA5; border-color:#0F6E56 !important; }
+  .c-blu-d { background:#042C53; color:#B5D4F4; }
+  .c-blu-n { background:color-mix(in srgb,#042C53 50%,transparent); color:#85B7EB; border-color:#185FA5 !important; }
+  .c-amb-d { background:#412402; color:#FAC775; }
+  .c-amb-n { background:color-mix(in srgb,#412402 50%,transparent); color:#EF9F27; border-color:#BA7517 !important; }
+  .c-cor-n { background:color-mix(in srgb,#4A1B0C 50%,transparent); color:#F0997B; border-color:#993C1D !important; }
+  .c-fut { background:color-mix(in srgb,#2C2C2A 60%,transparent); color:#888780; border-color:#5F5E5A !important; }
+  .c-pur-d .badge, .c-tel-d .badge, .c-blu-d .badge, .c-amb-d .badge { background:#085041; color:#9FE1CB; }
+  .c-pur-n .badge, .c-tel-n .badge, .c-blu-n .badge, .c-amb-n .badge, .c-cor-n .badge { background:#633806; color:#FAC775; }
+  .c-fut .badge { background:#444441; color:#B4B2A9; }
+}
+
+.footer {
+  margin-top: 14px; padding: 10px 12px; border-radius: 8px;
+  background: var(--color-bg-secondary);
+  font-size: 11px; color: var(--color-text-secondary); line-height: 1.7;
+}
+
+@media (max-width: 600px) {
+  .g3 { grid-template-columns: 1fr 1fr; }
+  .g4 { grid-template-columns: 1fr 1fr; }
+}
+@media (max-width: 400px) {
+  .g2, .g3, .g4 { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+
+<h1>CF Library — Build Roadmap</h1>
+
+<div class="legend">
+  <div class="legend-item"><div class="ld ld-done"></div>Already built</div>
+  <div class="legend-item"><div class="ld ld-next"></div>Build next (phase 1)</div>
+  <div class="legend-item"><div class="ld ld-future"></div>Future phases</div>
+</div>
+
+<!-- Phase 1 -->
+<div class="phase-label">Phase 1 — base runtime</div>
+
+<div class="layer l-lang">
+  <div class="layer-title">Language &amp; runtime foundation</div>
+  <div class="grid g3">
+    <div class="card c-pur-d">
+      <div class="badge">done</div>
+      <div class="card-name">cf_types.h</div>
+      <div class="card-sub">Fixed ints · cf_bool · CF_NULL · helpers · endian, align, branch hints</div>
+    </div>
+    <div class="card c-pur-d">
+      <div class="badge">done</div>
+      <div class="card-name">cf_status.h / .c</div>
+      <div class="card-sub">Status enum · printer · custom handler · uniform error model</div>
+    </div>
+    <div class="card c-pur-d">
+      <div class="badge">done</div>
+      <div class="card-name">cf_alloc.h / .c</div>
+      <div class="card-sub">cf_allocator vtable · is_valid · default heap alloc · zeroed/checked wrappers</div>
+    </div>
+  </div>
+</div>
+
+<div class="arrow">↓ feeds into</div>
+
+<div class="layer l-mem">
+  <div class="layer-title">Memory foundation</div>
+  <div class="grid g2">
+    <div class="card c-tel-d">
+      <div class="badge">done</div>
+      <div class="card-name">cf_memory.h / .c</div>
+      <div class="card-sub">cf_bytes · cf_buffer · validate · slice · fill/zero · reserve/init/destroy · append/set/view</div>
+      <div class="dep-row"><span class="dep-pill">cf_types</span><span class="dep-pill">cf_status</span><span class="dep-pill">cf_alloc</span></div>
+    </div>
+    <div class="card c-tel-n">
+      <div class="badge">build next</div>
+      <div class="card-name">cf_math.h / .c</div>
+      <div class="card-sub">cf_usize_add · cf_usize_mul · cf_usize_align_up · overflow-safe arithmetic</div>
+      <div class="dep-row"><span class="dep-pill">cf_types</span><span class="dep-pill">cf_status</span></div>
+    </div>
+  </div>
+</div>
+
+<div class="arrow">↓ feeds into</div>
+
+<div class="layer l-text">
+  <div class="layer-title">Text foundation</div>
+  <div class="grid g2">
+    <div class="card c-blu-d">
+      <div class="badge">done</div>
+      <div class="card-name">cf_string.h / .c</div>
+      <div class="card-sub">cf_str (view) · cf_string (owned) · validate · equal/icase · find · trim · split</div>
+      <div class="dep-row"><span class="dep-pill">cf_types</span><span class="dep-pill">cf_status</span><span class="dep-pill">cf_alloc</span><span class="dep-pill">cf_memory</span></div>
+    </div>
+    <div class="card c-blu-n">
+      <div class="badge">build next</div>
+      <div class="card-name">cf_ascii.h / .c</div>
+      <div class="card-sub">is_alpha · is_digit · is_space · is_hex · to_lower/upper · used by parsers</div>
+      <div class="dep-row"><span class="dep-pill">cf_types</span></div>
+    </div>
+  </div>
+</div>
+
+<div class="arrow">↓ feeds into</div>
+
+<div class="layer l-arena">
+  <div class="layer-title">Arena &amp; allocator strategies</div>
+  <div class="grid g4">
+    <div class="card c-amb-d">
+      <div class="badge">started</div>
+      <div class="card-name">cf_arena.h / .c</div>
+      <div class="card-sub">Lifecycle · reset · alloc · allocator bridge</div>
+      <div class="dep-row"><span class="dep-pill">cf_types</span><span class="dep-pill">cf_math</span></div>
+    </div>
+    <div class="card c-fut">
+      <div class="badge">later</div>
+      <div class="card-name">cf_pool.h / .c</div>
+      <div class="card-sub">Fixed-size · fast alloc/free · nodes, events</div>
+    </div>
+    <div class="card c-fut">
+      <div class="badge">later</div>
+      <div class="card-name">cf_slab.h / .c</div>
+      <div class="card-sub">Object class groups · kernel-style · multiple sizes</div>
+    </div>
+    <div class="card c-fut">
+      <div class="badge">later</div>
+      <div class="card-name">cf_alloc_debug.h</div>
+      <div class="card-sub">Count alloc/free · leak detection · metrics</div>
+    </div>
+  </div>
+</div>
+
+<div class="arrow">↓ feeds into</div>
+
+<div class="layer l-util">
+  <div class="layer-title">Runtime utilities</div>
+  <div class="grid g4">
+    <div class="card c-cor-n">
+      <div class="badge">build next</div>
+      <div class="card-name">cf_log.h / .c</div>
+      <div class="card-sub">trace/debug/info/warn/error/fatal · callback sink · stderr default</div>
+      <div class="dep-row"><span class="dep-pill">cf_types</span><span class="dep-pill">cf_string</span></div>
+    </div>
+    <div class="card c-cor-n">
+      <div class="badge">build next</div>
+      <div class="card-name">cf_random.h / .c</div>
+      <div class="card-sub">Random bytes · secure OS source · salts, tokens, nonces</div>
+      <div class="dep-row"><span class="dep-pill">cf_types</span><span class="dep-pill">cf_memory</span></div>
+    </div>
+    <div class="card c-cor-n">
+      <div class="badge">build next</div>
+      <div class="card-name">cf_time.h / .c</div>
+      <div class="card-sub">Monotonic · wall-clock · duration · sleep</div>
+      <div class="dep-row"><span class="dep-pill">cf_types</span><span class="dep-pill">cf_status</span></div>
+    </div>
+    <div class="card c-cor-n">
+      <div class="badge">build next</div>
+      <div class="card-name">cf_io.h / .c</div>
+      <div class="card-sub">Read/write file · exists/size · later: mmap</div>
+      <div class="dep-row"><span class="dep-pill">cf_types</span><span class="dep-pill">cf_memory</span></div>
+    </div>
+  </div>
+</div>
+
+<!-- Phase 2 -->
+<div class="phase-label" style="margin-top:16px">Phase 2 — security primitives</div>
+<div class="layer l-sec">
+  <div class="layer-title">Security-support layer</div>
+  <div class="grid g3">
+    <div class="card c-fut">
+      <div class="badge">phase 2</div>
+      <div class="card-name">cf_hex.h / .c</div>
+      <div class="card-sub">Encode/decode · lower/upper · debug + key display</div>
+    </div>
+    <div class="card c-fut">
+      <div class="badge">phase 2</div>
+      <div class="card-name">cf_base64.h / .c</div>
+      <div class="card-sub">Standard + URL-safe · encode/decode · token transport</div>
+    </div>
+    <div class="card c-fut">
+      <div class="badge">phase 2</div>
+      <div class="card-name">cf_secure_mem.h / .c</div>
+      <div class="card-sub">Secure zero · constant-time compare · protected alloc</div>
+    </div>
+    <div class="card c-fut">
+      <div class="badge">phase 2</div>
+      <div class="card-name">cf_hash.h / .c</div>
+      <div class="card-sub">SHA-2 / SHA-3 · streaming + oneshot · pluggable backend</div>
+    </div>
+    <div class="card c-fut">
+      <div class="badge">phase 2</div>
+      <div class="card-name">cf_hmac.h / .c</div>
+      <div class="card-sub">HMAC construction · verify · uses cf_hash</div>
+    </div>
+    <div class="card c-fut">
+      <div class="badge">phase 2</div>
+      <div class="card-name">cf_parse.h / .c</div>
+      <div class="card-sub">Cursor · tokenizer · key=value · config reader · uses cf_ascii</div>
+    </div>
+  </div>
+</div>
+
+<!-- Phase 3 -->
+<div class="phase-label" style="margin-top:16px">Phase 3 — parsing &amp; config</div>
+<div class="layer" style="border-color:var(--color-border)">
+  <div class="layer-title">Config &amp; data formats</div>
+  <div class="grid g3">
+    <div class="card c-fut">
+      <div class="badge">phase 3</div>
+      <div class="card-name">cf_config.h / .c</div>
+      <div class="card-sub">Load/save · section/key/value · env override · uses cf_parse</div>
+    </div>
+    <div class="card c-fut">
+      <div class="badge">phase 3</div>
+      <div class="card-name">cf_json.h / .c</div>
+      <div class="card-sub">Parse / emit · DOM or SAX · arena-backed · model APIs</div>
+    </div>
+    <div class="card c-fut">
+      <div class="badge">phase 3</div>
+      <div class="card-name">cf_cbor.h / .c</div>
+      <div class="card-sub">Binary format · compact · schema-free · optional</div>
+    </div>
+  </div>
+</div>
+
+<!-- Phase 4 -->
+<div class="phase-label" style="margin-top:16px">Phase 4 — AI runtime support</div>
+<div class="layer l-ai">
+  <div class="layer-title">AI / ML layer</div>
+  <div class="grid g3">
+    <div class="card c-fut">
+      <div class="badge">phase 4</div>
+      <div class="card-name">cf_tensor.h / .c</div>
+      <div class="card-sub">N-D shape · stride · dtype · view · slice · arena-backed</div>
+    </div>
+    <div class="card c-fut">
+      <div class="badge">phase 4</div>
+      <div class="card-name">cf_tokenizer.h / .c</div>
+      <div class="card-sub">Token memory · vocab load · encode/decode · BPE ready</div>
+    </div>
+    <div class="card c-fut">
+      <div class="badge">phase 4</div>
+      <div class="card-name">cf_model.h / .c</div>
+      <div class="card-sub">Model file abstraction · weight loading · metadata · backend plug</div>
+    </div>
+    <div class="card c-fut">
+      <div class="badge">phase 4</div>
+      <div class="card-name">cf_graph.h / .c</div>
+      <div class="card-sub">Computation graph · node/edge · topological sort · forward pass</div>
+    </div>
+    <div class="card c-fut">
+      <div class="badge">phase 4</div>
+      <div class="card-name">cf_runtime.h / .c</div>
+      <div class="card-sub">Inference session · context mgmt · backend abstraction</div>
+    </div>
+  </div>
+</div>
+
+<div class="footer">
+  <strong style="font-weight:500">Freeze order:</strong> types → status → alloc → memory + math → string + ascii → arena → log + random + time + io → security → parsing → AI.
+</div>
+
+</body>
+</html>

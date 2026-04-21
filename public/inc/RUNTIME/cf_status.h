@@ -19,83 +19,79 @@
 #if !defined(CF_STATUS_H)
 #define CF_STATUS_H
  
-#include "RUNTIME/cf_types.h"
- 
-/**
- * cf_status
- *
- * Return code used by every function in the library that can fail.
- * Functions return CF_OK on success and one of the CF_ERR_* values
- * on failure. The specific errors each function may return are listed
- * in that function's documentation.
- *
- * Convention: always check the return value. A result of CF_OK means
- * the output parameters are valid; any other value means they are not.
- */
+/* Shared status codes used across the framework public APIs. */
 typedef enum cf_status
 {
-    CF_OK             = 0,  /* Success                                    */
-    CF_ERR_INVALID,         /* Invalid argument or value                  */
-    CF_ERR_NULL,            /* NULL pointer passed where not allowed      */
-    CF_ERR_OOM,             /* Out of memory                              */
-    CF_ERR_OVERFLOW,        /* Arithmetic or size overflow                */
-    CF_ERR_BOUNDS,          /* Index or range out of bounds               */
-    CF_ERR_STATE,           /* Object state is invalid for this operation */
-    CF_ERR_UNSUPPORTED,     /* Feature, platform, or op not supported     */
-    CF_ERR_DENIED,          /* Permission or policy denied                */
-    CF_ERR_INTERNAL         /* Unexpected internal failure                */
+  /* Operation completed successfully. */
+  CF_OK = 0x00,
+
+  /* A required pointer argument was NULL. */
+  CF_ERR_NULL = 0x01,
+
+  /* An argument value was invalid for the operation. */
+  CF_ERR_INVALID = 0x02,
+
+  /* The object or subsystem is in the wrong state. */
+  CF_ERR_STATE = 0x04,
+
+  /* A size, offset, or numeric conversion exceeded allowed bounds. */
+  CF_ERR_BOUNDS = 0x08,
+  CF_ERR_OVERFLOW = 0x10,
+
+  /* Memory allocation or reservation failed. */
+  CF_ERR_OOM = 0x20,
+
+  /* Input or output operation failed. */
+  CF_ERR_IO = 0x40,
+
+  /* Parsing, decoding, or validation of input data failed. */
+  CF_ERR_PARSE = 0x80,
+
+  /* Requested behavior or platform capability is not supported. */
+  CF_ERR_UNSUPPORTED = 0x100,
+
+  /* Authentication, integrity, or other security checks failed. */
+  CF_ERR_SECURITY = 0x200,
+
+  /* An unexpected internal failure occurred. */
+  CF_ERR_INTERNAL = 0x400,
+
+  /* A fallback value for undefined or unmapped states. */
+  CF_ERR_UNDEFINED = 0x800,
 } cf_status;
- 
-/********************************************************************/
-/* diagnostics                                                      */
-/********************************************************************/
- 
+
 /**
- * cf_status_str
+ * Return the symbolic string name of a framework status code.
  *
- * Return a short, human-readable string that names @p status.
- * The returned pointer is a string literal with static storage
- * duration — do not free it.
- * Unknown values return the string "CF_ERR_UNKNOWN".
+ * The returned pointer always refers to a static string literal and must not
+ * be modified or freed by the caller.
  *
- * @param status  The status code to name.
- * @return  A null-terminated string literal, never CF_NULL.
+ * @param state
+ *   The status code to convert to its symbolic string form.
+ *
+ * @return
+ *   A stable null-terminated string such as "CF_OK" or "CF_ERR_IO".
+ *   Unknown values return "CF_ERR_UNKNOWN".
  */
-const char *cf_status_str(cf_status status);
- 
+const char *cf_state_as_char(cf_status state);
+
 /**
- * cf_status_desc
+ * Print a framework status code in a readable diagnostic form.
  *
- * Return a one-sentence description of what @p status means.
- * The returned pointer is a string literal with static storage
- * duration — do not free it.
- * Unknown values return a generic description.
+ * The printed output includes the caller-provided line number, the symbolic
+ * status code, and a human-readable explanation, followed by a trailing
+ * newline.
  *
- * @param status  The status code to describe.
- * @return  A null-terminated string literal, never CF_NULL.
+ * @param state
+ *   The status code to print.
+ *
+ * @param line
+ *   A caller-provided source line number, typically the __LINE__ macro.
+ *
+ * @return
+ *   This function does not return a value.
  */
-const char *cf_status_desc(cf_status status);
- 
-/**
- * cf_status_print
- *
- * Print a single formatted line to stdout in the form:
- *   [CF_ERR_NULL] NULL pointer passed where not allowed
- * Appends a newline. Passing any valid or unknown status is safe.
- *
- * @param status  The status code to print.
- */
-void cf_status_print(cf_status status);
- 
-/**
- * cf_status_fprint
- *
- * Same as cf_status_print() but writes to @p stream instead of stdout.
- * Passing CF_NULL for @p stream is safe and has no effect.
- *
- * @param stream  Output FILE stream. May be CF_NULL.
- * @param status  The status code to print.
- */
-void cf_status_fprint(void *stream, cf_status status);
+void cf_state_print(cf_status state, const int line);
+
  
 #endif /* CF_STATUS_H */
