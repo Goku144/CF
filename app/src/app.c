@@ -1,27 +1,26 @@
-#include "ALLOCATOR/cf_alloc_debug.h"
-#include "ALLOCATOR/cf_alloc.h"
-#include "ALLOCATOR/cf_arena.h"
-#include "ALLOCATOR/cf_pool.h"
-#include "ALLOCATOR/cf_slab.h"
-#include "RUNTIME/cf_types.h"
+#include "MEMORY/cf_memory.h"
+#include "MEMORY/cf_array.h"
+
 #include "RUNTIME/cf_status.h"
+
+#include "TEXT/cf_string.h"
+
+#include <time.h>
+#include <stdio.h>
+#include <string.h>
 
 int main(void)
 {
-    cf_alloc_debug debug;
-    cf_pool pool;
-    cf_pool_new(&pool, 128, 128);
-    cf_status_print(cf_alloc_debug_new(&debug, &pool.allocator));
-    cf_u8 *data[7];
-    for (cf_usize i = 0; i < 7; i++)
-    {
-        data[i] = debug.allocator.alloc(debug.allocator.ctx, pool.slot_size);
-    }
-    debug.allocator.free(debug.allocator.ctx, (void *)(0x4265f));
-    debug.allocator.free(debug.allocator.ctx, data[2]);
-    data[2] = debug.allocator.alloc(debug.allocator.ctx, pool.slot_size);
-    CF_UNUSED(data);
-    cf_alloc_debug_report(&debug);
-    return 0;
-}
+  cf_string str;
+  cf_string_init(&str, 1);
+  cf_string_from_cstr(&str, " printf(\"hmida\\n\"); exit(0);  ");
+  cf_string_strip(&str);
 
+  cf_array arr;
+  cf_string_replace(&str,';', '-');
+  cf_string_split(&arr, &str, ';');
+  for (size_t i = 0; i < arr.len; i++)
+    printf("%s\n", (char *)arr.data[i].data);
+  
+  return 0;
+}

@@ -17,56 +17,97 @@
  */
 
 #include "RUNTIME/cf_status.h"
+#include "RUNTIME/cf_types.h"
 
 #include <stdio.h>
+#include <string.h>
 
-/********************************************************************/
-/* diagnostics                                                      */
-/********************************************************************/
-
-const char *cf_status_str(cf_status status)
+typedef struct cf_status_desc
 {
-    switch(status)
-    {
-        case CF_OK:             return "CF_OK";
-        case CF_ERR_INVALID:    return "CF_ERR_INVALID";
-        case CF_ERR_NULL:       return "CF_ERR_NULL";
-        case CF_ERR_OOM:        return "CF_ERR_OOM";
-        case CF_ERR_OVERFLOW:   return "CF_ERR_OVERFLOW";
-        case CF_ERR_BOUNDS:     return "CF_ERR_BOUNDS";
-        case CF_ERR_STATE:      return "CF_ERR_STATE";
-        case CF_ERR_UNSUPPORTED:return "CF_ERR_UNSUPPORTED";
-        case CF_ERR_DENIED:     return "CF_ERR_DENIED";
-        case CF_ERR_INTERNAL:   return "CF_ERR_INTERNAL";
-        default:                return "CF_ERR_UNKNOWN";
-    }
+  cf_status flag;
+  const char *name;
+  const char *readable;
+} cf_status_desc;
+
+static const cf_status_desc CF_STATUS_DESC[] =
+{
+  {CF_ERR_NULL, "CF_ERR_NULL", "A required pointer argument was NULL."},
+  {CF_ERR_INVALID, "CF_ERR_INVALID", "An argument value was invalid for this operation."},
+  {CF_ERR_STATE, "CF_ERR_STATE", "The object or subsystem is in the wrong state."},
+  {CF_ERR_BOUNDS, "CF_ERR_BOUNDS", "A size, offset, or index was out of allowed bounds."},
+  {CF_ERR_OVERFLOW, "CF_ERR_OVERFLOW", "A numeric operation overflowed the supported range."},
+  {CF_ERR_OOM, "CF_ERR_OOM", "Memory allocation or reservation failed."},
+  {CF_ERR_IO, "CF_ERR_IO", "An input or output operation failed."},
+  {CF_ERR_PARSE, "CF_ERR_PARSE", "Input data could not be parsed or validated."},
+  {CF_ERR_UNSUPPORTED, "CF_ERR_UNSUPPORTED", "The requested behavior or platform capability is not supported."},
+  {CF_ERR_SECURITY, "CF_ERR_SECURITY", "A security, integrity, or authentication check failed."},
+  {CF_ERR_INTERNAL, "CF_ERR_INTERNAL", "An unexpected internal failure occurred."},
+  {CF_ERR_UNDEFINED, "CF_ERR_UNDEFINED", "The status code is undefined or unmapped."},
+};
+
+static const char *cf_status_compose(cf_status state, cf_bool use_readable)
+{
+  static char buffers[4][512];
+  static cf_usize next_buffer = 0;
+  char *buffer = buffers[next_buffer];
+  cf_usize used = 0;
+  cf_status unknown_bits = state;
+
+  next_buffer = (next_buffer + 1) % 4;
+
+  if(state == CF_OK)
+    return use_readable ? "Operation completed successfully." : "CF_OK";
+
+  buffer[0] = '\0';
+
+  for(cf_usize i = 0; i < sizeof(CF_STATUS_DESC) / sizeof(CF_STATUS_DESC[0]); ++i)
+  {
+    if((state & CF_STATUS_DESC[i].flag) == 0) continue;
+
+    const char *piece = use_readable ? CF_STATUS_DESC[i].readable : CF_STATUS_DESC[i].name;
+    const char *separator = use_readable ? " | " : "|";
+    int written = snprintf
+    (
+      buffer + used,
+      sizeof(buffers[0]) - used,
+      "%s%s",
+      used == 0 ? "" : separator,
+      piece
+    );
+
+    if(written < 0) return use_readable ? "The status code is unknown." : "CF_ERR_UNKNOWN";
+    if((cf_usize)written >= sizeof(buffers[0]) - used) break;
+    used += (cf_usize)written;
+    unknown_bits &= ~CF_STATUS_DESC[i].flag;
+  }
+
+  if(unknown_bits != 0 || used == 0)
+  {
+    (void)snprintf
+    (
+      buffer + used,
+      sizeof(buffers[0]) - used,
+      "%s%s(0x%X)",
+      used == 0 ? "" : (use_readable ? " | " : "|"),
+      use_readable ? "Unknown status bits " : "CF_ERR_UNKNOWN",
+      (unsigned int)unknown_bits
+    );
+  }
+
+  return buffer;
 }
 
-const char *cf_status_desc(cf_status status)
+static const char *cf_state_readable(cf_status state)
 {
-    switch(status)
-    {
-        case CF_OK:             return "Success.";
-        case CF_ERR_INVALID:    return "Invalid argument or value.";
-        case CF_ERR_NULL:       return "NULL pointer passed where not allowed.";
-        case CF_ERR_OOM:        return "Out of memory.";
-        case CF_ERR_OVERFLOW:   return "Arithmetic or size overflow.";
-        case CF_ERR_BOUNDS:     return "Index or range out of bounds.";
-        case CF_ERR_STATE:      return "Object state is invalid for this operation.";
-        case CF_ERR_UNSUPPORTED:return "Feature, platform, or operation not supported.";
-        case CF_ERR_DENIED:     return "Permission or policy denied.";
-        case CF_ERR_INTERNAL:   return "Unexpected internal failure.";
-        default:                return "Unknown status code.";
-    }
+  return cf_status_compose(state, CF_TRUE);
 }
 
-void cf_status_print(cf_status status)
+const char *cf_state_as_char(cf_status state)
 {
-    printf("[%s] %s\n", cf_status_str(status), cf_status_desc(status));
+  return cf_status_compose(state, CF_FALSE);
 }
 
-void cf_status_fprint(void *stream, cf_status status)
+void cf_state_print(cf_status state, const int line)
 {
-    if(stream == CF_NULL) return;
-    fprintf((FILE *) stream, "[%s] %s\n", cf_status_str(status), cf_status_desc(status));
+  (void)printf("[line %d] [%s] -> %s\n",line, cf_state_as_char(state), cf_state_readable(state));
 }

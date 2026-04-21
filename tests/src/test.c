@@ -1,902 +1,785 @@
-/*
- * CF Framework
- * Copyright (C) 2026 Orion
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program. If not, see <https://www.gnu.org/licenses/>.
- */
-
-/*
- * test_alloc_new_model.c — unit tests for allocator validation by capability
- *
- * Covers:
- *   cf_alloc       — create_empty, new, is_valid, alloc/realloc/free dispatch
- *   cf_arena       — alloc + realloc required
- *   cf_pool        — alloc + free required
- *   cf_slab        — alloc + free required
- *   cf_alloc_debug — backing allocator valid if alloc exists
- */
-
 #include "ALLOCATOR/cf_alloc.h"
-#include "ALLOCATOR/cf_arena.h"
-#include "ALLOCATOR/cf_pool.h"
-#include "ALLOCATOR/cf_slab.h"
 #include "ALLOCATOR/cf_alloc_debug.h"
-
-#include "MEMORY/cf_memory.h"
+#include "MEMORY/cf_array.h"
+#include "RUNTIME/cf_types.h"
+#include "TEXT/cf_string.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
-/* =========================================================================
- * Test runner
- * =========================================================================
- */
-static int s_passed = 0;
-static int s_failed = 0;
-
-#define CHECK(label, expr)                                            \
-    do {                                                              \
-        if (expr) {                                                   \
-            printf("  PASS  %s\n", label);                            \
-            s_passed++;                                               \
-        } else {                                                      \
-            printf("  FAIL  %s  (line %d)\n", label, __LINE__);       \
-            s_failed++;                                               \
-        }                                                             \
-    } while (0)
-
-static void section(const char *name) { printf("\n── %s\n", name); }
-
-static void summary(void)
+typedef struct test_alloc_state
 {
-    printf("\n════════════════════════════\n");
-    printf("  %d passed  /  %d failed\n", s_passed, s_failed);
-    printf("════════════════════════════\n");
+  cf_usize alloc_calls;
+  cf_usize realloc_calls;
+  cf_usize free_calls;
+  cf_usize fail_alloc_count;
+  cf_usize fail_realloc_count;
+  cf_usize bad_ctx_alloc_calls;
+  cf_usize bad_ctx_realloc_calls;
+  cf_usize bad_ctx_free_calls;
+  void *expected_ctx;
+} test_alloc_state;
+
+static test_alloc_state *g_test_alloc_state = CF_NULL;
+static int g_test_passed = 0;
+static int g_test_failed = 0;
+
+static void test_section(const char *name)
+{
+  printf("\n── %s\n", name);
 }
 
-/* =========================================================================
- * cf_alloc tests
- * =========================================================================
- */
-
-static void test_alloc_create_empty(void)
+static void test_pass(const char *message)
 {
-    section("cf_alloc_create_empty");
-
-    cf_alloc a = cf_alloc_create_empty();
-
-    CHECK("ctx is NULL",              a.ctx == CF_NULL);
-    CHECK("alloc is set",             a.alloc != CF_NULL);
-    CHECK("realloc is NULL",          a.realloc == CF_NULL);
-    CHECK("free is NULL",             a.free == CF_NULL);
-    CHECK("is_valid passes (alloc only)", cf_alloc_is_valid(&a) == CF_TRUE);
+  g_test_passed++;
+  printf("  PASS  %s\n", message);
 }
 
-static void test_alloc_new(void)
+static void test_check(_Bool condition, const char *message)
 {
-    section("cf_alloc_new");
-
-    cf_alloc a = cf_alloc_new();
-
-    CHECK("ctx is NULL",         a.ctx == CF_NULL);
-    CHECK("alloc is set",        a.alloc != CF_NULL);
-    CHECK("realloc is set",      a.realloc != CF_NULL);
-    CHECK("free is set",         a.free != CF_NULL);
-    CHECK("is_valid passes",     cf_alloc_is_valid(&a) == CF_TRUE);
+  if(condition) test_pass(message);
+  else
+  {
+    g_test_failed++;
+    printf("  FAIL  %s\n", message);
+  }
 }
 
-static void test_alloc_is_valid(void)
+static void test_check_string_value(cf_string *str, const char *expected, const char *message)
 {
-    section("cf_alloc_is_valid");
-
-    cf_alloc a = cf_alloc_new();
-
-    CHECK("valid allocator returns true",  cf_alloc_is_valid(&a) == CF_TRUE);
-    CHECK("null ptr returns false",        cf_alloc_is_valid(CF_NULL) == CF_FALSE);
-
-    cf_alloc bad = a;
-    bad.alloc = CF_NULL;
-    CHECK("null alloc fn is invalid", cf_alloc_is_valid(&bad) == CF_FALSE);
-
-    bad = a;
-    bad.realloc = CF_NULL;
-    CHECK("null realloc fn is still valid", cf_alloc_is_valid(&bad) == CF_TRUE);
-
-    bad = a;
-    bad.free = CF_NULL;
-    CHECK("null free fn is still valid", cf_alloc_is_valid(&bad) == CF_TRUE);
-
-    bad = cf_alloc_create_empty();
-    CHECK("create_empty allocator is valid", cf_alloc_is_valid(&bad) == CF_TRUE);
+  test_check(
+    str != CF_NULL &&
+    expected != CF_NULL &&
+    cf_string_is_valid(str) == CF_TRUE &&
+    str->data != CF_NULL &&
+    strcmp((char *)str->data, expected) == 0 &&
+    str->len == strlen(expected),
+    message
+  );
 }
 
-static void test_alloc_dispatch(void)
+static void *test_alloc(void *ctx, cf_usize size)
 {
-    section("cf_alloc dispatch");
+  if(g_test_alloc_state == CF_NULL) return CF_NULL;
 
-    cf_alloc a = cf_alloc_new();
+  g_test_alloc_state->alloc_calls++;
+  if(ctx != g_test_alloc_state->expected_ctx)
+    g_test_alloc_state->bad_ctx_alloc_calls++;
 
-    void *p = a.alloc(a.ctx, 64);
-    CHECK("alloc 64 bytes returns non-null", p != CF_NULL);
+  if(g_test_alloc_state->fail_alloc_count > 0)
+  {
+    g_test_alloc_state->fail_alloc_count--;
+    return CF_NULL;
+  }
 
-    memset(p, 0xAB, 64);
-    CHECK("written byte survives", ((cf_u8 *)p)[0] == 0xAB);
-    CHECK("written byte survives", ((cf_u8 *)p)[63] == 0xAB);
-
-    void *p2 = a.realloc(a.ctx, p, 128);
-    CHECK("realloc to 128 returns non-null", p2 != CF_NULL);
-
-    a.free(a.ctx, p2);
-    CHECK("free does not crash", CF_TRUE);
+  return malloc(size);
 }
 
-/* =========================================================================
- * cf_arena tests
- * =========================================================================
- */
-
-static void test_arena_validation_model(void)
+static void *test_realloc(void *ctx, void *ptr, cf_usize size)
 {
-    section("cf_arena validation model");
+  if(g_test_alloc_state == CF_NULL) return CF_NULL;
 
-    cf_arena arena;
-    cf_arena_new(&arena, 128);
+  g_test_alloc_state->realloc_calls++;
+  if(ctx != g_test_alloc_state->expected_ctx)
+    g_test_alloc_state->bad_ctx_realloc_calls++;
 
-    CHECK("arena is valid", cf_arena_is_valid(&arena) == CF_TRUE);
-    CHECK("arena alloc exists", arena.allocator.alloc != CF_NULL);
-    CHECK("arena realloc exists", arena.allocator.realloc != CF_NULL);
-    CHECK("arena free may be NULL", arena.allocator.free == CF_NULL);
+  if(g_test_alloc_state->fail_realloc_count > 0)
+  {
+    g_test_alloc_state->fail_realloc_count--;
+    return CF_NULL;
+  }
 
-    cf_arena bad = arena;
-    bad.allocator.alloc = CF_NULL;
-    CHECK("arena invalid if alloc is NULL", cf_arena_is_valid(&bad) == CF_FALSE);
-
-    bad = arena;
-    bad.allocator.realloc = CF_NULL;
-    CHECK("arena invalid if realloc is NULL", cf_arena_is_valid(&bad) == CF_FALSE);
-
-    cf_arena_destroy(&arena);
+  return realloc(ptr, size);
 }
 
-/* =========================================================================
- * cf_pool tests
- * =========================================================================
- */
-
-static void test_pool_validation_model(void)
+static void test_free(void *ctx, void *ptr)
 {
-    section("cf_pool validation model");
+  if(g_test_alloc_state == CF_NULL) return;
 
-    cf_pool pool;
-    cf_pool_new(&pool, 4, 32);
+  g_test_alloc_state->free_calls++;
+  if(ctx != g_test_alloc_state->expected_ctx)
+    g_test_alloc_state->bad_ctx_free_calls++;
 
-    CHECK("pool is valid", cf_pool_is_valid(&pool) == CF_TRUE);
-    CHECK("pool alloc exists", pool.allocator.alloc != CF_NULL);
-    CHECK("pool realloc is NULL", pool.allocator.realloc == CF_NULL);
-    CHECK("pool free exists", pool.allocator.free != CF_NULL);
-
-    cf_pool bad = pool;
-    bad.allocator.alloc = CF_NULL;
-    CHECK("pool invalid if alloc is NULL", cf_pool_is_valid(&bad) == CF_FALSE);
-
-    bad = pool;
-    bad.allocator.free = CF_NULL;
-    CHECK("pool invalid if free is NULL", cf_pool_is_valid(&bad) == CF_FALSE);
-
-    bad = pool;
-    bad.allocator.realloc = CF_NULL;
-    CHECK("pool still valid if realloc is NULL", cf_pool_is_valid(&bad) == CF_TRUE);
-
-    cf_pool_destroy(&pool);
+  free(ptr);
 }
 
-/* =========================================================================
- * cf_slab tests
- * =========================================================================
- */
-
-static void test_slab_validation_model(void)
+static void test_cf_alloc_debug_new_model(void)
 {
-    section("cf_slab validation model");
+  test_alloc_state state = {0};
+  cf_alloc backing =
+  {
+    .ctx = &state,
+    .alloc = test_alloc,
+    .realloc = test_realloc,
+    .free = test_free,
+  };
+  cf_alloc_debug debug = {0};
+  cf_alloc_debug debug_default = {0};
+  cf_alloc_debug untouched =
+  {
+    .ptr_live = 77,
+    .ptr_all_live = 88,
+    .statement = "unchanged",
+  };
+  char statement[] = "tests/src/test.c cf_alloc_debug test";
 
-    cf_slab slab;
-    cf_usize totals[] = {2, 2};
-    cf_usize sizes[]  = {16, 32};
-    cf_slab_new(&slab, totals, sizes, 2);
+  g_test_alloc_state = &state;
+  state.expected_ctx = &state;
 
-    CHECK("slab alloc exists", slab.allocator.alloc != CF_NULL);
-    CHECK("slab realloc is NULL", slab.allocator.realloc == CF_NULL);
-    CHECK("slab free exists", slab.allocator.free != CF_NULL);
+  test_section("cf_alloc_debug_new");
 
-    /*
-     * If this fails, your current cf_slab_is_valid still wrongly requires
-     * realloc != NULL and should be updated to match the new model.
-     */
-    CHECK("slab is valid under alloc/free model", cf_slab_is_valid(&slab) == CF_TRUE);
+  cf_alloc_debug_new(&debug, &backing, statement);
+  cf_alloc_debug_new(&debug_default, &backing, CF_NULL);
 
-    cf_slab bad = slab;
-    bad.allocator.alloc = CF_NULL;
-    CHECK("slab invalid if alloc is NULL", cf_slab_is_valid(&bad) == CF_FALSE);
+  test_check(debug.internal_allocator.ctx == &state, "internal allocator stores backing ctx");
+  test_check(debug.internal_allocator.alloc == backing.alloc, "internal allocator stores alloc fn");
+  test_check(debug.internal_allocator.realloc == backing.realloc, "internal allocator stores realloc fn");
+  test_check(debug.internal_allocator.free == backing.free, "internal allocator stores free fn");
+  test_check(debug.allocator.ctx == &debug, "public allocator ctx points to debug object");
+  test_check(debug.allocator.alloc != CF_NULL, "public alloc callback is set");
+  test_check(debug.allocator.realloc != CF_NULL, "public realloc callback is set");
+  test_check(debug.allocator.free != CF_NULL, "public free callback is set");
+  test_check(debug.statement == statement, "custom statement is stored");
+  test_check(strcmp(debug_default.statement, "NO STATEMENT DECLARED") == 0, "default statement fallback is stored");
+  test_check(debug.ptr_live == 0, "live count starts at zero");
+  test_check(debug.ptr_free == 0, "free count starts at zero");
+  test_check(debug.ptr_max_live == 0, "max live count starts at zero");
+  test_check(debug.ptr_max_free == 0, "max free count starts at zero");
+  test_check(debug.ptr_all_live == 0, "all live count starts at zero");
+  test_check(debug.ptr_all_free == 0, "all free count starts at zero");
+  test_check(debug.ptr_invalid_alloc == 0, "invalid tracking alloc count starts at zero");
+  test_check(debug.ptr_internal_invalid_alloc == 0, "internal alloc failure count starts at zero");
+  test_check(debug.ptr_internal_invalid_realloc == 0, "internal realloc failure count starts at zero");
+  test_check(debug.ptr_internal_invalid_free == 0, "internal free failure count starts at zero");
+  test_check(debug.latest_valid_ptr == CF_NULL, "latest valid pointer starts null");
+  test_check(debug.head == CF_NULL, "head starts null");
 
-    bad = slab;
-    bad.allocator.free = CF_NULL;
-    CHECK("slab invalid if free is NULL", cf_slab_is_valid(&bad) == CF_FALSE);
+  cf_alloc_debug_log(&debug, __LINE__);
 
-    bad = slab;
-    bad.allocator.realloc = CF_NULL;
-    CHECK("slab still valid if realloc is NULL", cf_slab_is_valid(&bad) == CF_TRUE);
-
-    cf_slab_destroy(&slab);
+  cf_alloc_debug_new(CF_NULL, &backing, statement);
+  cf_alloc_debug_new(&untouched, CF_NULL, statement);
+  test_check(untouched.ptr_live == 77, "null backing argument leaves target unchanged");
+  test_check(untouched.ptr_all_live == 88, "null backing preserves other fields");
+  test_check(strcmp(untouched.statement, "unchanged") == 0, "null backing preserves statement");
 }
 
-/* =========================================================================
- * cf_alloc_debug tests
- * =========================================================================
- */
-
-static void test_debug_new_model(void)
+static void test_cf_alloc_debug_callbacks(void)
 {
-    section("cf_alloc_debug new model");
+  test_alloc_state state = {0};
+  cf_alloc backing =
+  {
+    .ctx = &state,
+    .alloc = test_alloc,
+    .realloc = test_realloc,
+    .free = test_free,
+  };
+  cf_alloc_debug debug = {0};
+  cf_u8 external_byte = 0;
+  cf_u8 *ptr_a = CF_NULL;
+  cf_u8 *ptr_b = CF_NULL;
+  cf_u8 *ptr_c = CF_NULL;
+  cf_u8 *ptr_c_realloc = CF_NULL;
 
-    cf_alloc backing = cf_alloc_create_empty();
-    cf_alloc_debug d;
-    cf_status st = cf_alloc_debug_new(&d, &backing);
+  g_test_alloc_state = &state;
+  state.expected_ctx = &state;
 
-    CHECK("debug accepts alloc-only backing", st == CF_OK);
-    CHECK("allocator ctx points to debug", d.allocator.ctx == &d);
-    CHECK("debug object is valid", cf_alloc_debug_is_valid(&d) == CF_TRUE);
+  test_section("cf_alloc_debug callbacks");
 
-    cf_alloc_debug_destroy(&d);
+  cf_alloc_debug_new(&debug, &backing, "cf_alloc_debug callback section");
+
+  test_check(debug.allocator.alloc(CF_NULL, 16) == CF_NULL, "alloc with null ctx returns null");
+  test_check(debug.allocator.realloc(CF_NULL, &external_byte, 16) == CF_NULL, "realloc with null ctx returns null");
+  debug.allocator.free(CF_NULL, &external_byte);
+  test_check(debug.ptr_live == 0, "null ctx free does not change live count");
+  test_check(debug.ptr_all_live == 0, "null ctx alloc path does not change all_live");
+  test_check(debug.ptr_all_free == 0, "null ctx free path does not change all_free");
+  test_check(debug.ptr_internal_invalid_alloc == 0, "null ctx alloc does not count as internal alloc failure");
+  test_check(debug.ptr_internal_invalid_realloc == 0, "null ctx realloc does not count as internal realloc failure");
+  test_check(debug.ptr_internal_invalid_free == 0, "null ctx free does not count as internal free failure");
+
+  state.fail_alloc_count = 1;
+  test_check(debug.allocator.alloc(debug.allocator.ctx, 32) == CF_NULL, "failed backing alloc returns null");
+  test_check(state.alloc_calls == 1, "backing alloc called once for failed alloc");
+  test_check(debug.ptr_internal_invalid_alloc == 1, "failed backing alloc increments invalid alloc count");
+  test_check(debug.ptr_live == 0, "failed backing alloc does not change live count");
+  test_check(debug.ptr_all_live == 0, "failed backing alloc does not change total live count");
+  test_check(debug.head == CF_NULL, "failed backing alloc does not create list node");
+  test_check(debug.latest_valid_ptr == CF_NULL, "failed backing alloc leaves latest pointer null");
+
+  cf_alloc_debug_log(&debug, __LINE__);
+
+  ptr_a = debug.allocator.alloc(debug.allocator.ctx, 32);
+  ptr_b = debug.allocator.alloc(debug.allocator.ctx, 24);
+  ptr_c = debug.allocator.alloc(debug.allocator.ctx, 8);
+  test_check(ptr_a != CF_NULL, "first tracked alloc succeeds");
+  test_check(ptr_b != CF_NULL, "second tracked alloc succeeds");
+  test_check(ptr_c != CF_NULL, "third tracked alloc succeeds");
+  test_check(state.alloc_calls == 4, "three successful allocs plus one failed alloc hit backing allocator");
+
+  ptr_a[0] = 0xAA;
+  ptr_a[31] = 0x55;
+  ptr_b[0] = 0xB1;
+  ptr_b[23] = 0xB2;
+  ptr_c[0] = 0xC3;
+
+  test_check(debug.ptr_live == 3, "three successful allocs set live count to three");
+  test_check(debug.ptr_free == 0, "allocs do not advance free count");
+  test_check(debug.ptr_max_live == 3, "max live count tracks peak allocations");
+  test_check(debug.ptr_max_free == 0, "max free count stays zero before frees");
+  test_check(debug.ptr_all_live == 3, "all_live counts successful allocs");
+  test_check(debug.ptr_all_free == 0, "all_free stays zero before frees");
+  test_check(debug.latest_valid_ptr == ptr_c, "latest valid pointer tracks newest alloc");
+  test_check(debug.head != CF_NULL, "head exists after successful allocs");
+  test_check(debug.head != CF_NULL && debug.head->ptr == ptr_c, "head points to newest pointer");
+  test_check(debug.head != CF_NULL && debug.head->next != CF_NULL, "second node exists");
+  test_check(debug.head != CF_NULL && debug.head->next != CF_NULL && debug.head->next->ptr == ptr_b, "second node tracks middle pointer");
+  test_check(
+    debug.head != CF_NULL &&
+    debug.head->next != CF_NULL &&
+    debug.head->next->next != CF_NULL &&
+    debug.head->next->next->ptr == ptr_a,
+    "third node tracks oldest pointer"
+  );
+
+  cf_alloc_debug_log(&debug, __LINE__);
+
+  test_check(debug.allocator.realloc(debug.allocator.ctx, &external_byte, 16) == CF_NULL, "realloc of untracked pointer returns null");
+  test_check(state.realloc_calls == 0, "realloc of untracked pointer does not call backing realloc");
+  test_check(debug.ptr_internal_invalid_realloc == 0, "realloc of untracked pointer does not count as internal realloc failure");
+
+  state.fail_realloc_count = 1;
+  test_check(debug.allocator.realloc(debug.allocator.ctx, ptr_c, 64) == CF_NULL, "failed backing realloc returns null");
+  test_check(state.realloc_calls == 1, "tracked realloc calls backing realloc");
+  test_check(debug.ptr_internal_invalid_realloc == 1, "failed backing realloc increments invalid realloc count");
+  test_check(debug.latest_valid_ptr == ptr_c, "failed realloc keeps latest valid pointer unchanged");
+  test_check(debug.head != CF_NULL && debug.head->ptr == ptr_c, "failed realloc keeps tracked pointer unchanged");
+
+  cf_alloc_debug_log(&debug, __LINE__);
+
+  ptr_c_realloc = debug.allocator.realloc(debug.allocator.ctx, ptr_c, 64);
+  test_check(ptr_c_realloc != CF_NULL, "successful realloc returns non-null");
+  test_check(state.realloc_calls == 2, "second tracked realloc hits backing realloc");
+  test_check(ptr_c_realloc[0] == 0xC3, "realloc preserves prior contents");
+  test_check(debug.ptr_live == 3, "realloc does not change live count");
+  test_check(debug.ptr_all_live == 3, "realloc does not change all_live count");
+  test_check(debug.ptr_all_free == 0, "realloc does not change all_free count");
+  test_check(debug.latest_valid_ptr == ptr_c_realloc, "successful realloc updates latest valid pointer");
+  test_check(debug.head != CF_NULL && debug.head->ptr == ptr_c_realloc, "successful realloc updates tracked head pointer");
+
+  cf_alloc_debug_log(&debug, __LINE__);
+
+  debug.allocator.free(debug.allocator.ctx, &external_byte);
+  test_check(debug.ptr_internal_invalid_free == 1, "free of untracked pointer increments invalid free count");
+  test_check(state.free_calls == 0, "free of untracked pointer does not call backing free");
+
+  debug.allocator.free(debug.allocator.ctx, ptr_b);
+  test_check(state.free_calls == 1, "free of middle node hits backing free");
+  test_check(debug.ptr_live == 2, "free decrements live count");
+  test_check(debug.ptr_free == 0, "first successful free keeps free ratio at zero while live side drains");
+  test_check(debug.ptr_max_free == 0, "max free count stays zero while frees are absorbed by live ratio");
+  test_check(debug.ptr_all_free == 1, "all_free increments after first free");
+  test_check(debug.latest_valid_ptr == ptr_c_realloc, "free of middle node keeps latest pointer at head");
+  test_check(debug.head != CF_NULL && debug.head->ptr == ptr_c_realloc, "head stays at most recent allocation after middle free");
+  test_check(debug.head != CF_NULL && debug.head->next != CF_NULL && debug.head->next->ptr == ptr_a, "middle free relinks list to oldest node");
+
+  cf_alloc_debug_log(&debug, __LINE__);
+
+  debug.allocator.free(debug.allocator.ctx, ptr_c_realloc);
+  test_check(state.free_calls == 2, "free of head node hits backing free");
+  test_check(debug.ptr_live == 1, "second free decrements live count");
+  test_check(debug.ptr_free == 0, "second free still keeps free ratio at zero");
+  test_check(debug.ptr_max_free == 0, "max free count remains zero after second free");
+  test_check(debug.ptr_all_free == 2, "all_free increments after second free");
+  test_check(debug.latest_valid_ptr == ptr_a, "free of head node moves latest pointer to new head");
+  test_check(debug.head != CF_NULL && debug.head->ptr == ptr_a, "free of head node promotes next node to head");
+  test_check(debug.head != CF_NULL && debug.head->next == CF_NULL, "one node remains after freeing head");
+
+  cf_alloc_debug_log(&debug, __LINE__);
+
+  debug.allocator.free(debug.allocator.ctx, ptr_a);
+  test_check(state.free_calls == 3, "free of final node hits backing free");
+  test_check(debug.ptr_live == 0, "final free drains live ratio back to zero");
+  test_check(debug.ptr_free == 0, "free ratio stays zero after balanced tracked frees");
+  test_check(debug.ptr_max_free == 0, "max free count stays zero when no free-side surplus appears");
+  test_check(debug.ptr_all_free == 3, "all_free equals number of successful frees");
+  test_check(debug.latest_valid_ptr == CF_NULL, "latest valid pointer becomes null when list is empty");
+  test_check(debug.head == CF_NULL, "head becomes null after final free");
+
+  cf_alloc_debug_log(&debug, __LINE__);
+
+  test_check(state.bad_ctx_alloc_calls == 0, "backing alloc receives backing ctx");
+  test_check(state.bad_ctx_realloc_calls == 0, "backing realloc receives backing ctx");
+  test_check(state.bad_ctx_free_calls == 0, "backing free receives backing ctx");
 }
 
-static void test_debug_alloc_free_full_backing(void)
+static void test_cf_alloc_debug_log_fn(void)
 {
-    section("cf_alloc_debug alloc/free with full backing");
+  test_alloc_state state = {0};
+  cf_alloc backing =
+  {
+    .ctx = &state,
+    .alloc = test_alloc,
+    .realloc = test_realloc,
+    .free = test_free,
+  };
+  cf_alloc_debug debug = {0};
 
-    cf_alloc backing = cf_alloc_new();
-    cf_alloc_debug d;
-    cf_alloc_debug_new(&d, &backing);
+  g_test_alloc_state = &state;
+  state.expected_ctx = &state;
 
-    cf_alloc *a = &d.allocator;
+  test_section("cf_alloc_debug_log");
 
-    void *p0 = a->alloc(a->ctx, 64);
-    CHECK("alloc returns non-null", p0 != CF_NULL);
-    CHECK("alloc_count is 1", d.alloc_count == 1);
-    CHECK("live_count is 1", d.live_count == 1);
-    CHECK("bytes_live is 64", d.bytes_live == 64);
-
-    a->free(a->ctx, p0);
-    CHECK("free_count is 1", d.free_count == 1);
-    CHECK("live_count back to 0", d.live_count == 0);
-    CHECK("bytes_live back to 0", d.bytes_live == 0);
-
-    cf_alloc_debug_destroy(&d);
+  cf_alloc_debug_new(&debug, &backing, CF_NULL);
+  cf_alloc_debug_log(CF_NULL, __LINE__);
+  cf_alloc_debug_log(&debug, __LINE__);
+  test_pass("debug log handles null and valid debug objects");
 }
 
-/* =========================================================================
- * cf_memory tests
- * =========================================================================
- */
-
-static void test_bytes_create_empty(void)
+static void test_cf_alloc_debug_ratio_switch(void)
 {
-    section("cf_bytes_create_empty");
+  test_alloc_state state = {0};
+  cf_alloc backing =
+  {
+    .ctx = &state,
+    .alloc = test_alloc,
+    .realloc = test_realloc,
+    .free = test_free,
+  };
+  cf_alloc_debug debug = {0};
+  cf_u8 *ptr_a = CF_NULL;
+  cf_u8 *ptr_b = CF_NULL;
 
-    cf_bytes bytes = cf_bytes_create_empty();
+  g_test_alloc_state = &state;
+  state.expected_ctx = &state;
 
-    CHECK("data is NULL", bytes.data == CF_NULL);
-    CHECK("len is 0",     bytes.len  == 0);
+  test_section("cf_alloc_debug ratio switch");
+
+  cf_alloc_debug_new(&debug, &backing, "cf_alloc_debug ratio switch");
+
+  /* Prime the debug counters to simulate free-side surplus so alloc can consume it. */
+  debug.ptr_free = 2;
+  debug.ptr_max_free = 2;
+  cf_alloc_debug_log(&debug, __LINE__);
+
+  ptr_a = debug.allocator.alloc(debug.allocator.ctx, 16);
+  test_check(ptr_a != CF_NULL, "alloc succeeds while free ratio has surplus");
+  test_check(debug.ptr_live == 0, "alloc consumes free surplus before growing live count");
+  test_check(debug.ptr_free == 1, "alloc consumes one step from free-side surplus");
+  test_check(debug.ptr_all_live == 1, "all_live still counts the allocation event");
+  test_check(debug.ptr_max_live == 0, "max live stays unchanged while alloc only consumes free surplus");
+  cf_alloc_debug_log(&debug, __LINE__);
+
+  ptr_b = debug.allocator.alloc(debug.allocator.ctx, 16);
+  test_check(ptr_b != CF_NULL, "second alloc succeeds while free surplus remains");
+  test_check(debug.ptr_live == 0, "second alloc also consumes free surplus before live grows");
+  test_check(debug.ptr_free == 0, "second alloc clears the free-side surplus");
+  test_check(debug.ptr_all_live == 2, "all_live counts both allocations that consumed surplus");
+  cf_alloc_debug_log(&debug, __LINE__);
+
+  debug.allocator.free(debug.allocator.ctx, ptr_b);
+  test_check(debug.ptr_live == 0, "free sees no live-side surplus to drain");
+  test_check(debug.ptr_free == 1, "free grows the free side once live side is zero");
+  test_check(debug.ptr_all_free == 1, "all_free still counts the free operation");
+  test_check(debug.ptr_max_free == 2, "max free keeps the earlier primed surplus peak");
+  cf_alloc_debug_log(&debug, __LINE__);
+
+  debug.allocator.free(debug.allocator.ctx, ptr_a);
+  test_check(debug.ptr_live == 0, "final free leaves live side at zero");
+  test_check(debug.ptr_free == 2, "final free restores the free-side surplus");
+  test_check(debug.ptr_all_free == 2, "all_free counts both cleanup frees");
+  test_check(debug.ptr_max_free == 2, "max free remains at the highest free-side peak");
+  test_check(debug.head == CF_NULL, "cleanup empties the tracked list");
+  cf_alloc_debug_log(&debug, __LINE__);
 }
 
-static void test_buffer_create_empty(void)
+static void test_cf_array_basic_flow(void)
 {
-    section("cf_buffer_create_empty");
+  cf_array array = {0};
+  cf_array_element first = {.data = (cf_u8 *)"A", .elem_size = sizeof(cf_u8), .len = 1};
+  cf_array_element second = {.data = (cf_u8 *)"BC", .elem_size = sizeof(cf_u8), .len = 2};
+  cf_array_element third = {.data = (cf_u8 *)"DEF", .elem_size = sizeof(cf_u8), .len = 3};
+  cf_array_element popped = {0};
+  cf_status status = CF_OK;
 
-    cf_buffer buffer = cf_buffer_create_empty();
+  test_section("cf_array basic flow");
 
-    CHECK("data is NULL",          buffer.data == CF_NULL);
-    CHECK("len is 0",              buffer.len  == 0);
-    CHECK("cap is 0",              buffer.cap  == 0);
-    CHECK("allocator is valid",    cf_alloc_is_valid(&buffer.allocator) == CF_TRUE);
+  status = cf_array_init(&array, 1);
+  test_check(status == CF_OK, "array init succeeds");
+  test_check(array.len == 0, "array starts empty");
+  test_check(array.cap == 1, "array starts with requested capacity");
+
+  status = cf_array_push(&array, &first, &second, &third, CF_NULL);
+  test_check(status == CF_OK, "array push accepts multiple elements");
+  test_check(array.len == 3, "array length reflects pushed elements");
+  test_check(array.cap >= 3, "array grows to fit additional elements");
+  test_check(array.data[0].data == first.data, "first pushed element is stored");
+  test_check(array.data[1].data == second.data, "second pushed element is stored");
+  test_check(array.data[2].data == third.data, "third pushed element is stored");
+  test_check(array.data[0].elem_size == sizeof(cf_u8), "stored element type width is preserved");
+  test_check(array.data[2].len == third.len, "stored metadata is preserved");
+
+  status = cf_array_pop(&array, &popped);
+  test_check(status == CF_OK, "array pop succeeds on non-empty array");
+  test_check(array.len == 2, "array pop decrements length");
+  test_check(popped.data == third.data, "array pop returns the last element");
+  test_check(popped.len == third.len, "array pop preserves popped length");
+
+  status = cf_array_reset(&array);
+  test_check(status == CF_OK, "array reset succeeds");
+  test_check(array.len == 0, "array reset clears logical length");
+  test_check(array.cap >= 3, "array reset preserves capacity");
+
+  popped = (cf_array_element){.data = (cf_u8 *)"x", .elem_size = sizeof(cf_u16), .len = 9};
+  status = cf_array_pop(&array, &popped);
+  test_check(status == CF_OK, "array pop on empty array succeeds");
+  test_check(popped.data == CF_NULL, "array pop on empty array clears output data");
+  test_check(popped.elem_size == 0, "array pop on empty array clears output type width");
+  test_check(popped.len == 0, "array pop on empty array clears output length");
+
+  cf_array_destroy(&array);
 }
 
-static void test_bytes_is_valid(void)
+static void test_cf_array_accessors(void)
 {
-    section("cf_bytes_is_valid");
+  cf_array array = {0};
+  cf_array_element first = {.data = (cf_u8 *)"AB", .elem_size = sizeof(cf_u8), .len = 2};
+  cf_array_element second = {.data = (cf_u16[]){10, 20}, .elem_size = sizeof(cf_u16), .len = 2};
+  cf_array_element third = {.data = (cf_u32[]){30}, .elem_size = sizeof(cf_u32), .len = 1};
+  cf_array_element read_back = {0};
+  cf_array_element replacement = {.data = (cf_u64[]){77}, .elem_size = sizeof(cf_u64), .len = 1};
+  cf_status status = CF_OK;
 
-    cf_bytes bytes = cf_bytes_create_empty();
-    CHECK("empty bytes is valid",          cf_bytes_is_valid(&bytes) == CF_TRUE);
-    CHECK("null ptr is invalid",           cf_bytes_is_valid(CF_NULL) == CF_FALSE);
+  test_section("cf_array accessors");
 
-    cf_bytes bad;
-    bad.data = CF_NULL;
-    bad.len  = 4;
-    CHECK("NULL data with non-zero len invalid", cf_bytes_is_valid(&bad) == CF_FALSE);
+  test_check(cf_array_is_valid(&array) == CF_TRUE, "zero-initialized array is structurally valid");
+  test_check(cf_array_is_empty(&array) == CF_TRUE, "zero-initialized array reports empty");
 
-    cf_u8 data[4] = {0};
-    bad.data = data;
-    bad.len  = 4;
-    CHECK("normal bytes is valid",         cf_bytes_is_valid(&bad) == CF_TRUE);
+  status = cf_array_init(&array, 0);
+  test_check(status == CF_OK, "array init with zero capacity succeeds");
+  test_check(cf_array_is_valid(&array) == CF_TRUE, "initialized array stays structurally valid");
+  test_check(cf_array_is_empty(&array) == CF_TRUE, "initialized empty array reports empty");
+
+  status = cf_array_push(&array, &first, &second, CF_NULL);
+  test_check(status == CF_OK, "push prepares array for accessor tests");
+  test_check(cf_array_is_empty(&array) == CF_FALSE, "non-empty array reports not empty");
+
+  status = cf_array_peek(&array, &read_back);
+  test_check(status == CF_OK, "peek succeeds on non-empty array");
+  test_check(read_back.data == second.data, "peek reads the last element");
+  test_check(read_back.len == second.len, "peek preserves element length");
+  test_check(array.len == 2, "peek does not change array length");
+
+  status = cf_array_get(&array, 0, &read_back);
+  test_check(status == CF_OK, "get succeeds for a valid index");
+  test_check(read_back.data == first.data, "get reads the requested element");
+  test_check(read_back.elem_size == first.elem_size, "get preserves requested element size");
+  test_check(read_back.len == first.len, "get preserves requested element length");
+
+  status = cf_array_set(&array, 1, &replacement);
+  test_check(status == CF_OK, "set succeeds for a valid index");
+  test_check(array.len == 2, "set does not change array length");
+
+  status = cf_array_get(&array, 1, &read_back);
+  test_check(status == CF_OK, "get succeeds after set");
+  test_check(read_back.data == replacement.data, "set replaces the stored data pointer");
+  test_check(read_back.elem_size == replacement.elem_size, "set replaces the stored element size");
+  test_check(read_back.len == replacement.len, "set replaces the stored element length");
+
+  status = cf_array_get(&array, 2, &read_back);
+  test_check(status == CF_ERR_BOUNDS, "get rejects an out-of-bounds index");
+  status = cf_array_set(&array, 2, &third);
+  test_check(status == CF_ERR_BOUNDS, "set rejects an out-of-bounds index");
+  status = cf_array_get(&array, 0, CF_NULL);
+  test_check(status == CF_ERR_NULL, "get rejects a null output pointer");
+  status = cf_array_set(&array, 0, CF_NULL);
+  test_check(status == CF_ERR_NULL, "set rejects a null input pointer");
+  status = cf_array_peek(&array, CF_NULL);
+  test_check(status == CF_ERR_NULL, "peek rejects a null output pointer");
+
+  cf_array_destroy(&array);
+  test_check(cf_array_is_valid(&array) == CF_TRUE, "destroy resets array to a valid empty state");
+  test_check(cf_array_is_empty(&array) == CF_TRUE, "destroyed array reports empty");
 }
 
-static void test_buffer_is_valid(void)
+static void test_cf_array_state_and_diagnostics(void)
 {
-    section("cf_buffer_is_valid");
+  cf_array array = {0};
+  cf_array invalid = {.data = CF_NULL, .len = 1, .cap = 0};
+  cf_array_element element = {.data = (cf_u8 *)"Z", .elem_size = sizeof(cf_u8), .len = 1};
+  cf_array_element read_back = {0};
+  cf_status status = CF_OK;
 
-    cf_buffer buffer = cf_buffer_create_empty();
-    CHECK("empty buffer is valid",         cf_buffer_is_valid(&buffer) == CF_TRUE);
-    CHECK("null ptr is invalid",           cf_buffer_is_valid(CF_NULL) == CF_FALSE);
+  test_section("cf_array state and diagnostics");
 
-    cf_buffer bad = buffer;
-    bad.data = (cf_u8 *)1;
-    CHECK("data non-null with cap 0 invalid", cf_buffer_is_valid(&bad) == CF_FALSE);
+  test_check(cf_array_init(CF_NULL, 0) == CF_ERR_NULL, "array init rejects null array");
+  test_check(cf_array_reserve(CF_NULL, 1) == CF_ERR_NULL, "array reserve rejects null array");
+  test_check(cf_array_reset(CF_NULL) == CF_ERR_NULL, "array reset rejects null array");
+  test_check(cf_array_peek(CF_NULL, &read_back) == CF_ERR_NULL, "array peek rejects null array");
+  test_check(cf_array_pop(CF_NULL, &read_back) == CF_ERR_NULL, "array pop rejects null array");
+  test_check(cf_array_get(CF_NULL, 0, &read_back) == CF_ERR_NULL, "array get rejects null array");
+  test_check(cf_array_set(CF_NULL, 0, &element) == CF_ERR_NULL, "array set rejects null array");
+  test_check(cf_array_is_valid(CF_NULL) == CF_FALSE, "array validity rejects null array");
+  test_check(cf_array_is_empty(CF_NULL) == CF_FALSE, "null array does not report empty");
 
-    bad = buffer;
-    bad.data = (cf_u8 *)1;
-    bad.cap  = 4;
-    bad.len  = 8;
-    CHECK("len > cap invalid",             cf_buffer_is_valid(&bad) == CF_FALSE);
+  status = cf_array_init(&array, 0);
+  test_check(status == CF_OK, "array init prepares reserve tests");
+  status = cf_array_reserve(&array, 4);
+  test_check(status == CF_OK, "array reserve allocates backing storage");
+  test_check(array.cap >= 4, "array reserve stores requested capacity");
+  test_check(array.len == 0, "array reserve keeps length unchanged");
 
-    cf_alloc alloc = cf_alloc_new();
-    cf_u8 data[8] = {0};
-    bad.data = data;
-    bad.len  = 4;
-    bad.cap  = 8;
-    bad.allocator = alloc;
-    CHECK("normal buffer is valid",        cf_buffer_is_valid(&bad) == CF_TRUE);
+  status = cf_array_push(&array, CF_NULL);
+  test_check(status == CF_OK, "array push with null first element is a no-op");
+  test_check(array.len == 0, "null push keeps array length unchanged");
+
+  status = cf_array_push(&array, &element, CF_NULL);
+  test_check(status == CF_OK, "array push prepares diagnostics");
+  cf_array_info(&array);
+  cf_array_info(CF_NULL);
+  test_pass("array info handles valid and null arrays");
+
+  test_check(cf_array_is_valid(&invalid) == CF_FALSE, "array validity detects impossible len/cap state");
+  test_check(cf_array_is_empty(&invalid) == CF_FALSE, "invalid array does not report empty");
+  test_check(cf_array_reserve(&invalid, 2) == CF_ERR_STATE, "array reserve rejects invalid state");
+
+  cf_array_destroy(&array);
 }
 
-static void test_bytes_is_empty(void)
+static void test_cf_string_build_and_lifecycle(void)
 {
-    section("cf_bytes_is_empty");
+  cf_string str = {0};
+  cf_string suffix = {0};
+  char *owned = CF_NULL;
+  cf_status status = CF_OK;
 
-    cf_bytes bytes = cf_bytes_create_empty();
-    CHECK("empty bytes is empty",          cf_bytes_is_empty(&bytes) == CF_TRUE);
+  test_section("cf_string build and lifecycle");
 
-    cf_u8 data[1] = {0};
-    bytes.data = data;
-    bytes.len  = 1;
-    CHECK("non-empty bytes is not empty",  cf_bytes_is_empty(&bytes) == CF_FALSE);
+  test_check(cf_string_init(CF_NULL, 0) == CF_ERR_NULL, "string init rejects null string");
+  status = cf_string_init(&str, 0);
+  test_check(status == CF_OK, "string init with zero capacity succeeds");
+  test_check(cf_string_is_valid(&str) == CF_TRUE, "initialized string is valid");
+  test_check(cf_string_is_empty(&str) == CF_TRUE, "initialized string reports empty");
 
-    CHECK("null ptr returns false",        cf_bytes_is_empty(CF_NULL) == CF_FALSE);
+  status = cf_string_reserve(&str, 8);
+  test_check(status == CF_OK, "string reserve succeeds");
+  test_check(str.cap >= 9, "string reserve keeps room for terminator");
+  test_check(str.data != CF_NULL && str.data[str.len] == '\0', "string reserve writes terminator");
+
+  status = cf_string_append_char(&str, 'c');
+  test_check(status == CF_OK, "string append char succeeds");
+  status = cf_string_append_cstr(&str, "ypher");
+  test_check(status == CF_OK, "string append cstr succeeds");
+  test_check_string_value(&str, "cypher", "append char and cstr build expected text");
+
+  status = cf_string_init(&suffix, 0);
+  test_check(status == CF_OK, "source string init succeeds");
+  status = cf_string_from_cstr(&suffix, "Framework");
+  test_check(status == CF_OK, "string from cstr writes source text");
+  status = cf_string_append_str(&str, &suffix);
+  test_check(status == CF_OK, "string append str succeeds");
+  test_check_string_value(&str, "cypherFramework", "append str copies source contents");
+
+  status = cf_string_as_cstr(&owned, &str);
+  test_check(status == CF_OK, "string as cstr succeeds");
+  test_check(owned != CF_NULL && strcmp(owned, "cypherFramework") == 0, "as cstr returns an owned null-terminated copy");
+  str.allocator.free(str.allocator.ctx, owned);
+  owned = CF_NULL;
+
+  status = cf_string_trunc(&str, 6);
+  test_check(status == CF_OK, "string trunc succeeds");
+  test_check_string_value(&str, "cypher", "string trunc keeps requested prefix");
+  test_check(cf_string_trunc(&str, 99) == CF_ERR_BOUNDS, "string trunc rejects too-large length");
+
+  status = cf_string_reset(&str);
+  test_check(status == CF_OK, "string reset succeeds");
+  test_check(cf_string_is_empty(&str) == CF_TRUE, "string reset reports empty");
+  test_check(str.data != CF_NULL && str.data[0] == '\0', "string reset keeps terminator");
+
+  cf_string_info(&str);
+  cf_string_info(CF_NULL);
+  test_pass("string info handles valid and null strings");
+
+  cf_string_destroy(&suffix);
+  cf_string_destroy(&str);
+  test_check(cf_string_is_valid(&str) == CF_TRUE, "destroy resets string to valid empty state");
+  test_check(cf_string_is_empty(&str) == CF_TRUE, "destroyed string reports empty");
 }
 
-static void test_buffer_is_empty(void)
+static void test_cf_string_queries_and_slices(void)
 {
-    section("cf_buffer_is_empty");
+  cf_string haystack = {0};
+  cf_string same = {0};
+  cf_string needle = {0};
+  char c = '\0';
+  char *tail = CF_NULL;
+  char *slice = CF_NULL;
+  cf_status status = CF_OK;
 
-    cf_buffer buffer = cf_buffer_create_empty();
-    CHECK("empty buffer is empty",         cf_buffer_is_empty(&buffer) == CF_TRUE);
+  test_section("cf_string queries and slices");
 
-    cf_alloc alloc = cf_alloc_new();
-    buffer.data = (cf_u8 *)1;
-    buffer.len  = 1;
-    buffer.cap  = 1;
-    buffer.allocator = alloc;
-    CHECK("non-empty buffer is not empty", cf_buffer_is_empty(&buffer) == CF_FALSE);
+  cf_string_init(&haystack, 0);
+  cf_string_init(&same, 0);
+  cf_string_init(&needle, 0);
+  cf_string_from_cstr(&haystack, "alpha beta gamma");
+  cf_string_from_cstr(&same, "alpha beta gamma");
+  cf_string_from_cstr(&needle, "beta");
 
-    CHECK("null ptr returns false",        cf_buffer_is_empty(CF_NULL) == CF_FALSE);
+  test_check(cf_string_eq(&haystack, &same) == CF_TRUE, "string eq accepts identical strings");
+  test_check(cf_string_eq(&haystack, &needle) == CF_FALSE, "string eq rejects different strings");
+  test_check(cf_string_eq(&haystack, CF_NULL) == CF_FALSE, "string eq rejects null argument");
+  test_check(cf_string_contains_char(&haystack, 'g') == CF_TRUE, "contains char finds present character");
+  test_check(cf_string_contains_char(&haystack, 'z') == CF_FALSE, "contains char rejects missing character");
+  test_check(cf_string_contains_cstr(&haystack, "beta") == CF_TRUE, "contains cstr finds present substring");
+  test_check(cf_string_contains_cstr(&haystack, "delta") == CF_FALSE, "contains cstr rejects missing substring");
+  test_check(cf_string_contains_str(&haystack, &needle) == CF_TRUE, "contains str finds present string");
+  test_check(cf_string_contains_str(&needle, &haystack) == CF_FALSE, "contains str rejects longer missing string");
+
+  status = cf_string_char_at(&haystack, 6, &c);
+  test_check(status == CF_OK && c == 'b', "char at returns requested character");
+  test_check(cf_string_char_at(&haystack, haystack.len, &c) == CF_ERR_BOUNDS, "char at rejects end index");
+  test_check(cf_string_char_at(&haystack, 0, CF_NULL) == CF_ERR_NULL, "char at rejects null output");
+
+  status = cf_string_str_at(&haystack, 6, &tail);
+  test_check(status == CF_OK, "str at copies suffix");
+  test_check(tail != CF_NULL && strcmp(tail, "beta gamma") == 0, "str at suffix content is correct");
+  haystack.allocator.free(haystack.allocator.ctx, tail);
+  tail = CF_NULL;
+  test_check(cf_string_str_at(&haystack, haystack.len, &tail) == CF_ERR_BOUNDS, "str at rejects end index");
+  test_check(cf_string_str_at(&haystack, 0, CF_NULL) == CF_ERR_NULL, "str at rejects null output");
+
+  status = cf_string_slice(&slice, &haystack, 6, 9);
+  test_check(status == CF_OK, "string slice copies inclusive range");
+  test_check(slice != CF_NULL && strcmp(slice, "beta") == 0, "string slice content is correct");
+  haystack.allocator.free(haystack.allocator.ctx, slice);
+  slice = CF_NULL;
+  test_check(cf_string_slice(&slice, &haystack, 4, 3) == CF_ERR_INVALID, "string slice rejects reversed range");
+  test_check(cf_string_slice(&slice, &haystack, 0, haystack.len) == CF_ERR_BOUNDS, "string slice rejects end past content");
+  test_check(cf_string_slice(CF_NULL, &haystack, 0, 1) == CF_ERR_NULL, "string slice rejects null output");
+
+  cf_string_destroy(&needle);
+  cf_string_destroy(&same);
+  cf_string_destroy(&haystack);
 }
 
-static void test_bytes_is_eq(void)
+static void test_cf_string_mutation_helpers(void)
 {
-    section("cf_bytes_is_eq");
+  cf_string str = {0};
+  cf_string csv = {0};
+  cf_array parts = {0};
+  cf_array_element part = {0};
+  cf_status status = CF_OK;
 
-    cf_u8 d1[4] = {1,2,3,4};
-    cf_u8 d2[4] = {1,2,3,4};
-    cf_u8 d3[4] = {1,2,3,9};
+  test_section("cf_string mutation helpers");
 
-    cf_bytes b1 = {d1, 4};
-    cf_bytes b2 = {d2, 4};
-    cf_bytes b3 = {d3, 4};
-    cf_bytes e  = cf_bytes_create_empty();
+  cf_string_init(&str, 0);
+  cf_string_from_cstr(&str, " \talpha beta\n");
 
-    CHECK("equal bytes returns true",      cf_bytes_is_eq(&b1, &b2) == CF_TRUE);
-    CHECK("different bytes returns false", cf_bytes_is_eq(&b1, &b3) == CF_FALSE);
-    CHECK("empty equals empty",            cf_bytes_is_eq(&e, &e)   == CF_TRUE);
-    CHECK("null arg returns false",        cf_bytes_is_eq(&b1, CF_NULL) == CF_FALSE);
+  status = cf_string_trim_left(&str);
+  test_check(status == CF_OK, "string trim left succeeds");
+  test_check_string_value(&str, "alpha beta\n", "trim left removes leading whitespace and updates length");
+
+  status = cf_string_trim_right(&str);
+  test_check(status == CF_OK, "string trim right succeeds");
+  test_check_string_value(&str, "alpha beta", "trim right removes trailing whitespace");
+
+  cf_string_from_cstr(&str, "\n alpha beta \t");
+  status = cf_string_trim(&str);
+  test_check(status == CF_OK, "string trim succeeds");
+  test_check_string_value(&str, "alpha beta", "trim removes both leading and trailing whitespace");
+
+  status = cf_string_strip(&str);
+  test_check(status == CF_OK, "string strip succeeds");
+  test_check_string_value(&str, "alphabeta", "strip removes all framework whitespace");
+
+  status = cf_string_replace(&str, 'a', 'A');
+  test_check(status == CF_OK, "string replace succeeds");
+  test_check_string_value(&str, "AlphAbetA", "replace swaps every target character");
+
+  cf_string_init(&csv, 0);
+  cf_array_init(&parts, 0);
+  cf_string_from_cstr(&csv, "red,,green,blue,");
+  status = cf_string_split(&parts, &csv, ',');
+  test_check(status == CF_OK, "string split succeeds");
+  test_check(parts.len == 3, "string split skips empty fields");
+
+  status = cf_array_get(&parts, 0, &part);
+  test_check(status == CF_OK && part.data != CF_NULL && strcmp((char *)part.data, "red") == 0, "split part 0 is correct");
+  csv.allocator.free(csv.allocator.ctx, part.data);
+  status = cf_array_get(&parts, 1, &part);
+  test_check(status == CF_OK && part.data != CF_NULL && strcmp((char *)part.data, "green") == 0, "split part 1 is correct");
+  csv.allocator.free(csv.allocator.ctx, part.data);
+  status = cf_array_get(&parts, 2, &part);
+  test_check(status == CF_OK && part.data != CF_NULL && strcmp((char *)part.data, "blue") == 0, "split part 2 is correct");
+  csv.allocator.free(csv.allocator.ctx, part.data);
+
+  test_check(cf_string_split(CF_NULL, &csv, ',') == CF_ERR_NULL, "string split rejects null destination");
+
+  cf_array_destroy(&parts);
+  cf_string_destroy(&csv);
+  cf_string_destroy(&str);
 }
 
-static void test_buffer_is_eq(void)
+static void test_cf_string_invalid_state(void)
 {
-    section("cf_buffer_is_eq");
+  cf_string invalid = {.data = CF_NULL, .len = 1, .cap = 0};
+  cf_string str = {0};
 
-    cf_alloc alloc = cf_alloc_new();
+  test_section("cf_string invalid state");
 
-    cf_buffer b1 = {0};
-    cf_buffer b2 = {0};
-    cf_buffer b3 = {0};
+  test_check(cf_string_is_valid(CF_NULL) == CF_FALSE, "string validity rejects null string");
+  test_check(cf_string_is_empty(CF_NULL) == CF_FALSE, "null string does not report empty");
+  test_check(cf_string_is_valid(&invalid) == CF_FALSE, "string validity detects impossible len/cap state");
+  test_check(cf_string_is_empty(&invalid) == CF_FALSE, "invalid string does not report empty");
+  test_check(cf_string_reserve(&invalid, 2) == CF_ERR_STATE, "string reserve rejects invalid state");
+  test_check(cf_string_reset(&invalid) == CF_ERR_STATE, "string reset rejects invalid state");
+  test_check(cf_string_trunc(&invalid, 0) == CF_ERR_STATE, "string trunc rejects invalid state");
 
-    cf_u8 d1[4] = {1,2,3,4};
-    cf_u8 d2[4] = {1,2,3,4};
-    cf_u8 d3[4] = {1,2,3,8};
-
-    b1.data = d1; b1.len = 4; b1.cap = 4; b1.allocator = alloc;
-    b2.data = d2; b2.len = 4; b2.cap = 4; b2.allocator = alloc;
-    b3.data = d3; b3.len = 4; b3.cap = 4; b3.allocator = alloc;
-
-    CHECK("equal buffers returns true",      cf_buffer_is_eq(&b1, &b2) == CF_TRUE);
-    CHECK("different buffers returns false", cf_buffer_is_eq(&b1, &b3) == CF_FALSE);
-    CHECK("null arg returns false",          cf_buffer_is_eq(&b1, CF_NULL) == CF_FALSE);
+  cf_string_init(&str, 0);
+  test_check(cf_string_from_cstr(CF_NULL, "x") == CF_ERR_NULL, "string from cstr rejects null destination");
+  test_check(cf_string_from_cstr(&str, CF_NULL) == CF_ERR_NULL, "string from cstr rejects null source");
+  test_check(cf_string_as_cstr(CF_NULL, &str) == CF_ERR_NULL, "string as cstr rejects null output");
+  cf_string_destroy(&str);
 }
 
-static void test_bytes_slice(void)
+static void test_cf_types_native_groups(void)
 {
-    section("cf_bytes_slice");
+  test_section("cf_types native groups");
 
-    cf_u8 data[6] = {10,20,30,40,50,60};
-    cf_bytes src = {data, 6};
-    cf_bytes dst;
-    cf_status st;
-
-    st = cf_bytes_slice(&dst, &src, 2, 3);
-    CHECK("slice returns CF_OK",            st == CF_OK);
-    CHECK("slice points to correct offset", dst.data == data + 2);
-    CHECK("slice len is 3",                 dst.len == 3);
-    CHECK("slice byte[0] correct",          dst.data[0] == 30);
-    CHECK("slice byte[2] correct",          dst.data[2] == 50);
-
-    st = cf_bytes_slice(&dst, &src, 6, 0);
-    CHECK("empty slice at end returns CF_OK", st == CF_OK);
-    CHECK("empty slice at end len is 0",      dst.len == 0);
-
-    st = cf_bytes_slice(&dst, &src, 7, 0);
-    CHECK("index > len returns CF_ERR_BOUNDS", st == CF_ERR_BOUNDS);
-
-    st = cf_bytes_slice(&dst, &src, 4, 3);
-    CHECK("size past end returns CF_ERR_BOUNDS", st == CF_ERR_BOUNDS);
-
-    st = cf_bytes_slice(CF_NULL, &src, 0, 1);
-    CHECK("null dst returns CF_ERR_NULL", st == CF_ERR_NULL);
+  test_check(cf_types_type_size(sizeof(cf_u8)) == CF_NATIVE_1_BYTE, "1-byte values map to CF_NATIVE_1_BYTE");
+  test_check(cf_types_type_size(sizeof(cf_u16)) == CF_NATIVE_2_BYTE, "2-byte values map to CF_NATIVE_2_BYTE");
+  test_check(cf_types_type_size(sizeof(cf_u32)) == CF_NATIVE_4_BYTE, "4-byte values map to CF_NATIVE_4_BYTE");
+  test_check(cf_types_type_size(sizeof(cf_u64)) == CF_NATIVE_8_BYTE, "8-byte values map to CF_NATIVE_8_BYTE");
+  test_check(cf_types_type_size(sizeof(cf_u128)) == CF_NATIVE_16_BYTE, "16-byte values map to CF_NATIVE_16_BYTE");
+  test_check(cf_types_type_size(3) == CF_NATIVE_UNKNOWN, "non-native size maps to unknown");
+  test_check(strcmp(cf_types_as_char(sizeof(cf_u8)), "1 byte: char/bool-sized primitive value or struct with 1-byte total size.") == 0, "1-byte description is stable");
+  test_check(strcmp(cf_types_as_char(sizeof(cf_u64)), "8 bytes: long/pointer/double-sized primitive value or struct with 8-byte total size.") == 0, "8-byte description is stable");
+  test_check(strcmp(cf_types_as_char(24), "Not a primitive type size or a struct with a native primitive-sized total width.") == 0, "non-native description is stable");
 }
-
-static void test_buffer_slice(void)
-{
-    section("cf_buffer_slice");
-
-    cf_alloc alloc = cf_alloc_new();
-    cf_u8 data[6] = {10,20,30,40,50,60};
-    cf_buffer src = {data, 6, 6, alloc};
-    cf_bytes dst;
-    cf_status st;
-
-    st = cf_buffer_slice(&dst, &src, 1, 4);
-    CHECK("slice returns CF_OK",            st == CF_OK);
-    CHECK("slice points to correct offset", dst.data == data + 1);
-    CHECK("slice len is 4",                 dst.len == 4);
-    CHECK("slice byte[0] correct",          dst.data[0] == 20);
-    CHECK("slice byte[3] correct",          dst.data[3] == 50);
-
-    st = cf_buffer_slice(&dst, &src, 6, 0);
-    CHECK("empty slice at end returns CF_OK", st == CF_OK);
-    CHECK("empty slice at end len is 0",      dst.len == 0);
-
-    st = cf_buffer_slice(&dst, &src, 7, 0);
-    CHECK("index > len returns CF_ERR_BOUNDS", st == CF_ERR_BOUNDS);
-
-    st = cf_buffer_slice(&dst, &src, 5, 2);
-    CHECK("size past end returns CF_ERR_BOUNDS", st == CF_ERR_BOUNDS);
-}
-
-static void test_bytes_fill(void)
-{
-    section("cf_bytes_fill");
-
-    cf_u8 data[6] = {1,2,3,4,5,6};
-    cf_bytes bytes = {data, 6};
-    cf_status st;
-
-    st = cf_bytes_fill(&bytes, 0xAA, 4);
-    CHECK("fill returns CF_OK",            st == CF_OK);
-    CHECK("byte 0 changed",                data[0] == 0xAA);
-    CHECK("byte 3 changed",                data[3] == 0xAA);
-    CHECK("byte 4 unchanged",              data[4] == 5);
-
-    st = cf_bytes_fill(&bytes, 0xBB, 7);
-    CHECK("fill past len returns CF_ERR_BOUNDS", st == CF_ERR_BOUNDS);
-
-    st = cf_bytes_fill(CF_NULL, 0xCC, 1);
-    CHECK("null bytes returns CF_ERR_NULL", st == CF_ERR_NULL);
-}
-
-static void test_buffer_fill(void)
-{
-    section("cf_buffer_fill");
-
-    cf_alloc alloc = cf_alloc_new();
-    cf_u8 data[6] = {1,2,3,4,5,6};
-    cf_buffer buffer = {data, 6, 6, alloc};
-    cf_status st;
-
-    st = cf_buffer_fill(&buffer, 0x11, 3);
-    CHECK("fill returns CF_OK",            st == CF_OK);
-    CHECK("byte 0 changed",                data[0] == 0x11);
-    CHECK("byte 2 changed",                data[2] == 0x11);
-    CHECK("byte 3 unchanged",              data[3] == 4);
-
-    st = cf_buffer_fill(&buffer, 0x22, 9);
-    CHECK("fill past len returns CF_ERR_BOUNDS", st == CF_ERR_BOUNDS);
-}
-
-static void test_buffer_init(void)
-{
-    section("cf_buffer_init");
-
-    cf_buffer buffer;
-    cf_status st;
-    cf_alloc alloc = cf_alloc_new();
-
-    st = cf_buffer_init(CF_NULL, &alloc, 16);
-    CHECK("null buffer returns CF_ERR_NULL", st == CF_ERR_NULL);
-
-    st = cf_buffer_init(&buffer, &alloc, 0);
-    CHECK("init with zero capacity returns CF_OK", st == CF_OK);
-    CHECK("zero-cap data is NULL",                 buffer.data == CF_NULL);
-    CHECK("zero-cap len is 0",                     buffer.len == 0);
-    CHECK("zero-cap cap is 0",                     buffer.cap == 0);
-
-    st = cf_buffer_init(&buffer, &alloc, 16);
-    CHECK("init with capacity returns CF_OK",      st == CF_OK);
-    CHECK("data is non-null",                      buffer.data != CF_NULL);
-    CHECK("len starts at 0",                       buffer.len == 0);
-    CHECK("cap is 16",                             buffer.cap == 16);
-
-    cf_buffer_destroy(&buffer);
-}
-
-static void test_buffer_reserve(void)
-{
-    section("cf_buffer_reserve");
-
-    cf_buffer buffer;
-    cf_status st;
-    cf_alloc alloc = cf_alloc_new();
-
-    st = cf_buffer_init(&buffer, &alloc, 8);
-    CHECK("init returns CF_OK", st == CF_OK);
-
-    st = cf_buffer_reserve(&buffer, 4);
-    CHECK("reserve smaller cap returns CF_OK", st == CF_OK);
-    CHECK("cap unchanged when already enough", buffer.cap == 8);
-
-    st = cf_buffer_reserve(&buffer, 32);
-    CHECK("reserve bigger cap returns CF_OK", st == CF_OK);
-    CHECK("cap grows to 32",                  buffer.cap == 32);
-    CHECK("len unchanged after reserve",      buffer.len == 0);
-    CHECK("data still non-null",              buffer.data != CF_NULL);
-
-    st = cf_buffer_reserve(CF_NULL, 16);
-    CHECK("null buffer returns CF_ERR_NULL", st == CF_ERR_NULL);
-
-    cf_buffer_destroy(&buffer);
-}
-
-static void test_buffer_clear(void)
-{
-    section("cf_buffer_clear");
-
-    cf_alloc alloc = cf_alloc_new();
-    cf_u8 data[8] = {1,2,3,4,5,6,7,8};
-    cf_buffer buffer = {data, 5, 8, alloc};
-
-    cf_buffer_clear(&buffer);
-    CHECK("clear sets len to 0", buffer.len == 0);
-    CHECK("cap unchanged",       buffer.cap == 8);
-    CHECK("data unchanged",      buffer.data == data);
-
-    cf_buffer_clear(CF_NULL);
-    CHECK("clear null does not crash", CF_TRUE);
-}
-
-static void test_buffer_destroy(void)
-{
-    section("cf_buffer_destroy");
-
-    cf_buffer buffer;
-    cf_alloc alloc = cf_alloc_new();
-    cf_status st = cf_buffer_init(&buffer, &alloc, 16);
-    CHECK("init returns CF_OK", st == CF_OK);
-
-    cf_buffer_destroy(&buffer);
-    CHECK("data NULL after destroy",         buffer.data == CF_NULL);
-    CHECK("len 0 after destroy",             buffer.len == 0);
-    CHECK("cap 0 after destroy",             buffer.cap == 0);
-
-    cf_buffer_destroy(&buffer);
-    CHECK("double destroy does not crash",   CF_TRUE);
-
-    cf_buffer_destroy(CF_NULL);
-    CHECK("destroy null does not crash",     CF_TRUE);
-}
-
-static void test_buffer_append_bytes(void)
-{
-    section("cf_buffer_append_bytes");
-
-    cf_alloc alloc = cf_alloc_new();
-    cf_buffer buffer = cf_buffer_create_empty();
-    cf_status st = cf_buffer_init(&buffer, &alloc, 8);
-
-    CHECK("init returns CF_OK", st == CF_OK);
-
-    cf_u8 src_data[3] = {10, 20, 30};
-    cf_bytes src = {src_data, 3};
-
-    st = cf_buffer_append_bytes(&buffer, &src);
-    CHECK("append returns CF_OK", st == CF_OK);
-    CHECK("len becomes 3",        buffer.len == 3);
-    CHECK("byte 0 correct",       buffer.data[0] == 10);
-    CHECK("byte 1 correct",       buffer.data[1] == 20);
-    CHECK("byte 2 correct",       buffer.data[2] == 30);
-
-    cf_buffer_destroy(&buffer);
-}
-
-static void test_buffer_append_byte(void)
-{
-    section("cf_buffer_append_byte");
-
-    cf_alloc alloc = cf_alloc_new();
-    cf_buffer buffer = cf_buffer_create_empty();
-    cf_status st = cf_buffer_init(&buffer, &alloc, 4);
-
-    CHECK("init returns CF_OK", st == CF_OK);
-
-    st = cf_buffer_append_byte(&buffer, 0xAB);
-    CHECK("append byte returns CF_OK", st == CF_OK);
-    CHECK("len becomes 1",             buffer.len == 1);
-    CHECK("stored byte correct",       buffer.data[0] == 0xAB);
-
-    st = cf_buffer_append_byte(&buffer, 0xCD);
-    CHECK("second append byte returns CF_OK", st == CF_OK);
-    CHECK("len becomes 2",                    buffer.len == 2);
-    CHECK("stored second byte correct",       buffer.data[1] == 0xCD);
-
-    cf_buffer_destroy(&buffer);
-}
-
-static void test_buffer_append_bytes_null(void)
-{
-    section("cf_buffer_append_bytes_null");
-
-    cf_alloc alloc = cf_alloc_new();
-    cf_buffer buffer = cf_buffer_create_empty();
-    cf_status st = cf_buffer_init(&buffer, &alloc, 8);
-
-    CHECK("init returns CF_OK", st == CF_OK);
-
-    cf_u8 src_data[2] = {1, 2};
-    cf_bytes src = {src_data, 2};
-
-    st = cf_buffer_append_bytes(CF_NULL, &src);
-    CHECK("null dst returns CF_ERR_NULL", st == CF_ERR_NULL);
-
-    st = cf_buffer_append_bytes(&buffer, CF_NULL);
-    CHECK("null src returns CF_ERR_NULL", st == CF_ERR_NULL);
-
-    cf_buffer_destroy(&buffer);
-}
-
-static void test_buffer_append_bytes_invalid_src(void)
-{
-    section("cf_buffer_append_bytes_invalid_src");
-
-    cf_alloc alloc = cf_alloc_new();
-    cf_buffer buffer = cf_buffer_create_empty();
-    cf_status st = cf_buffer_init(&buffer, &alloc, 8);
-
-    CHECK("init returns CF_OK", st == CF_OK);
-
-    cf_bytes bad_src = {CF_NULL, 2};
-
-    st = cf_buffer_append_bytes(&buffer, &bad_src);
-    CHECK("invalid src returns CF_ERR_STATE", st == CF_ERR_STATE);
-
-    cf_buffer_destroy(&buffer);
-}
-
-static void test_buffer_append_bytes_multiple(void)
-{
-    section("cf_buffer_append_bytes_multiple");
-
-    cf_alloc alloc = cf_alloc_new();
-    cf_buffer buffer = cf_buffer_create_empty();
-    cf_status st = cf_buffer_init(&buffer, &alloc, 8);
-
-    CHECK("init returns CF_OK", st == CF_OK);
-
-    cf_u8 a_data[2] = {1, 2};
-    cf_u8 b_data[3] = {3, 4, 5};
-
-    cf_bytes a = {a_data, 2};
-    cf_bytes b = {b_data, 3};
-
-    st = cf_buffer_append_bytes(&buffer, &a);
-    CHECK("first append returns CF_OK", st == CF_OK);
-
-    st = cf_buffer_append_bytes(&buffer, &b);
-    CHECK("second append returns CF_OK", st == CF_OK);
-
-    CHECK("len becomes 5", buffer.len == 5);
-    CHECK("byte 0 correct", buffer.data[0] == 1);
-    CHECK("byte 1 correct", buffer.data[1] == 2);
-    CHECK("byte 2 correct", buffer.data[2] == 3);
-    CHECK("byte 3 correct", buffer.data[3] == 4);
-    CHECK("byte 4 correct", buffer.data[4] == 5);
-
-    cf_buffer_destroy(&buffer);
-}
-
-static void test_buffer_append_bytes_grow(void)
-{
-    section("cf_buffer_append_bytes_grow");
-
-    cf_alloc alloc = cf_alloc_new();
-    cf_buffer buffer = cf_buffer_create_empty();
-    cf_status st = cf_buffer_init(&buffer, &alloc, 4);
-
-    CHECK("init returns CF_OK", st == CF_OK);
-
-    cf_u8 a_data[3] = {1, 2, 3};
-    cf_u8 b_data[3] = {4, 5, 6};
-
-    cf_bytes a = {a_data, 3};
-    cf_bytes b = {b_data, 3};
-
-    st = cf_buffer_append_bytes(&buffer, &a);
-    CHECK("first append returns CF_OK", st == CF_OK);
-
-    st = cf_buffer_append_bytes(&buffer, &b);
-    CHECK("second append requiring grow returns CF_OK", st == CF_OK);
-
-    CHECK("len becomes 6", buffer.len == 6);
-    CHECK("byte 0 correct", buffer.data[0] == 1);
-    CHECK("byte 1 correct", buffer.data[1] == 2);
-    CHECK("byte 2 correct", buffer.data[2] == 3);
-    CHECK("byte 3 correct", buffer.data[3] == 4);
-    CHECK("byte 4 correct", buffer.data[4] == 5);
-    CHECK("byte 5 correct", buffer.data[5] == 6);
-
-    cf_buffer_destroy(&buffer);
-}
-
-static void test_bytes_copy_as_buffer(void)
-{
-    section("cf_bytes_copy_as_buffer");
-
-    cf_alloc alloc = cf_alloc_new();
-    cf_buffer buffer = cf_buffer_create_empty();
-    cf_status st = cf_buffer_init(&buffer, &alloc, 2);
-
-    CHECK("init returns CF_OK", st == CF_OK);
-
-    cf_u8 src_data[4] = {10,20,30,40};
-    cf_bytes src = {src_data, 4};
-
-    st = cf_bytes_copy_as_buffer(&buffer, &src);
-    CHECK("copy returns CF_OK",     st == CF_OK);
-    CHECK("buffer len becomes 4",   buffer.len == 4);
-    CHECK("buffer cap >= 4",        buffer.cap >= 4);
-    CHECK("byte 0 correct",         buffer.data[0] == 10);
-    CHECK("byte 1 correct",         buffer.data[1] == 20);
-    CHECK("byte 2 correct",         buffer.data[2] == 30);
-    CHECK("byte 3 correct",         buffer.data[3] == 40);
-
-    src_data[0] = 99;
-    CHECK("copy is independent from source", buffer.data[0] == 10);
-
-    cf_buffer_destroy(&buffer);
-}
-
-static void test_buffer_view_as_bytes(void)
-{
-    section("cf_buffer_view_as_bytes");
-
-    cf_alloc alloc = cf_alloc_new();
-    cf_u8 data[6] = {1,2,3,4,5,6};
-    cf_buffer buffer = {data, 4, 6, alloc};
-    cf_bytes bytes;
-    cf_status st;
-
-    st = cf_buffer_view_as_bytes(&bytes, &buffer);
-    CHECK("view returns CF_OK",         st == CF_OK);
-    CHECK("view points to same data",   bytes.data == buffer.data);
-    CHECK("view len equals buffer len", bytes.len == buffer.len);
-    CHECK("view byte 0 correct",        bytes.data[0] == 1);
-    CHECK("view byte 3 correct",        bytes.data[3] == 4);
-
-    buffer.data[1] = 99;
-    CHECK("view reflects buffer changes", bytes.data[1] == 99);
-}
-
-static void test_buffer_truncate(void)
-{
-    section("cf_buffer_truncate");
-
-    cf_alloc alloc = cf_alloc_new();
-    cf_u8 data[8] = {10,20,30,40,50,60,70,80};
-    cf_buffer buffer = {data, 5, 8, alloc};
-    cf_status st;
-
-    st = cf_buffer_truncate(&buffer, 3);
-    CHECK("truncate returns CF_OK",  st == CF_OK);
-    CHECK("len becomes 3",           buffer.len == 3);
-    CHECK("cap unchanged",           buffer.cap == 8);
-    CHECK("data unchanged",          buffer.data == data);
-    CHECK("byte 0 unchanged",        buffer.data[0] == 10);
-    CHECK("byte 2 unchanged",        buffer.data[2] == 30);
-
-    st = cf_buffer_truncate(&buffer, 3);
-    CHECK("truncate same len CF_OK", st == CF_OK);
-    CHECK("len still 3",             buffer.len == 3);
-
-    st = cf_buffer_truncate(&buffer, 0);
-    CHECK("truncate to zero CF_OK",  st == CF_OK);
-    CHECK("len becomes 0",           buffer.len == 0);
-
-    st = cf_buffer_truncate(&buffer, 1);
-    CHECK("truncate past len returns CF_ERR_BOUNDS", st == CF_ERR_BOUNDS);
-
-    st = cf_buffer_truncate(CF_NULL, 0);
-    CHECK("null buffer returns CF_ERR_NULL", st == CF_ERR_NULL);
-}
-
-/* =========================================================================
- * main
- * =========================================================================
- */
 
 int main(void)
 {
-    printf("cf allocator capability-model test suite\n");
+  printf("cf allocator capability-model test suite\n");
+  test_cf_alloc_debug_new_model();
+  test_cf_alloc_debug_callbacks();
+  test_cf_alloc_debug_log_fn();
+  test_cf_alloc_debug_ratio_switch();
+  test_cf_array_basic_flow();
+  test_cf_array_accessors();
+  test_cf_array_state_and_diagnostics();
+  test_cf_string_build_and_lifecycle();
+  test_cf_string_queries_and_slices();
+  test_cf_string_mutation_helpers();
+  test_cf_string_invalid_state();
+  test_cf_types_native_groups();
+  printf
+  (
+    "\n================ Test Summary ================\n"
+    "  Passed : %-6d    Failed : %-6d\n"
+    "==============================================\n",
+    g_test_passed,
+    g_test_failed
+  );
 
-    test_alloc_create_empty();
-    test_alloc_new();
-    test_alloc_is_valid();
-    test_alloc_dispatch();
-    test_arena_validation_model();
-    test_pool_validation_model();
-    test_slab_validation_model();
-    test_debug_new_model();
-    test_debug_alloc_free_full_backing();
-
-    printf("\n════════════ cf_memory ════════════\n");
-    test_bytes_create_empty();
-    test_buffer_create_empty();
-    test_bytes_is_valid();
-    test_buffer_is_valid();
-    test_bytes_is_empty();
-    test_buffer_is_empty();
-    test_bytes_is_eq();
-    test_buffer_is_eq();
-    test_bytes_slice();
-    test_buffer_slice();
-    test_bytes_fill();
-    test_buffer_fill();
-    test_buffer_init();
-    test_buffer_reserve();
-    test_buffer_clear();
-    test_buffer_destroy();
-    test_buffer_append_bytes();
-    test_buffer_append_byte();
-    test_buffer_append_bytes_null();
-    test_buffer_append_bytes_invalid_src();
-    test_buffer_append_bytes_multiple();
-    test_buffer_append_bytes_grow();
-    test_bytes_copy_as_buffer();
-    test_buffer_view_as_bytes();
-    test_buffer_truncate();
-    summary();
-    return s_failed == 0 ? 0 : 1;
+  return g_test_failed == 0 ? 0 : 1;
 }

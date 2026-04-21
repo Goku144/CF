@@ -16,7 +16,9 @@
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include "MEMORY/cf_math.h"
+#if !defined(CF_TENSOR_H)
+#define CF_TENSOR_H
 
-/* suppress ISO C empty translation unit warning */
-typedef int cf_math_placeholder;
+
+
+#endif /* CF_TENSOR_H */

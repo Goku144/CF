@@ -16,7 +16,7 @@
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include "AI/cf_tensor.h"
+#include "MATH/cf_math.h"
 
 /* suppress ISO C empty translation unit warning */
-typedef int cf_tensor_placeholder;
+typedef int cf_math_placeholder;

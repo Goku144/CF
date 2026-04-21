@@ -15,3 +15,10 @@
  * You should have received a copy of the GNU General Public License
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
+
+#if !defined(CF_CBOR_H)
+#define CF_CBOR_H
+
+
+
+#endif /* CF_CBOR_H */

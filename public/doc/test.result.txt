@@ -1,275 +1,607 @@
 cf allocator capability-model test suite
 
-── cf_alloc_create_empty
-  PASS  ctx is NULL
-  PASS  alloc is set
-  PASS  realloc is NULL
-  PASS  free is NULL
-  PASS  is_valid passes (alloc only)
+── cf_alloc_debug_new
+  PASS  internal allocator stores backing ctx
+  PASS  internal allocator stores alloc fn
+  PASS  internal allocator stores realloc fn
+  PASS  internal allocator stores free fn
+  PASS  public allocator ctx points to debug object
+  PASS  public alloc callback is set
+  PASS  public realloc callback is set
+  PASS  public free callback is set
+  PASS  custom statement is stored
+  PASS  default statement fallback is stored
+  PASS  live count starts at zero
+  PASS  free count starts at zero
+  PASS  max live count starts at zero
+  PASS  max free count starts at zero
+  PASS  all live count starts at zero
+  PASS  all free count starts at zero
+  PASS  invalid tracking alloc count starts at zero
+  PASS  internal alloc failure count starts at zero
+  PASS  internal realloc failure count starts at zero
+  PASS  internal free failure count starts at zero
+  PASS  latest valid pointer starts null
+  PASS  head starts null
+================== Debug log Line(158) ==================
+      
+      statement (string): tests/src/test.c cf_alloc_debug test
+      
+        Tested allocator (pointer): 0x7fff69410d90
+        Debug allocator (pointer): 0x7fff69410d70
+      
+      live/free (diffr): (0/0)
+      Max lived (count): 0
+      Max freed (count): 0
+      All lived (count): 0
+      All freed (count): 0
+      
+      Invalid allocation by debuger   (count): 0
+      Invalid allocation by Tested    (count): 0
+      Invalid reallocation by Tested  (count): 0
+      Invalid free by Tested          (count): 0
+      
+      latest valid by Tested (pointer): (nil)
+========================================================
+  PASS  null backing argument leaves target unchanged
+  PASS  null backing preserves other fields
+  PASS  null backing preserves statement
 
-── cf_alloc_new
-  PASS  ctx is NULL
-  PASS  alloc is set
-  PASS  realloc is set
-  PASS  free is set
-  PASS  is_valid passes
+── cf_alloc_debug callbacks
+  PASS  alloc with null ctx returns null
+  PASS  realloc with null ctx returns null
+  PASS  null ctx free does not change live count
+  PASS  null ctx alloc path does not change all_live
+  PASS  null ctx free path does not change all_free
+  PASS  null ctx alloc does not count as internal alloc failure
+  PASS  null ctx realloc does not count as internal realloc failure
+  PASS  null ctx free does not count as internal free failure
+  PASS  failed backing alloc returns null
+  PASS  backing alloc called once for failed alloc
+  PASS  failed backing alloc increments invalid alloc count
+  PASS  failed backing alloc does not change live count
+  PASS  failed backing alloc does not change total live count
+  PASS  failed backing alloc does not create list node
+  PASS  failed backing alloc leaves latest pointer null
+================== Debug log Line(210) ==================
+      
+      statement (string): cf_alloc_debug callback section
+      
+        Tested allocator (pointer): 0x7fff69410ef0
+        Debug allocator (pointer): 0x7fff69410ed0
+      
+      live/free (diffr): (0/0)
+      Max lived (count): 0
+      Max freed (count): 0
+      All lived (count): 0
+      All freed (count): 0
+      
+      Invalid allocation by debuger   (count): 0
+      Invalid allocation by Tested    (count): 1
+      Invalid reallocation by Tested  (count): 0
+      Invalid free by Tested          (count): 0
+      
+      latest valid by Tested (pointer): (nil)
+========================================================
+  PASS  first tracked alloc succeeds
+  PASS  second tracked alloc succeeds
+  PASS  third tracked alloc succeeds
+  PASS  three successful allocs plus one failed alloc hit backing allocator
+  PASS  three successful allocs set live count to three
+  PASS  allocs do not advance free count
+  PASS  max live count tracks peak allocations
+  PASS  max free count stays zero before frees
+  PASS  all_live counts successful allocs
+  PASS  all_free stays zero before frees
+  PASS  latest valid pointer tracks newest alloc
+  PASS  head exists after successful allocs
+  PASS  head points to newest pointer
+  PASS  second node exists
+  PASS  second node tracks middle pointer
+  PASS  third node tracks oldest pointer
+================== Debug log Line(245) ==================
+      
+      statement (string): cf_alloc_debug callback section
+      
+        Tested allocator (pointer): 0x7fff69410ef0
+        Debug allocator (pointer): 0x7fff69410ed0
+      
+      live/free (diffr): (3/0)
+      Max lived (count): 3
+      Max freed (count): 0
+      All lived (count): 3
+      All freed (count): 0
+      
+      Invalid allocation by debuger   (count): 0
+      Invalid allocation by Tested    (count): 1
+      Invalid reallocation by Tested  (count): 0
+      Invalid free by Tested          (count): 0
+      
+      latest valid by Tested (pointer): 0x5598a528d340
+========================================================
+  PASS  realloc of untracked pointer returns null
+  PASS  realloc of untracked pointer does not call backing realloc
+  PASS  realloc of untracked pointer does not count as internal realloc failure
+  PASS  failed backing realloc returns null
+  PASS  tracked realloc calls backing realloc
+  PASS  failed backing realloc increments invalid realloc count
+  PASS  failed realloc keeps latest valid pointer unchanged
+  PASS  failed realloc keeps tracked pointer unchanged
+================== Debug log Line(258) ==================
+      
+      statement (string): cf_alloc_debug callback section
+      
+        Tested allocator (pointer): 0x7fff69410ef0
+        Debug allocator (pointer): 0x7fff69410ed0
+      
+      live/free (diffr): (3/0)
+      Max lived (count): 3
+      Max freed (count): 0
+      All lived (count): 3
+      All freed (count): 0
+      
+      Invalid allocation by debuger   (count): 0
+      Invalid allocation by Tested    (count): 1
+      Invalid reallocation by Tested  (count): 1
+      Invalid free by Tested          (count): 0
+      
+      latest valid by Tested (pointer): 0x5598a528d340
+========================================================
+  PASS  successful realloc returns non-null
+  PASS  second tracked realloc hits backing realloc
+  PASS  realloc preserves prior contents
+  PASS  realloc does not change live count
+  PASS  realloc does not change all_live count
+  PASS  realloc does not change all_free count
+  PASS  successful realloc updates latest valid pointer
+  PASS  successful realloc updates tracked head pointer
+================== Debug log Line(270) ==================
+      
+      statement (string): cf_alloc_debug callback section
+      
+        Tested allocator (pointer): 0x7fff69410ef0
+        Debug allocator (pointer): 0x7fff69410ed0
+      
+      live/free (diffr): (3/0)
+      Max lived (count): 3
+      Max freed (count): 0
+      All lived (count): 3
+      All freed (count): 0
+      
+      Invalid allocation by debuger   (count): 0
+      Invalid allocation by Tested    (count): 1
+      Invalid reallocation by Tested  (count): 1
+      Invalid free by Tested          (count): 0
+      
+      latest valid by Tested (pointer): 0x5598a528d380
+========================================================
+  PASS  free of untracked pointer increments invalid free count
+  PASS  free of untracked pointer does not call backing free
+  PASS  free of middle node hits backing free
+  PASS  free decrements live count
+  PASS  first successful free keeps free ratio at zero while live side drains
+  PASS  max free count stays zero while frees are absorbed by live ratio
+  PASS  all_free increments after first free
+  PASS  free of middle node keeps latest pointer at head
+  PASS  head stays at most recent allocation after middle free
+  PASS  middle free relinks list to oldest node
+================== Debug log Line(286) ==================
+      
+      statement (string): cf_alloc_debug callback section
+      
+        Tested allocator (pointer): 0x7fff69410ef0
+        Debug allocator (pointer): 0x7fff69410ed0
+      
+      live/free (diffr): (2/0)
+      Max lived (count): 3
+      Max freed (count): 0
+      All lived (count): 3
+      All freed (count): 1
+      
+      Invalid allocation by debuger   (count): 0
+      Invalid allocation by Tested    (count): 1
+      Invalid reallocation by Tested  (count): 1
+      Invalid free by Tested          (count): 1
+      
+      latest valid by Tested (pointer): 0x5598a528d380
+========================================================
+  PASS  free of head node hits backing free
+  PASS  second free decrements live count
+  PASS  second free still keeps free ratio at zero
+  PASS  max free count remains zero after second free
+  PASS  all_free increments after second free
+  PASS  free of head node moves latest pointer to new head
+  PASS  free of head node promotes next node to head
+  PASS  one node remains after freeing head
+================== Debug log Line(298) ==================
+      
+      statement (string): cf_alloc_debug callback section
+      
+        Tested allocator (pointer): 0x7fff69410ef0
+        Debug allocator (pointer): 0x7fff69410ed0
+      
+      live/free (diffr): (1/0)
+      Max lived (count): 3
+      Max freed (count): 0
+      All lived (count): 3
+      All freed (count): 2
+      
+      Invalid allocation by debuger   (count): 0
+      Invalid allocation by Tested    (count): 1
+      Invalid reallocation by Tested  (count): 1
+      Invalid free by Tested          (count): 1
+      
+      latest valid by Tested (pointer): 0x5598a528d2b0
+========================================================
+  PASS  free of final node hits backing free
+  PASS  final free drains live ratio back to zero
+  PASS  free ratio stays zero after balanced tracked frees
+  PASS  max free count stays zero when no free-side surplus appears
+  PASS  all_free equals number of successful frees
+  PASS  latest valid pointer becomes null when list is empty
+  PASS  head becomes null after final free
+================== Debug log Line(309) ==================
+      
+      statement (string): cf_alloc_debug callback section
+      
+        Tested allocator (pointer): 0x7fff69410ef0
+        Debug allocator (pointer): 0x7fff69410ed0
+      
+      live/free (diffr): (0/0)
+      Max lived (count): 3
+      Max freed (count): 0
+      All lived (count): 3
+      All freed (count): 3
+      
+      Invalid allocation by debuger   (count): 0
+      Invalid allocation by Tested    (count): 1
+      Invalid reallocation by Tested  (count): 1
+      Invalid free by Tested          (count): 1
+      
+      latest valid by Tested (pointer): (nil)
+========================================================
+  PASS  backing alloc receives backing ctx
+  PASS  backing realloc receives backing ctx
+  PASS  backing free receives backing ctx
 
-── cf_alloc_is_valid
-  PASS  valid allocator returns true
-  PASS  null ptr returns false
-  PASS  null alloc fn is invalid
-  PASS  null realloc fn is still valid
-  PASS  null free fn is still valid
-  PASS  create_empty allocator is valid
+── cf_alloc_debug_log
+================== Debug log Line(335) ==================
+      
+      statement (string): NO STATEMENT DECLARED
+      
+        Tested allocator (pointer): 0x7fff69410f10
+        Debug allocator (pointer): 0x7fff69410ef0
+      
+      live/free (diffr): (0/0)
+      Max lived (count): 0
+      Max freed (count): 0
+      All lived (count): 0
+      All freed (count): 0
+      
+      Invalid allocation by debuger   (count): 0
+      Invalid allocation by Tested    (count): 0
+      Invalid reallocation by Tested  (count): 0
+      Invalid free by Tested          (count): 0
+      
+      latest valid by Tested (pointer): (nil)
+========================================================
+  PASS  debug log handles null and valid debug objects
 
-── cf_alloc dispatch
-  PASS  alloc 64 bytes returns non-null
-  PASS  written byte survives
-  PASS  written byte survives
-  PASS  realloc to 128 returns non-null
-  PASS  free does not crash
+── cf_alloc_debug ratio switch
+================== Debug log Line(363) ==================
+      
+      statement (string): cf_alloc_debug ratio switch
+      
+        Tested allocator (pointer): 0x7fff69410f00
+        Debug allocator (pointer): 0x7fff69410ee0
+      
+      live/free (diffr): (0/2)
+      Max lived (count): 0
+      Max freed (count): 2
+      All lived (count): 0
+      All freed (count): 0
+      
+      Invalid allocation by debuger   (count): 0
+      Invalid allocation by Tested    (count): 0
+      Invalid reallocation by Tested  (count): 0
+      Invalid free by Tested          (count): 0
+      
+      latest valid by Tested (pointer): (nil)
+========================================================
+  PASS  alloc succeeds while free ratio has surplus
+  PASS  alloc consumes free surplus before growing live count
+  PASS  alloc consumes one step from free-side surplus
+  PASS  all_live still counts the allocation event
+  PASS  max live stays unchanged while alloc only consumes free surplus
+================== Debug log Line(371) ==================
+      
+      statement (string): cf_alloc_debug ratio switch
+      
+        Tested allocator (pointer): 0x7fff69410f00
+        Debug allocator (pointer): 0x7fff69410ee0
+      
+      live/free (diffr): (0/1)
+      Max lived (count): 0
+      Max freed (count): 2
+      All lived (count): 1
+      All freed (count): 0
+      
+      Invalid allocation by debuger   (count): 0
+      Invalid allocation by Tested    (count): 0
+      Invalid reallocation by Tested  (count): 0
+      Invalid free by Tested          (count): 0
+      
+      latest valid by Tested (pointer): 0x5598a528d2e0
+========================================================
+  PASS  second alloc succeeds while free surplus remains
+  PASS  second alloc also consumes free surplus before live grows
+  PASS  second alloc clears the free-side surplus
+  PASS  all_live counts both allocations that consumed surplus
+================== Debug log Line(378) ==================
+      
+      statement (string): cf_alloc_debug ratio switch
+      
+        Tested allocator (pointer): 0x7fff69410f00
+        Debug allocator (pointer): 0x7fff69410ee0
+      
+      live/free (diffr): (0/0)
+      Max lived (count): 0
+      Max freed (count): 2
+      All lived (count): 2
+      All freed (count): 0
+      
+      Invalid allocation by debuger   (count): 0
+      Invalid allocation by Tested    (count): 0
+      Invalid reallocation by Tested  (count): 0
+      Invalid free by Tested          (count): 0
+      
+      latest valid by Tested (pointer): 0x5598a528d320
+========================================================
+  PASS  free sees no live-side surplus to drain
+  PASS  free grows the free side once live side is zero
+  PASS  all_free still counts the free operation
+  PASS  max free keeps the earlier primed surplus peak
+================== Debug log Line(385) ==================
+      
+      statement (string): cf_alloc_debug ratio switch
+      
+        Tested allocator (pointer): 0x7fff69410f00
+        Debug allocator (pointer): 0x7fff69410ee0
+      
+      live/free (diffr): (0/1)
+      Max lived (count): 0
+      Max freed (count): 2
+      All lived (count): 2
+      All freed (count): 1
+      
+      Invalid allocation by debuger   (count): 0
+      Invalid allocation by Tested    (count): 0
+      Invalid reallocation by Tested  (count): 0
+      Invalid free by Tested          (count): 0
+      
+      latest valid by Tested (pointer): 0x5598a528d2e0
+========================================================
+  PASS  final free leaves live side at zero
+  PASS  final free restores the free-side surplus
+  PASS  all_free counts both cleanup frees
+  PASS  max free remains at the highest free-side peak
+  PASS  cleanup empties the tracked list
+================== Debug log Line(393) ==================
+      
+      statement (string): cf_alloc_debug ratio switch
+      
+        Tested allocator (pointer): 0x7fff69410f00
+        Debug allocator (pointer): 0x7fff69410ee0
+      
+      live/free (diffr): (0/2)
+      Max lived (count): 0
+      Max freed (count): 2
+      All lived (count): 2
+      All freed (count): 2
+      
+      Invalid allocation by debuger   (count): 0
+      Invalid allocation by Tested    (count): 0
+      Invalid reallocation by Tested  (count): 0
+      Invalid free by Tested          (count): 0
+      
+      latest valid by Tested (pointer): (nil)
+========================================================
 
-── cf_arena validation model
-  PASS  arena is valid
-  PASS  arena alloc exists
-  PASS  arena realloc exists
-  PASS  arena free may be NULL
-  PASS  arena invalid if alloc is NULL
-  PASS  arena invalid if realloc is NULL
+── cf_array basic flow
+  PASS  array init succeeds
+  PASS  array starts empty
+  PASS  array starts with requested capacity
+  PASS  array push accepts multiple elements
+  PASS  array length reflects pushed elements
+  PASS  array grows to fit additional elements
+  PASS  first pushed element is stored
+  PASS  second pushed element is stored
+  PASS  third pushed element is stored
+  PASS  stored element type width is preserved
+  PASS  stored metadata is preserved
+  PASS  array pop succeeds on non-empty array
+  PASS  array pop decrements length
+  PASS  array pop returns the last element
+  PASS  array pop preserves popped length
+  PASS  array reset succeeds
+  PASS  array reset clears logical length
+  PASS  array reset preserves capacity
+  PASS  array pop on empty array succeeds
+  PASS  array pop on empty array clears output data
+  PASS  array pop on empty array clears output type width
+  PASS  array pop on empty array clears output length
 
-── cf_pool validation model
-  PASS  pool is valid
-  PASS  pool alloc exists
-  PASS  pool realloc is NULL
-  PASS  pool free exists
-  PASS  pool invalid if alloc is NULL
-  PASS  pool invalid if free is NULL
-  PASS  pool still valid if realloc is NULL
+── cf_array accessors
+  PASS  zero-initialized array is structurally valid
+  PASS  zero-initialized array reports empty
+  PASS  array init with zero capacity succeeds
+  PASS  initialized array stays structurally valid
+  PASS  initialized empty array reports empty
+  PASS  push prepares array for accessor tests
+  PASS  non-empty array reports not empty
+  PASS  peek succeeds on non-empty array
+  PASS  peek reads the last element
+  PASS  peek preserves element length
+  PASS  peek does not change array length
+  PASS  get succeeds for a valid index
+  PASS  get reads the requested element
+  PASS  get preserves requested element size
+  PASS  get preserves requested element length
+  PASS  set succeeds for a valid index
+  PASS  set does not change array length
+  PASS  get succeeds after set
+  PASS  set replaces the stored data pointer
+  PASS  set replaces the stored element size
+  PASS  set replaces the stored element length
+  PASS  get rejects an out-of-bounds index
+  PASS  set rejects an out-of-bounds index
+  PASS  get rejects a null output pointer
+  PASS  set rejects a null input pointer
+  PASS  peek rejects a null output pointer
+  PASS  destroy resets array to a valid empty state
+  PASS  destroyed array reports empty
 
-── cf_slab validation model
-  PASS  slab alloc exists
-  PASS  slab realloc is NULL
-  PASS  slab free exists
-  PASS  slab is valid under alloc/free model
-  PASS  slab invalid if alloc is NULL
-  PASS  slab invalid if free is NULL
-  PASS  slab still valid if realloc is NULL
+── cf_array state and diagnostics
+  PASS  array init rejects null array
+  PASS  array reserve rejects null array
+  PASS  array reset rejects null array
+  PASS  array peek rejects null array
+  PASS  array pop rejects null array
+  PASS  array get rejects null array
+  PASS  array set rejects null array
+  PASS  array validity rejects null array
+  PASS  null array does not report empty
+  PASS  array init prepares reserve tests
+  PASS  array reserve allocates backing storage
+  PASS  array reserve stores requested capacity
+  PASS  array reserve keeps length unchanged
+  PASS  array push with null first element is a no-op
+  PASS  null push keeps array length unchanged
+  PASS  array push prepares diagnostics
+========================= Array Info =========================
+  array (|--(data        0) -> ( pointer:          0x5598a528d470 )
+         |  -> (type -> 1 byte: char/bool-sized primitive value or struct with 1-byte total size.)
+         | 
+          ----------------------------------------------------->)
+  array (len ) -> ( valid data size:               1 )
+  array (cap ) -> ( full array size:               4 )
+  array(allocator):
+    |-> ctx (context) -> (state: NULL)
+    |-> ctx ( alloc ) -> (state: set )
+    |-> ctx (realloc) -> (state: set )
+    |-> ctx ( free  ) -> (state: set )
+==============================================================
+Null pointer to array
+  PASS  array info handles valid and null arrays
+  PASS  array validity detects impossible len/cap state
+  PASS  invalid array does not report empty
+  PASS  array reserve rejects invalid state
 
-── cf_alloc_debug new model
-  PASS  debug accepts alloc-only backing
-  PASS  allocator ctx points to debug
-  PASS  debug object is valid
+── cf_string build and lifecycle
+  PASS  string init rejects null string
+  PASS  string init with zero capacity succeeds
+  PASS  initialized string is valid
+  PASS  initialized string reports empty
+  PASS  string reserve succeeds
+  PASS  string reserve keeps room for terminator
+  PASS  string reserve writes terminator
+  PASS  string append char succeeds
+  PASS  string append cstr succeeds
+  PASS  append char and cstr build expected text
+  PASS  source string init succeeds
+  PASS  string from cstr writes source text
+  PASS  string append str succeeds
+  PASS  append str copies source contents
+  PASS  string as cstr succeeds
+  PASS  as cstr returns an owned null-terminated copy
+  PASS  string trunc succeeds
+  PASS  string trunc keeps requested prefix
+  PASS  string trunc rejects too-large length
+  PASS  string reset succeeds
+  PASS  string reset reports empty
+  PASS  string reset keeps terminator
+================== String Info ==================
+  string (data): 
+  {
+    
+  }
+  string (len ) -> ( valid data size:               0 )
+  string (cap ) -> ( full string size:             18 )
+  string(allocator):
+    |-> ctx (context) -> (state: NULL)
+    |-> ctx ( alloc ) -> (state: set )
+    |-> ctx (realloc) -> (state: set )
+    |-> ctx ( free  ) -> (state: set )
+=================================================
+Null pointer to string
+  PASS  string info handles valid and null strings
+  PASS  destroy resets string to valid empty state
+  PASS  destroyed string reports empty
 
-── cf_alloc_debug alloc/free with full backing
-  PASS  alloc returns non-null
-  PASS  alloc_count is 1
-  PASS  live_count is 1
-  PASS  bytes_live is 64
-  PASS  free_count is 1
-  PASS  live_count back to 0
-  PASS  bytes_live back to 0
+── cf_string queries and slices
+  PASS  string eq accepts identical strings
+  PASS  string eq rejects different strings
+  PASS  string eq rejects null argument
+  PASS  contains char finds present character
+  PASS  contains char rejects missing character
+  PASS  contains cstr finds present substring
+  PASS  contains cstr rejects missing substring
+  PASS  contains str finds present string
+  PASS  contains str rejects longer missing string
+  PASS  char at returns requested character
+  PASS  char at rejects end index
+  PASS  char at rejects null output
+  PASS  str at copies suffix
+  PASS  str at suffix content is correct
+  PASS  str at rejects end index
+  PASS  str at rejects null output
+  PASS  string slice copies inclusive range
+  PASS  string slice content is correct
+  PASS  string slice rejects reversed range
+  PASS  string slice rejects end past content
+  PASS  string slice rejects null output
 
-════════════ cf_memory ════════════
+── cf_string mutation helpers
+  PASS  string trim left succeeds
+  PASS  trim left removes leading whitespace and updates length
+  PASS  string trim right succeeds
+  PASS  trim right removes trailing whitespace
+  PASS  string trim succeeds
+  PASS  trim removes both leading and trailing whitespace
+  PASS  string strip succeeds
+  PASS  strip removes all framework whitespace
+  PASS  string replace succeeds
+  PASS  replace swaps every target character
+  PASS  string split succeeds
+  PASS  string split skips empty fields
+  PASS  split part 0 is correct
+  PASS  split part 1 is correct
+  PASS  split part 2 is correct
+  PASS  string split rejects null destination
 
-── cf_bytes_create_empty
-  PASS  data is NULL
-  PASS  len is 0
+── cf_string invalid state
+  PASS  string validity rejects null string
+  PASS  null string does not report empty
+  PASS  string validity detects impossible len/cap state
+  PASS  invalid string does not report empty
+  PASS  string reserve rejects invalid state
+  PASS  string reset rejects invalid state
+  PASS  string trunc rejects invalid state
+  PASS  string from cstr rejects null destination
+  PASS  string from cstr rejects null source
+  PASS  string as cstr rejects null output
 
-── cf_buffer_create_empty
-  PASS  data is NULL
-  PASS  len is 0
-  PASS  cap is 0
-  PASS  allocator is valid
+── cf_types native groups
+  PASS  1-byte values map to CF_NATIVE_1_BYTE
+  PASS  2-byte values map to CF_NATIVE_2_BYTE
+  PASS  4-byte values map to CF_NATIVE_4_BYTE
+  PASS  8-byte values map to CF_NATIVE_8_BYTE
+  PASS  16-byte values map to CF_NATIVE_16_BYTE
+  PASS  non-native size maps to unknown
+  PASS  1-byte description is stable
+  PASS  8-byte description is stable
+  PASS  non-native description is stable
 
-── cf_bytes_is_valid
-  PASS  empty bytes is valid
-  PASS  null ptr is invalid
-  PASS  NULL data with non-zero len invalid
-  PASS  normal bytes is valid
-
-── cf_buffer_is_valid
-  PASS  empty buffer is valid
-  PASS  null ptr is invalid
-  PASS  data non-null with cap 0 invalid
-  PASS  len > cap invalid
-  PASS  normal buffer is valid
-
-── cf_bytes_is_empty
-  PASS  empty bytes is empty
-  PASS  non-empty bytes is not empty
-  PASS  null ptr returns false
-
-── cf_buffer_is_empty
-  PASS  empty buffer is empty
-  PASS  non-empty buffer is not empty
-  PASS  null ptr returns false
-
-── cf_bytes_is_eq
-  PASS  equal bytes returns true
-  PASS  different bytes returns false
-  PASS  empty equals empty
-  PASS  null arg returns false
-
-── cf_buffer_is_eq
-  PASS  equal buffers returns true
-  PASS  different buffers returns false
-  PASS  null arg returns false
-
-── cf_bytes_slice
-  PASS  slice returns CF_OK
-  PASS  slice points to correct offset
-  PASS  slice len is 3
-  PASS  slice byte[0] correct
-  PASS  slice byte[2] correct
-  PASS  empty slice at end returns CF_OK
-  PASS  empty slice at end len is 0
-  PASS  index > len returns CF_ERR_BOUNDS
-  PASS  size past end returns CF_ERR_BOUNDS
-  PASS  null dst returns CF_ERR_NULL
-
-── cf_buffer_slice
-  PASS  slice returns CF_OK
-  PASS  slice points to correct offset
-  PASS  slice len is 4
-  PASS  slice byte[0] correct
-  PASS  slice byte[3] correct
-  PASS  empty slice at end returns CF_OK
-  PASS  empty slice at end len is 0
-  PASS  index > len returns CF_ERR_BOUNDS
-  PASS  size past end returns CF_ERR_BOUNDS
-
-── cf_bytes_fill
-  PASS  fill returns CF_OK
-  PASS  byte 0 changed
-  PASS  byte 3 changed
-  PASS  byte 4 unchanged
-  PASS  fill past len returns CF_ERR_BOUNDS
-  PASS  null bytes returns CF_ERR_NULL
-
-── cf_buffer_fill
-  PASS  fill returns CF_OK
-  PASS  byte 0 changed
-  PASS  byte 2 changed
-  PASS  byte 3 unchanged
-  PASS  fill past len returns CF_ERR_BOUNDS
-
-── cf_buffer_init
-  PASS  null buffer returns CF_ERR_NULL
-  PASS  init with zero capacity returns CF_OK
-  PASS  zero-cap data is NULL
-  PASS  zero-cap len is 0
-  PASS  zero-cap cap is 0
-  PASS  init with capacity returns CF_OK
-  PASS  data is non-null
-  PASS  len starts at 0
-  PASS  cap is 16
-
-── cf_buffer_reserve
-  PASS  init returns CF_OK
-  PASS  reserve smaller cap returns CF_OK
-  PASS  cap unchanged when already enough
-  PASS  reserve bigger cap returns CF_OK
-  PASS  cap grows to 32
-  PASS  len unchanged after reserve
-  PASS  data still non-null
-  PASS  null buffer returns CF_ERR_NULL
-
-── cf_buffer_clear
-  PASS  clear sets len to 0
-  PASS  cap unchanged
-  PASS  data unchanged
-  PASS  clear null does not crash
-
-── cf_buffer_destroy
-  PASS  init returns CF_OK
-  PASS  data NULL after destroy
-  PASS  len 0 after destroy
-  PASS  cap 0 after destroy
-  PASS  double destroy does not crash
-  PASS  destroy null does not crash
-
-── cf_buffer_append_bytes
-  PASS  init returns CF_OK
-  PASS  append returns CF_OK
-  PASS  len becomes 3
-  PASS  byte 0 correct
-  PASS  byte 1 correct
-  PASS  byte 2 correct
-
-── cf_buffer_append_byte
-  PASS  init returns CF_OK
-  PASS  append byte returns CF_OK
-  PASS  len becomes 1
-  PASS  stored byte correct
-  PASS  second append byte returns CF_OK
-  PASS  len becomes 2
-  PASS  stored second byte correct
-
-── cf_buffer_append_bytes_null
-  PASS  init returns CF_OK
-  PASS  null dst returns CF_ERR_NULL
-  PASS  null src returns CF_ERR_NULL
-
-── cf_buffer_append_bytes_invalid_src
-  PASS  init returns CF_OK
-  PASS  invalid src returns CF_ERR_STATE
-
-── cf_buffer_append_bytes_multiple
-  PASS  init returns CF_OK
-  PASS  first append returns CF_OK
-  PASS  second append returns CF_OK
-  PASS  len becomes 5
-  PASS  byte 0 correct
-  PASS  byte 1 correct
-  PASS  byte 2 correct
-  PASS  byte 3 correct
-  PASS  byte 4 correct
-
-── cf_buffer_append_bytes_grow
-  PASS  init returns CF_OK
-  PASS  first append returns CF_OK
-  PASS  second append requiring grow returns CF_OK
-  PASS  len becomes 6
-  PASS  byte 0 correct
-  PASS  byte 1 correct
-  PASS  byte 2 correct
-  PASS  byte 3 correct
-  PASS  byte 4 correct
-  PASS  byte 5 correct
-
-── cf_bytes_copy_as_buffer
-  PASS  init returns CF_OK
-  PASS  copy returns CF_OK
-  PASS  buffer len becomes 4
-  PASS  buffer cap >= 4
-  PASS  byte 0 correct
-  PASS  byte 1 correct
-  PASS  byte 2 correct
-  PASS  byte 3 correct
-  PASS  copy is independent from source
-
-── cf_buffer_view_as_bytes
-  PASS  view returns CF_OK
-  PASS  view points to same data
-  PASS  view len equals buffer len
-  PASS  view byte 0 correct
-  PASS  view byte 3 correct
-  PASS  view reflects buffer changes
-
-── cf_buffer_truncate
-  PASS  truncate returns CF_OK
-  PASS  len becomes 3
-  PASS  cap unchanged
-  PASS  data unchanged
-  PASS  byte 0 unchanged
-  PASS  byte 2 unchanged
-  PASS  truncate same len CF_OK
-  PASS  len still 3
-  PASS  truncate to zero CF_OK
-  PASS  len becomes 0
-  PASS  truncate past len returns CF_ERR_BOUNDS
-  PASS  null buffer returns CF_ERR_NULL
-
-════════════════════════════
-  200 passed  /  0 failed
-════════════════════════════
+================ Test Summary ================
+  Passed : 270       Failed : 0     
+==============================================
