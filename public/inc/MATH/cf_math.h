@@ -19,6 +19,9 @@
 #if !defined(CF_MATH_H)
 #define CF_MATH_H
 
+#include "RUNTIME/cf_types.h"
+#include "RUNTIME/cf_status.h"
 
+cf_u8 cf_math_g8_mul_mod(cf_u8 p, cf_u8 q);
 
 #endif /* CF_MATH_H */

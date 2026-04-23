@@ -18,5 +18,15 @@
 
 #include "MATH/cf_math.h"
 
-/* suppress ISO C empty translation unit warning */
-typedef int cf_math_placeholder;
+
+cf_u8 cf_math_g8_mul_mod(cf_u8 p, cf_u8 q)
+{
+  cf_u8 res = 0;
+  do
+  {
+    if(q & 0x01) res ^= p;
+    if(p & 0x80) p = (p << 1) ^ 0x1B;
+    else p <<= 1;
+  }while (q >>= 1);
+  return res;
+}

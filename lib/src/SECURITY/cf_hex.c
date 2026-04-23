@@ -16,7 +16,40 @@
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
+#include "MEMORY/cf_array.h"
+
 #include "SECURITY/cf_hex.h"
 
-/* suppress ISO C empty translation unit warning */
-typedef int cf_hex_placeholder;
+#include "TEXT/cf_ascii.h"
+
+cf_status cf_hex_encode(cf_string *dst, cf_bytes src)
+{
+  if(dst == CF_NULL) return CF_ERR_NULL;
+  if(src.data == CF_NULL && src.len != 0) return CF_ERR_NULL;
+  if(src.elem_size != 1) return CF_ERR_INVALID;
+  for (cf_usize i = 0; i < src.len; i++)
+  {
+    char c[] = {CF_HEX_TABLE[(((cf_u8 *)src.data)[i] >> 4)& 0x0F], CF_HEX_TABLE[((cf_u8 *)src.data)[i] & 0x0F], '\0'};
+    cf_status state = cf_string_append_cstr(dst, c);
+    if(state != CF_OK) return state;
+  }
+  return CF_OK;
+}
+
+cf_status cf_hex_decode(cf_buffer *dst, cf_string *src)
+{
+  if(dst == CF_NULL) return CF_ERR_NULL;
+  if(!cf_string_is_valid(src)) return CF_ERR_STATE;
+  if(src->len % 2 != 0) return CF_ERR_INVALID;
+  cf_usize size = src->len / 2;
+  for (size_t i = 0; i < size; i++)
+  {
+    cf_isize high = cf_ascii_hex_value(src->data[2 * i]);
+    cf_isize low = cf_ascii_hex_value(src->data[2 * i + 1]);
+    if(high < 0 || low < 0) return CF_ERR_INVALID;
+    cf_u8 byte = (cf_u8)(((high << 4) & 0xF0) | (low & 0x0F));
+    cf_status state = cf_buffer_append_byte(dst, byte);
+    if(state != CF_OK) return state;
+  }
+  return CF_OK;
+}

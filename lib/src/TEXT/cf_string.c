@@ -19,6 +19,8 @@
 #include "MEMORY/cf_array.h"
 #include "MEMORY/cf_memory.h"
 
+#include "TEXT/cf_ascii.h"
+
 #include "TEXT/cf_string.h"
 
 #include <stdio.h>
@@ -33,11 +35,6 @@ static cf_status cf_string_check(cf_string *str)
   if(str->data != CF_NULL && str->data[str->len] != '\0')
     return CF_ERR_STATE;
   return CF_OK;
-}
-
-static cf_bool cf_string_is_whitespace(char c)
-{
-  return c == '\n' || c == '\t' || c == ' ' || c == '\r';
 }
 
 cf_status cf_string_init(cf_string *str, cf_usize capacity)
@@ -276,7 +273,7 @@ cf_status cf_string_trim_left(cf_string *str)
   cf_status state = cf_string_check(str);
   if(state != CF_OK) return CF_FALSE;
   cf_usize index = 0; 
-  while(index < str->len && cf_string_is_whitespace(str->data[index]))
+  while(index < str->len && cf_ascii_is_space(str->data[index]))
     index++;
   memmove(str->data, str->data + index, str->len - index + 1);
   str->len -= index;
@@ -289,7 +286,7 @@ cf_status cf_string_trim_right(cf_string *str)
   cf_status state = cf_string_check(str);
   if(state != CF_OK) return CF_FALSE;
   cf_isize index = str->len - 1; 
-  while(index >= 0 && cf_string_is_whitespace(str->data[index]))
+  while(index >= 0 && cf_ascii_is_space(str->data[index]))
     index--;
   str->len = index + 1;
   str->data[str->len] = '\0';
@@ -310,7 +307,7 @@ cf_status cf_string_strip(cf_string *str)
   cf_usize index = 0, reel_index = 0; 
   while(index < str->len)
   {
-    if(!cf_string_is_whitespace(str->data[index]))
+    if(!cf_ascii_is_space(str->data[index]))
     {
       str->data[reel_index] = str->data[index];
       reel_index++;

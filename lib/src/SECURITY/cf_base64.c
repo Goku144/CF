@@ -18,5 +18,63 @@
 
 #include "SECURITY/cf_base64.h"
 
-/* suppress ISO C empty translation unit warning */
-typedef int cf_base64_placeholder;
+#include <stdlib.h>
+#include <string.h>
+
+
+
+cf_status cf_base64_encode(cf_string *dst, cf_bytes src)
+{
+  if(dst == CF_NULL) return CF_ERR_NULL;
+  if(src.data == CF_NULL && src.len != 0) return CF_ERR_NULL;
+  if(src.elem_size != 1) return CF_ERR_INVALID;
+
+  cf_usize rem = src.len % 3;
+  cf_usize padd_size = (rem == 0) ? 0 : (3 - rem);
+
+  cf_bytes tmp = {.data = malloc(src.len + padd_size), .elem_size = 1, .len = src.len + padd_size};
+  if(tmp.data == CF_NULL) return CF_ERR_OOM;
+  memcpy(tmp.data, src.data, src.len);
+
+  for (cf_usize i = 0; i < padd_size; i++) ((cf_u8 *)tmp.data)[src.len + i] = '\0';
+  cf_usize loop_size = tmp.len / 3;
+
+  for (cf_usize i = 0; i < loop_size; i++)
+  {
+    char c[] = 
+    {
+      CF_BASE64_TABLE[(((cf_u8 *)tmp.data)[3 * i] >> 2) & 0x3F],
+      CF_BASE64_TABLE[((((cf_u8 *)tmp.data)[3 * i + 1] >> 4) & 0x0F) | ((((cf_u8 *)tmp.data)[3 * i] << 4    ) & 0x30)],
+      CF_BASE64_TABLE[((((cf_u8 *)tmp.data)[3 * i + 2] >> 6) & 0x03) | ((((cf_u8 *)tmp.data)[3 * i + 1] << 2) & 0x3C)],
+      CF_BASE64_TABLE[(((cf_u8 *)tmp.data)[3 * i + 2] ) & 0x3F],
+      '\0',
+    };
+    cf_status state = cf_string_append_cstr(dst, c);
+    if(state != CF_OK) {free(tmp.data); return state;}
+  }
+  for (cf_usize i = 0; i < padd_size; i++) dst->data[dst->len -padd_size + i] = '=';
+  free(tmp.data);
+  return CF_OK;
+}
+
+cf_status cf_base64_decode(cf_buffer *dst, cf_string *src)
+{
+  if(dst == CF_NULL) return CF_ERR_NULL;
+  if(!cf_string_is_valid(src)) return CF_ERR_STATE;
+  if(src->len % 4 != 0 ) return CF_ERR_INVALID;
+  cf_usize len = src->len / 4;
+  for (cf_usize i = 0; i < len; i++)
+  {
+    cf_u8 b[] =
+    {
+      ((CF_BASE64_INV_TABLE[src->data[4 * i]]     << 2) & 0xFC) | ((CF_BASE64_INV_TABLE[src->data[4 * i + 1]] >> 4) & 0x03),
+      ((CF_BASE64_INV_TABLE[src->data[4 * i + 2]] >> 2) & 0x0F) | ((CF_BASE64_INV_TABLE[src->data[4 * i + 1]] << 4) & 0xF0),
+      ((CF_BASE64_INV_TABLE[src->data[4 * i + 3]]     ) & 0x3F) | ((CF_BASE64_INV_TABLE[src->data[4 * i + 2]] << 6) & 0xC0),
+    };
+    cf_bytes tmp = {.data = b, .elem_size = 1, .len = 3};
+    cf_status state = cf_buffer_append_bytes(dst, tmp);
+    if(state != CF_OK) return state;
+  }
+  dst->len -= (+src->data[src->len - 1] == '=') ? (src->data[src->len - 2] == '=') ? 2 : 1 : 0;
+  return CF_OK;
+}

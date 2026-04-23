@@ -23,12 +23,12 @@ cf allocator capability-model test suite
   PASS  internal free failure count starts at zero
   PASS  latest valid pointer starts null
   PASS  head starts null
-================== Debug log Line(158) ==================
+================== Debug log Line(162) ==================
       
       statement (string): tests/src/test.c cf_alloc_debug test
       
-        Tested allocator (pointer): 0x7fff69410d90
-        Debug allocator (pointer): 0x7fff69410d70
+        Tested allocator (pointer): 0x7ffdefcc1000
+        Debug allocator (pointer): 0x7ffdefcc0fe0
       
       live/free (diffr): (0/0)
       Max lived (count): 0
@@ -63,12 +63,12 @@ cf allocator capability-model test suite
   PASS  failed backing alloc does not change total live count
   PASS  failed backing alloc does not create list node
   PASS  failed backing alloc leaves latest pointer null
-================== Debug log Line(210) ==================
+================== Debug log Line(214) ==================
       
       statement (string): cf_alloc_debug callback section
       
-        Tested allocator (pointer): 0x7fff69410ef0
-        Debug allocator (pointer): 0x7fff69410ed0
+        Tested allocator (pointer): 0x7ffdefcc1160
+        Debug allocator (pointer): 0x7ffdefcc1140
       
       live/free (diffr): (0/0)
       Max lived (count): 0
@@ -99,12 +99,12 @@ cf allocator capability-model test suite
   PASS  second node exists
   PASS  second node tracks middle pointer
   PASS  third node tracks oldest pointer
-================== Debug log Line(245) ==================
+================== Debug log Line(249) ==================
       
       statement (string): cf_alloc_debug callback section
       
-        Tested allocator (pointer): 0x7fff69410ef0
-        Debug allocator (pointer): 0x7fff69410ed0
+        Tested allocator (pointer): 0x7ffdefcc1160
+        Debug allocator (pointer): 0x7ffdefcc1140
       
       live/free (diffr): (3/0)
       Max lived (count): 3
@@ -117,7 +117,7 @@ cf allocator capability-model test suite
       Invalid reallocation by Tested  (count): 0
       Invalid free by Tested          (count): 0
       
-      latest valid by Tested (pointer): 0x5598a528d340
+      latest valid by Tested (pointer): 0x5580a7ef0340
 ========================================================
   PASS  realloc of untracked pointer returns null
   PASS  realloc of untracked pointer does not call backing realloc
@@ -127,12 +127,12 @@ cf allocator capability-model test suite
   PASS  failed backing realloc increments invalid realloc count
   PASS  failed realloc keeps latest valid pointer unchanged
   PASS  failed realloc keeps tracked pointer unchanged
-================== Debug log Line(258) ==================
+================== Debug log Line(262) ==================
       
       statement (string): cf_alloc_debug callback section
       
-        Tested allocator (pointer): 0x7fff69410ef0
-        Debug allocator (pointer): 0x7fff69410ed0
+        Tested allocator (pointer): 0x7ffdefcc1160
+        Debug allocator (pointer): 0x7ffdefcc1140
       
       live/free (diffr): (3/0)
       Max lived (count): 3
@@ -145,7 +145,7 @@ cf allocator capability-model test suite
       Invalid reallocation by Tested  (count): 1
       Invalid free by Tested          (count): 0
       
-      latest valid by Tested (pointer): 0x5598a528d340
+      latest valid by Tested (pointer): 0x5580a7ef0340
 ========================================================
   PASS  successful realloc returns non-null
   PASS  second tracked realloc hits backing realloc
@@ -155,12 +155,12 @@ cf allocator capability-model test suite
   PASS  realloc does not change all_free count
   PASS  successful realloc updates latest valid pointer
   PASS  successful realloc updates tracked head pointer
-================== Debug log Line(270) ==================
+================== Debug log Line(274) ==================
       
       statement (string): cf_alloc_debug callback section
       
-        Tested allocator (pointer): 0x7fff69410ef0
-        Debug allocator (pointer): 0x7fff69410ed0
+        Tested allocator (pointer): 0x7ffdefcc1160
+        Debug allocator (pointer): 0x7ffdefcc1140
       
       live/free (diffr): (3/0)
       Max lived (count): 3
@@ -173,7 +173,7 @@ cf allocator capability-model test suite
       Invalid reallocation by Tested  (count): 1
       Invalid free by Tested          (count): 0
       
-      latest valid by Tested (pointer): 0x5598a528d380
+      latest valid by Tested (pointer): 0x5580a7ef0380
 ========================================================
   PASS  free of untracked pointer increments invalid free count
   PASS  free of untracked pointer does not call backing free
@@ -185,12 +185,12 @@ cf allocator capability-model test suite
   PASS  free of middle node keeps latest pointer at head
   PASS  head stays at most recent allocation after middle free
   PASS  middle free relinks list to oldest node
-================== Debug log Line(286) ==================
+================== Debug log Line(290) ==================
       
       statement (string): cf_alloc_debug callback section
       
-        Tested allocator (pointer): 0x7fff69410ef0
-        Debug allocator (pointer): 0x7fff69410ed0
+        Tested allocator (pointer): 0x7ffdefcc1160
+        Debug allocator (pointer): 0x7ffdefcc1140
       
       live/free (diffr): (2/0)
       Max lived (count): 3
@@ -203,7 +203,7 @@ cf allocator capability-model test suite
       Invalid reallocation by Tested  (count): 1
       Invalid free by Tested          (count): 1
       
-      latest valid by Tested (pointer): 0x5598a528d380
+      latest valid by Tested (pointer): 0x5580a7ef0380
 ========================================================
   PASS  free of head node hits backing free
   PASS  second free decrements live count
@@ -213,12 +213,12 @@ cf allocator capability-model test suite
   PASS  free of head node moves latest pointer to new head
   PASS  free of head node promotes next node to head
   PASS  one node remains after freeing head
-================== Debug log Line(298) ==================
+================== Debug log Line(302) ==================
       
       statement (string): cf_alloc_debug callback section
       
-        Tested allocator (pointer): 0x7fff69410ef0
-        Debug allocator (pointer): 0x7fff69410ed0
+        Tested allocator (pointer): 0x7ffdefcc1160
+        Debug allocator (pointer): 0x7ffdefcc1140
       
       live/free (diffr): (1/0)
       Max lived (count): 3
@@ -231,7 +231,7 @@ cf allocator capability-model test suite
       Invalid reallocation by Tested  (count): 1
       Invalid free by Tested          (count): 1
       
-      latest valid by Tested (pointer): 0x5598a528d2b0
+      latest valid by Tested (pointer): 0x5580a7ef02b0
 ========================================================
   PASS  free of final node hits backing free
   PASS  final free drains live ratio back to zero
@@ -240,12 +240,12 @@ cf allocator capability-model test suite
   PASS  all_free equals number of successful frees
   PASS  latest valid pointer becomes null when list is empty
   PASS  head becomes null after final free
-================== Debug log Line(309) ==================
+================== Debug log Line(313) ==================
       
       statement (string): cf_alloc_debug callback section
       
-        Tested allocator (pointer): 0x7fff69410ef0
-        Debug allocator (pointer): 0x7fff69410ed0
+        Tested allocator (pointer): 0x7ffdefcc1160
+        Debug allocator (pointer): 0x7ffdefcc1140
       
       live/free (diffr): (0/0)
       Max lived (count): 3
@@ -265,12 +265,12 @@ cf allocator capability-model test suite
   PASS  backing free receives backing ctx
 
 ── cf_alloc_debug_log
-================== Debug log Line(335) ==================
+================== Debug log Line(339) ==================
       
       statement (string): NO STATEMENT DECLARED
       
-        Tested allocator (pointer): 0x7fff69410f10
-        Debug allocator (pointer): 0x7fff69410ef0
+        Tested allocator (pointer): 0x7ffdefcc1180
+        Debug allocator (pointer): 0x7ffdefcc1160
       
       live/free (diffr): (0/0)
       Max lived (count): 0
@@ -288,12 +288,12 @@ cf allocator capability-model test suite
   PASS  debug log handles null and valid debug objects
 
 ── cf_alloc_debug ratio switch
-================== Debug log Line(363) ==================
+================== Debug log Line(367) ==================
       
       statement (string): cf_alloc_debug ratio switch
       
-        Tested allocator (pointer): 0x7fff69410f00
-        Debug allocator (pointer): 0x7fff69410ee0
+        Tested allocator (pointer): 0x7ffdefcc1170
+        Debug allocator (pointer): 0x7ffdefcc1150
       
       live/free (diffr): (0/2)
       Max lived (count): 0
@@ -313,12 +313,12 @@ cf allocator capability-model test suite
   PASS  alloc consumes one step from free-side surplus
   PASS  all_live still counts the allocation event
   PASS  max live stays unchanged while alloc only consumes free surplus
-================== Debug log Line(371) ==================
+================== Debug log Line(375) ==================
       
       statement (string): cf_alloc_debug ratio switch
       
-        Tested allocator (pointer): 0x7fff69410f00
-        Debug allocator (pointer): 0x7fff69410ee0
+        Tested allocator (pointer): 0x7ffdefcc1170
+        Debug allocator (pointer): 0x7ffdefcc1150
       
       live/free (diffr): (0/1)
       Max lived (count): 0
@@ -331,18 +331,18 @@ cf allocator capability-model test suite
       Invalid reallocation by Tested  (count): 0
       Invalid free by Tested          (count): 0
       
-      latest valid by Tested (pointer): 0x5598a528d2e0
+      latest valid by Tested (pointer): 0x5580a7ef02e0
 ========================================================
   PASS  second alloc succeeds while free surplus remains
   PASS  second alloc also consumes free surplus before live grows
   PASS  second alloc clears the free-side surplus
   PASS  all_live counts both allocations that consumed surplus
-================== Debug log Line(378) ==================
+================== Debug log Line(382) ==================
       
       statement (string): cf_alloc_debug ratio switch
       
-        Tested allocator (pointer): 0x7fff69410f00
-        Debug allocator (pointer): 0x7fff69410ee0
+        Tested allocator (pointer): 0x7ffdefcc1170
+        Debug allocator (pointer): 0x7ffdefcc1150
       
       live/free (diffr): (0/0)
       Max lived (count): 0
@@ -355,18 +355,18 @@ cf allocator capability-model test suite
       Invalid reallocation by Tested  (count): 0
       Invalid free by Tested          (count): 0
       
-      latest valid by Tested (pointer): 0x5598a528d320
+      latest valid by Tested (pointer): 0x5580a7ef0320
 ========================================================
   PASS  free sees no live-side surplus to drain
   PASS  free grows the free side once live side is zero
   PASS  all_free still counts the free operation
   PASS  max free keeps the earlier primed surplus peak
-================== Debug log Line(385) ==================
+================== Debug log Line(389) ==================
       
       statement (string): cf_alloc_debug ratio switch
       
-        Tested allocator (pointer): 0x7fff69410f00
-        Debug allocator (pointer): 0x7fff69410ee0
+        Tested allocator (pointer): 0x7ffdefcc1170
+        Debug allocator (pointer): 0x7ffdefcc1150
       
       live/free (diffr): (0/1)
       Max lived (count): 0
@@ -379,19 +379,19 @@ cf allocator capability-model test suite
       Invalid reallocation by Tested  (count): 0
       Invalid free by Tested          (count): 0
       
-      latest valid by Tested (pointer): 0x5598a528d2e0
+      latest valid by Tested (pointer): 0x5580a7ef02e0
 ========================================================
   PASS  final free leaves live side at zero
   PASS  final free restores the free-side surplus
   PASS  all_free counts both cleanup frees
   PASS  max free remains at the highest free-side peak
   PASS  cleanup empties the tracked list
-================== Debug log Line(393) ==================
+================== Debug log Line(397) ==================
       
       statement (string): cf_alloc_debug ratio switch
       
-        Tested allocator (pointer): 0x7fff69410f00
-        Debug allocator (pointer): 0x7fff69410ee0
+        Tested allocator (pointer): 0x7ffdefcc1170
+        Debug allocator (pointer): 0x7ffdefcc1150
       
       live/free (diffr): (0/2)
       Max lived (count): 0
@@ -479,7 +479,7 @@ cf allocator capability-model test suite
   PASS  null push keeps array length unchanged
   PASS  array push prepares diagnostics
 ========================= Array Info =========================
-  array (|--(data        0) -> ( pointer:          0x5598a528d470 )
+  array (|--(data        0) -> ( pointer:          0x5580a7ef0470 )
          |  -> (type -> 1 byte: char/bool-sized primitive value or struct with 1-byte total size.)
          | 
           ----------------------------------------------------->)
@@ -496,6 +496,53 @@ Null pointer to array
   PASS  array validity detects impossible len/cap state
   PASS  invalid array does not report empty
   PASS  array reserve rejects invalid state
+
+── cf_ascii helpers
+  PASS  ascii alpha accepts uppercase lower bound
+  PASS  ascii alpha accepts uppercase upper bound
+  PASS  ascii alpha accepts lowercase lower bound
+  PASS  ascii alpha accepts lowercase upper bound
+  PASS  ascii alpha rejects char before uppercase letters
+  PASS  ascii alpha rejects char after uppercase letters
+  PASS  ascii alpha rejects char before lowercase letters
+  PASS  ascii alpha rejects char after lowercase letters
+  PASS  ascii digit accepts lower bound
+  PASS  ascii digit accepts upper bound
+  PASS  ascii digit rejects char before digits
+  PASS  ascii digit rejects char after digits
+  PASS  ascii alnum accepts letters
+  PASS  ascii alnum accepts digits
+  PASS  ascii alnum rejects punctuation
+  PASS  ascii space accepts space
+  PASS  ascii space accepts horizontal tab
+  PASS  ascii space accepts newline
+  PASS  ascii space accepts vertical tab
+  PASS  ascii space accepts form feed
+  PASS  ascii space accepts carriage return
+  PASS  ascii space rejects nul
+  PASS  ascii space rejects non-whitespace
+  PASS  ascii upper accepts lower bound
+  PASS  ascii upper accepts upper bound
+  PASS  ascii upper rejects lowercase
+  PASS  ascii lower accepts lower bound
+  PASS  ascii lower accepts upper bound
+  PASS  ascii lower rejects uppercase
+  PASS  ascii to upper converts lowercase
+  PASS  ascii to upper keeps uppercase
+  PASS  ascii to upper keeps non-letters
+  PASS  ascii to lower converts uppercase
+  PASS  ascii to lower keeps lowercase
+  PASS  ascii to lower keeps non-letters
+  PASS  ascii hex converts zero
+  PASS  ascii hex converts nine
+  PASS  ascii hex converts lowercase a
+  PASS  ascii hex converts lowercase f
+  PASS  ascii hex converts uppercase A
+  PASS  ascii hex converts uppercase F
+  PASS  ascii hex rejects lowercase past f
+  PASS  ascii hex rejects uppercase past F
+  PASS  ascii hex rejects char before digits
+  PASS  ascii hex rejects char after digits
 
 ── cf_string build and lifecycle
   PASS  string init rejects null string
@@ -591,6 +638,80 @@ Null pointer to string
   PASS  string from cstr rejects null source
   PASS  string as cstr rejects null output
 
+── cf_hex encode/decode
+  PASS  hex encode destination init succeeds
+  PASS  hex encode succeeds
+  PASS  hex encode writes contiguous uppercase text
+  PASS  hex encode append target reset succeeds
+  PASS  hex encode appends to existing string
+  PASS  hex encode preserves existing destination content
+  PASS  hex encode rejects null destination
+  PASS  hex encode rejects non-empty null source data
+  PASS  hex encode rejects non-byte source view
+  PASS  hex encode accepts empty null source view
+  PASS  hex decode source init succeeds
+  PASS  hex decode destination init succeeds
+  PASS  hex decode source text write succeeds
+  PASS  hex decode accepts lowercase input
+  PASS  hex decode writes expected byte count
+  PASS  hex decode byte 0 is correct
+  PASS  hex decode byte 1 is correct
+  PASS  hex decode byte 2 is correct
+  PASS  hex decode byte 3 is correct
+  PASS  hex decode mixed-case source write succeeds
+  PASS  hex decode appends mixed-case input
+  PASS  hex decode appends to existing buffer
+  PASS  hex decode mixed-case byte is correct
+  PASS  hex decode rejects null destination
+  PASS  hex decode odd-length source write succeeds
+  PASS  hex decode rejects odd-length text
+  PASS  hex decode invalid source write succeeds
+  PASS  hex decode rejects invalid hex character
+  PASS  hex decode rejects null source string state
+
+── cf_base64 encode/decode
+  PASS  base64 encode destination init succeeds
+  PASS  base64 encode succeeds for three-byte input
+  PASS  base64 encode writes unpadded text
+  PASS  base64 encode destination reset succeeds
+  PASS  base64 encode succeeds for two-byte input
+  PASS  base64 encode writes one padding character
+  PASS  base64 encode append target reset succeeds
+  PASS  base64 encode succeeds for one-byte input
+  PASS  base64 encode appends padded text
+  PASS  base64 encode rejects null destination
+  PASS  base64 encode rejects non-empty null source data
+  PASS  base64 encode rejects non-byte source view
+  PASS  base64 encode accepts empty null source view
+  PASS  base64 decode source init succeeds
+  PASS  base64 decode destination init succeeds
+  PASS  base64 decode source text write succeeds
+  PASS  base64 decode succeeds for unpadded input
+  PASS  base64 decode writes expected byte count
+  PASS  base64 decode byte 0 is correct
+  PASS  base64 decode byte 1 is correct
+  PASS  base64 decode byte 2 is correct
+  PASS  base64 decode padded source write succeeds
+  PASS  base64 decode appends padded input
+  PASS  base64 decode appends decoded bytes
+  PASS  base64 decode padded byte 0 is correct
+  PASS  base64 decode padded byte 1 is correct
+  PASS  base64 decode rejects null destination
+  PASS  base64 decode invalid-length source write succeeds
+  PASS  base64 decode rejects non-multiple-of-four text
+  PASS  base64 decode rejects null source string state
+
+── cf_aes block vectors
+  PASS  AES-128 init succeeds
+  PASS  AES-128 encrypt matches known ciphertext
+  PASS  AES-128 decrypt restores plaintext
+  PASS  AES-192 init succeeds
+  PASS  AES-192 encrypt matches known ciphertext
+  PASS  AES-192 decrypt restores plaintext
+  PASS  AES-256 init succeeds
+  PASS  AES-256 encrypt matches known ciphertext
+  PASS  AES-256 decrypt restores plaintext
+
 ── cf_types native groups
   PASS  1-byte values map to CF_NATIVE_1_BYTE
   PASS  2-byte values map to CF_NATIVE_2_BYTE
@@ -603,5 +724,5 @@ Null pointer to string
   PASS  non-native description is stable
 
 ================ Test Summary ================
-  Passed : 270       Failed : 0     
+  Passed : 383       Failed : 0     
 ==============================================
