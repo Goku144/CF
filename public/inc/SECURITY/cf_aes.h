@@ -106,10 +106,49 @@ typedef struct cf_aes
   cf_aes_key_size key_size;
 } cf_aes;
 
+/**
+ * @brief Initialize an AES context for a fixed key size.
+ *
+ * The supplied key is expanded once and stored in `aes` as round keys for
+ * later block encryption and decryption. This API prepares only the core AES
+ * block context; it does not provide padding, buffering, or multi-block modes.
+ *
+ * @param aes AES context receiving the expanded key schedule.
+ * @param key Raw key bytes. Only the first 16, 24, or 32 bytes are used
+ * according to `key_size`.
+ * @param key_size AES key width: `CF_AES_KEY_128`, `CF_AES_KEY_192`, or
+ * `CF_AES_KEY_256`.
+ * @return `CF_OK` on success, `CF_ERR_NULL` for null context or key, or
+ * `CF_ERR_INVALID` for unsupported key sizes.
+ */
 cf_status cf_aes_init(cf_aes *aes, const cf_u8 key[CF_AES_MAX_ROUND_KEYS * 4], cf_aes_key_size key_size);
 
+/**
+ * @brief Encrypt one 16-byte block with an initialized AES context.
+ *
+ * The source block is read from `src` and the encrypted result is written to
+ * `dst`. This function operates on exactly one AES block and performs no
+ * padding or length checks beyond the fixed block-size contract in the
+ * function signature.
+ *
+ * @param aes Initialized AES context containing round keys.
+ * @param dst Destination buffer receiving the 16-byte ciphertext block.
+ * @param src Source buffer providing the 16-byte plaintext block.
+ */
 void cf_aes_encrypt_block(cf_aes *aes, cf_u8 dst[CF_AES_BLOCK_SIZE], const cf_u8 src[CF_AES_BLOCK_SIZE]);
 
+/**
+ * @brief Decrypt one 16-byte block with an initialized AES context.
+ *
+ * The source block is read from `src` and the decrypted result is written to
+ * `dst`. This function operates on exactly one AES block and performs no
+ * padding or length checks beyond the fixed block-size contract in the
+ * function signature.
+ *
+ * @param aes Initialized AES context containing round keys.
+ * @param dst Destination buffer receiving the 16-byte plaintext block.
+ * @param src Source buffer providing the 16-byte ciphertext block.
+ */
 void cf_aes_decrypt_block(cf_aes *aes, cf_u8 dst[CF_AES_BLOCK_SIZE], const cf_u8 src[CF_AES_BLOCK_SIZE]);
 
 #endif /* CF_AES_H */
