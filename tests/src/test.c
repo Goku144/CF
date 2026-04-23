@@ -2,6 +2,10 @@
 #include "ALLOCATOR/cf_alloc_debug.h"
 #include "MEMORY/cf_array.h"
 #include "RUNTIME/cf_types.h"
+#include "SECURITY/cf_aes.h"
+#include "SECURITY/cf_base64.h"
+#include "SECURITY/cf_hex.h"
+#include "TEXT/cf_ascii.h"
 #include "TEXT/cf_string.h"
 
 #include <stdio.h>
@@ -546,6 +550,63 @@ static void test_cf_array_state_and_diagnostics(void)
   cf_array_destroy(&array);
 }
 
+static void test_cf_ascii_helpers(void)
+{
+  test_section("cf_ascii helpers");
+
+  test_check(cf_ascii_is_alpha('A') == CF_TRUE, "ascii alpha accepts uppercase lower bound");
+  test_check(cf_ascii_is_alpha('Z') == CF_TRUE, "ascii alpha accepts uppercase upper bound");
+  test_check(cf_ascii_is_alpha('a') == CF_TRUE, "ascii alpha accepts lowercase lower bound");
+  test_check(cf_ascii_is_alpha('z') == CF_TRUE, "ascii alpha accepts lowercase upper bound");
+  test_check(cf_ascii_is_alpha('@') == CF_FALSE, "ascii alpha rejects char before uppercase letters");
+  test_check(cf_ascii_is_alpha('[') == CF_FALSE, "ascii alpha rejects char after uppercase letters");
+  test_check(cf_ascii_is_alpha('`') == CF_FALSE, "ascii alpha rejects char before lowercase letters");
+  test_check(cf_ascii_is_alpha('{') == CF_FALSE, "ascii alpha rejects char after lowercase letters");
+
+  test_check(cf_ascii_is_digit('0') == CF_TRUE, "ascii digit accepts lower bound");
+  test_check(cf_ascii_is_digit('9') == CF_TRUE, "ascii digit accepts upper bound");
+  test_check(cf_ascii_is_digit('/') == CF_FALSE, "ascii digit rejects char before digits");
+  test_check(cf_ascii_is_digit(':') == CF_FALSE, "ascii digit rejects char after digits");
+
+  test_check(cf_ascii_is_alnum('A') == CF_TRUE, "ascii alnum accepts letters");
+  test_check(cf_ascii_is_alnum('7') == CF_TRUE, "ascii alnum accepts digits");
+  test_check(cf_ascii_is_alnum('_') == CF_FALSE, "ascii alnum rejects punctuation");
+
+  test_check(cf_ascii_is_space(' ') == CF_TRUE, "ascii space accepts space");
+  test_check(cf_ascii_is_space('\t') == CF_TRUE, "ascii space accepts horizontal tab");
+  test_check(cf_ascii_is_space('\n') == CF_TRUE, "ascii space accepts newline");
+  test_check(cf_ascii_is_space('\v') == CF_TRUE, "ascii space accepts vertical tab");
+  test_check(cf_ascii_is_space('\f') == CF_TRUE, "ascii space accepts form feed");
+  test_check(cf_ascii_is_space('\r') == CF_TRUE, "ascii space accepts carriage return");
+  test_check(cf_ascii_is_space('\0') == CF_FALSE, "ascii space rejects nul");
+  test_check(cf_ascii_is_space('A') == CF_FALSE, "ascii space rejects non-whitespace");
+
+  test_check(cf_ascii_is_upper('A') == CF_TRUE, "ascii upper accepts lower bound");
+  test_check(cf_ascii_is_upper('Z') == CF_TRUE, "ascii upper accepts upper bound");
+  test_check(cf_ascii_is_upper('a') == CF_FALSE, "ascii upper rejects lowercase");
+  test_check(cf_ascii_is_lower('a') == CF_TRUE, "ascii lower accepts lower bound");
+  test_check(cf_ascii_is_lower('z') == CF_TRUE, "ascii lower accepts upper bound");
+  test_check(cf_ascii_is_lower('A') == CF_FALSE, "ascii lower rejects uppercase");
+
+  test_check(cf_ascii_to_upper('a') == 'A', "ascii to upper converts lowercase");
+  test_check(cf_ascii_to_upper('Z') == 'Z', "ascii to upper keeps uppercase");
+  test_check(cf_ascii_to_upper('7') == '7', "ascii to upper keeps non-letters");
+  test_check(cf_ascii_to_lower('A') == 'a', "ascii to lower converts uppercase");
+  test_check(cf_ascii_to_lower('z') == 'z', "ascii to lower keeps lowercase");
+  test_check(cf_ascii_to_lower('7') == '7', "ascii to lower keeps non-letters");
+
+  test_check(cf_ascii_hex_value('0') == 0, "ascii hex converts zero");
+  test_check(cf_ascii_hex_value('9') == 9, "ascii hex converts nine");
+  test_check(cf_ascii_hex_value('a') == 10, "ascii hex converts lowercase a");
+  test_check(cf_ascii_hex_value('f') == 15, "ascii hex converts lowercase f");
+  test_check(cf_ascii_hex_value('A') == 10, "ascii hex converts uppercase A");
+  test_check(cf_ascii_hex_value('F') == 15, "ascii hex converts uppercase F");
+  test_check(cf_ascii_hex_value('g') == -1, "ascii hex rejects lowercase past f");
+  test_check(cf_ascii_hex_value('G') == -1, "ascii hex rejects uppercase past F");
+  test_check(cf_ascii_hex_value('/') == -1, "ascii hex rejects char before digits");
+  test_check(cf_ascii_hex_value(':') == -1, "ascii hex rejects char after digits");
+}
+
 static void test_cf_string_build_and_lifecycle(void)
 {
   cf_string str = {0};
@@ -742,6 +803,135 @@ static void test_cf_string_invalid_state(void)
   cf_string_destroy(&str);
 }
 
+static void test_cf_hex_encode_decode(void)
+{
+  cf_u8 raw[] = {0x00, 0x2A, 0xFF, 0x10};
+  cf_string encoded = {0};
+  cf_string hex = {0};
+  cf_buffer decoded = {0};
+  cf_bytes src = {.data = raw, .elem_size = sizeof(cf_u8), .len = sizeof(raw)};
+  cf_status status = CF_OK;
+
+  test_section("cf_hex encode/decode");
+
+  status = cf_string_init(&encoded, 0);
+  test_check(status == CF_OK, "hex encode destination init succeeds");
+  status = cf_hex_encode(&encoded, src);
+  test_check(status == CF_OK, "hex encode succeeds");
+  test_check_string_value(&encoded, "002AFF10", "hex encode writes contiguous uppercase text");
+
+  status = cf_string_from_cstr(&encoded, "prefix:");
+  test_check(status == CF_OK, "hex encode append target reset succeeds");
+  status = cf_hex_encode(&encoded, (cf_bytes){.data = raw + 1, .elem_size = 1, .len = 2});
+  test_check(status == CF_OK, "hex encode appends to existing string");
+  test_check_string_value(&encoded, "prefix:2AFF", "hex encode preserves existing destination content");
+
+  test_check(cf_hex_encode(CF_NULL, src) == CF_ERR_NULL, "hex encode rejects null destination");
+  test_check(cf_hex_encode(&encoded, (cf_bytes){.data = CF_NULL, .elem_size = 1, .len = 1}) == CF_ERR_NULL, "hex encode rejects non-empty null source data");
+  test_check(cf_hex_encode(&encoded, (cf_bytes){.data = raw, .elem_size = 2, .len = 1}) == CF_ERR_INVALID, "hex encode rejects non-byte source view");
+  test_check(cf_hex_encode(&encoded, (cf_bytes){.data = CF_NULL, .elem_size = 1, .len = 0}) == CF_OK, "hex encode accepts empty null source view");
+
+  status = cf_string_init(&hex, 0);
+  test_check(status == CF_OK, "hex decode source init succeeds");
+  status = cf_buffer_init(&decoded, 0);
+  test_check(status == CF_OK, "hex decode destination init succeeds");
+  status = cf_string_from_cstr(&hex, "002aff10");
+  test_check(status == CF_OK, "hex decode source text write succeeds");
+  status = cf_hex_decode(&decoded, &hex);
+  test_check(status == CF_OK, "hex decode accepts lowercase input");
+  test_check(decoded.len == 4, "hex decode writes expected byte count");
+  test_check(decoded.data[0] == 0x00, "hex decode byte 0 is correct");
+  test_check(decoded.data[1] == 0x2A, "hex decode byte 1 is correct");
+  test_check(decoded.data[2] == 0xFF, "hex decode byte 2 is correct");
+  test_check(decoded.data[3] == 0x10, "hex decode byte 3 is correct");
+
+  status = cf_string_from_cstr(&hex, "Aa");
+  test_check(status == CF_OK, "hex decode mixed-case source write succeeds");
+  status = cf_hex_decode(&decoded, &hex);
+  test_check(status == CF_OK, "hex decode appends mixed-case input");
+  test_check(decoded.len == 5, "hex decode appends to existing buffer");
+  test_check(decoded.data[4] == 0xAA, "hex decode mixed-case byte is correct");
+
+  test_check(cf_hex_decode(CF_NULL, &hex) == CF_ERR_NULL, "hex decode rejects null destination");
+  status = cf_string_from_cstr(&hex, "ABC");
+  test_check(status == CF_OK, "hex decode odd-length source write succeeds");
+  test_check(cf_hex_decode(&decoded, &hex) == CF_ERR_INVALID, "hex decode rejects odd-length text");
+  status = cf_string_from_cstr(&hex, "0G");
+  test_check(status == CF_OK, "hex decode invalid source write succeeds");
+  test_check(cf_hex_decode(&decoded, &hex) == CF_ERR_INVALID, "hex decode rejects invalid hex character");
+  test_check(cf_hex_decode(&decoded, CF_NULL) == CF_ERR_STATE, "hex decode rejects null source string state");
+
+  cf_buffer_destroy(&decoded);
+  cf_string_destroy(&hex);
+  cf_string_destroy(&encoded);
+}
+
+static void test_cf_base64_encode_decode(void)
+{
+  cf_u8 raw[] = {'M', 'a', 'n'};
+  cf_string encoded = {0};
+  cf_string base64 = {0};
+  cf_buffer decoded = {0};
+  cf_bytes src = {.data = raw, .elem_size = sizeof(cf_u8), .len = sizeof(raw)};
+  cf_status status = CF_OK;
+
+  test_section("cf_base64 encode/decode");
+
+  status = cf_string_init(&encoded, 0);
+  test_check(status == CF_OK, "base64 encode destination init succeeds");
+  status = cf_base64_encode(&encoded, src);
+  test_check(status == CF_OK, "base64 encode succeeds for three-byte input");
+  test_check_string_value(&encoded, "TWFu", "base64 encode writes unpadded text");
+
+  status = cf_string_from_cstr(&encoded, "");
+  test_check(status == CF_OK, "base64 encode destination reset succeeds");
+  status = cf_base64_encode(&encoded, (cf_bytes){.data = (cf_u8 *)"Ma", .elem_size = 1, .len = 2});
+  test_check(status == CF_OK, "base64 encode succeeds for two-byte input");
+  test_check_string_value(&encoded, "TWE=", "base64 encode writes one padding character");
+
+  status = cf_string_from_cstr(&encoded, "prefix:");
+  test_check(status == CF_OK, "base64 encode append target reset succeeds");
+  status = cf_base64_encode(&encoded, (cf_bytes){.data = (cf_u8 *)"M", .elem_size = 1, .len = 1});
+  test_check(status == CF_OK, "base64 encode succeeds for one-byte input");
+  test_check_string_value(&encoded, "prefix:TQ==", "base64 encode appends padded text");
+
+  test_check(cf_base64_encode(CF_NULL, src) == CF_ERR_NULL, "base64 encode rejects null destination");
+  test_check(cf_base64_encode(&encoded, (cf_bytes){.data = CF_NULL, .elem_size = 1, .len = 1}) == CF_ERR_NULL, "base64 encode rejects non-empty null source data");
+  test_check(cf_base64_encode(&encoded, (cf_bytes){.data = raw, .elem_size = 2, .len = 1}) == CF_ERR_INVALID, "base64 encode rejects non-byte source view");
+  test_check(cf_base64_encode(&encoded, (cf_bytes){.data = CF_NULL, .elem_size = 1, .len = 0}) == CF_OK, "base64 encode accepts empty null source view");
+
+  status = cf_string_init(&base64, 0);
+  test_check(status == CF_OK, "base64 decode source init succeeds");
+  status = cf_buffer_init(&decoded, 0);
+  test_check(status == CF_OK, "base64 decode destination init succeeds");
+  status = cf_string_from_cstr(&base64, "TWFu");
+  test_check(status == CF_OK, "base64 decode source text write succeeds");
+  status = cf_base64_decode(&decoded, &base64);
+  test_check(status == CF_OK, "base64 decode succeeds for unpadded input");
+  test_check(decoded.len == 3, "base64 decode writes expected byte count");
+  test_check(decoded.data[0] == 'M', "base64 decode byte 0 is correct");
+  test_check(decoded.data[1] == 'a', "base64 decode byte 1 is correct");
+  test_check(decoded.data[2] == 'n', "base64 decode byte 2 is correct");
+
+  status = cf_string_from_cstr(&base64, "TWE=");
+  test_check(status == CF_OK, "base64 decode padded source write succeeds");
+  status = cf_base64_decode(&decoded, &base64);
+  test_check(status == CF_OK, "base64 decode appends padded input");
+  test_check(decoded.len == 5, "base64 decode appends decoded bytes");
+  test_check(decoded.data[3] == 'M', "base64 decode padded byte 0 is correct");
+  test_check(decoded.data[4] == 'a', "base64 decode padded byte 1 is correct");
+
+  test_check(cf_base64_decode(CF_NULL, &base64) == CF_ERR_NULL, "base64 decode rejects null destination");
+  status = cf_string_from_cstr(&base64, "ABC");
+  test_check(status == CF_OK, "base64 decode invalid-length source write succeeds");
+  test_check(cf_base64_decode(&decoded, &base64) == CF_ERR_INVALID, "base64 decode rejects non-multiple-of-four text");
+  test_check(cf_base64_decode(&decoded, CF_NULL) == CF_ERR_STATE, "base64 decode rejects null source string state");
+
+  cf_buffer_destroy(&decoded);
+  cf_string_destroy(&base64);
+  cf_string_destroy(&encoded);
+}
+
 static void test_cf_types_native_groups(void)
 {
   test_section("cf_types native groups");
@@ -757,6 +947,80 @@ static void test_cf_types_native_groups(void)
   test_check(strcmp(cf_types_as_char(24), "Not a primitive type size or a struct with a native primitive-sized total width.") == 0, "non-native description is stable");
 }
 
+static void test_cf_aes_known_vector(
+  const char *label,
+  const cf_u8 *key,
+  cf_aes_key_size key_size,
+  const cf_u8 plaintext[CF_AES_BLOCK_SIZE],
+  const cf_u8 expected_ciphertext[CF_AES_BLOCK_SIZE])
+{
+  cf_aes aes = {0};
+  cf_u8 ciphertext[CF_AES_BLOCK_SIZE] = {0};
+  cf_u8 decrypted[CF_AES_BLOCK_SIZE] = {0};
+  cf_status status = cf_aes_init(&aes, key, key_size);
+  char message[128];
+
+  snprintf(message, sizeof(message), "%s init succeeds", label);
+  test_check(status == CF_OK, message);
+  if(status != CF_OK) return;
+
+  cf_aes_encrypt_block(&aes, ciphertext, plaintext);
+  snprintf(message, sizeof(message), "%s encrypt matches known ciphertext", label);
+  test_check(memcmp(ciphertext, expected_ciphertext, CF_AES_BLOCK_SIZE) == 0, message);
+
+  cf_aes_decrypt_block(&aes, decrypted, expected_ciphertext);
+  snprintf(message, sizeof(message), "%s decrypt restores plaintext", label);
+  test_check(memcmp(decrypted, plaintext, CF_AES_BLOCK_SIZE) == 0, message);
+}
+
+static void test_cf_aes_block_vectors(void)
+{
+  static const cf_u8 plaintext[CF_AES_BLOCK_SIZE] =
+  {
+    0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77,
+    0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF
+  };
+  static const cf_u8 key_128[CF_AES_MAX_ROUND_KEYS * 4] =
+  {
+    0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+    0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F
+  };
+  static const cf_u8 key_192[CF_AES_MAX_ROUND_KEYS * 4] =
+  {
+    0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+    0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
+    0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17
+  };
+  static const cf_u8 key_256[CF_AES_MAX_ROUND_KEYS * 4] =
+  {
+    0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+    0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
+    0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
+    0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F
+  };
+  static const cf_u8 ciphertext_128[CF_AES_BLOCK_SIZE] =
+  {
+    0x69, 0xC4, 0xE0, 0xD8, 0x6A, 0x7B, 0x04, 0x30,
+    0xD8, 0xCD, 0xB7, 0x80, 0x70, 0xB4, 0xC5, 0x5A
+  };
+  static const cf_u8 ciphertext_192[CF_AES_BLOCK_SIZE] =
+  {
+    0xDD, 0xA9, 0x7C, 0xA4, 0x86, 0x4C, 0xDF, 0xE0,
+    0x6E, 0xAF, 0x70, 0xA0, 0xEC, 0x0D, 0x71, 0x91
+  };
+  static const cf_u8 ciphertext_256[CF_AES_BLOCK_SIZE] =
+  {
+    0x8E, 0xA2, 0xB7, 0xCA, 0x51, 0x67, 0x45, 0xBF,
+    0xEA, 0xFC, 0x49, 0x90, 0x4B, 0x49, 0x60, 0x89
+  };
+
+  test_section("cf_aes block vectors");
+
+  test_cf_aes_known_vector("AES-128", key_128, CF_AES_KEY_128, plaintext, ciphertext_128);
+  test_cf_aes_known_vector("AES-192", key_192, CF_AES_KEY_192, plaintext, ciphertext_192);
+  test_cf_aes_known_vector("AES-256", key_256, CF_AES_KEY_256, plaintext, ciphertext_256);
+}
+
 int main(void)
 {
   printf("cf allocator capability-model test suite\n");
@@ -767,10 +1031,14 @@ int main(void)
   test_cf_array_basic_flow();
   test_cf_array_accessors();
   test_cf_array_state_and_diagnostics();
+  test_cf_ascii_helpers();
   test_cf_string_build_and_lifecycle();
   test_cf_string_queries_and_slices();
   test_cf_string_mutation_helpers();
   test_cf_string_invalid_state();
+  test_cf_hex_encode_decode();
+  test_cf_base64_encode_decode();
+  test_cf_aes_block_vectors();
   test_cf_types_native_groups();
   printf
   (

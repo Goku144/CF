@@ -18,5 +18,50 @@
 
 #include "TEXT/cf_ascii.h"
 
-/* suppress ISO C empty translation unit warning */
-typedef int cf_ascii_placeholder;
+cf_bool cf_ascii_is_alpha(char c)
+{
+  return ('a' <= c && c <= 'z') || ('A' <= c && c <= 'Z');
+}
+
+cf_bool cf_ascii_is_digit(char c)
+{
+  return '0' <= c && c <= '9';
+}
+
+cf_bool cf_ascii_is_alnum(char c)
+{
+  return cf_ascii_is_alpha(c) || cf_ascii_is_digit(c);
+}
+
+cf_bool cf_ascii_is_space(char c)
+{
+  return c == ' ' || c == '\t' || c == '\n' || c == '\v' || c == '\f' || c == '\r';
+}
+
+cf_bool cf_ascii_is_upper(char c)
+{
+  return ('A' <= c && c <= 'Z');
+}
+
+cf_bool cf_ascii_is_lower(char c)
+{
+  return ('a' <= c && c <= 'z');
+}
+
+char cf_ascii_to_upper(char c)
+{
+  return cf_ascii_is_lower(c) ? c - 'a' + 'A' : c;
+}
+
+char cf_ascii_to_lower(char c)
+{
+  return cf_ascii_is_upper(c) ? c - 'A' + 'a' : c;
+}
+
+cf_isize cf_ascii_hex_value(char c)
+{
+  if('0' <= c && c <= '9') return c - '0';
+  if('a' <= c && c <= 'f') return 0xA + c - 'a';
+  if('A' <= c && c <= 'F') return 0xA + c - 'A';
+  return -1;
+}

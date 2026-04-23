@@ -20,6 +20,7 @@
 #define CF_STRING_H
 
 #include "MEMORY/cf_memory.h"
+#include "MEMORY/cf_array.h"
 
 /**
  * @brief Initializes a string with optional character capacity.
