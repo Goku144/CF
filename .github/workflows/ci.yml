@@ -18,6 +18,9 @@ jobs:
       - name: Checkout Repo
         uses: actions/checkout@v6
 
+      - name: Installing NASM
+        run: sudo apt update && sudo apt install nasm
+
       - name: Show test file
         run: |
           pwd
@@ -25,4 +28,4 @@ jobs:
           sed -n '1,120p' tests/src/test.c
 
       - name: Run tests
-        run: make test
+        run: make test 
