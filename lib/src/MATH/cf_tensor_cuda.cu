@@ -18,12 +18,9 @@
 
 #include "MATH/cf_tensor.h"
 
+#include <cuda_runtime.h>
+
 __global__ void cf_tensor_cuda_noop_kernel(void)
 {
   
-}
-
-extern "C" int cf_tensor_cuda_available(void)
-{
-  return 1;
 }

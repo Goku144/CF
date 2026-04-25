@@ -27,8 +27,8 @@ cf allocator capability-model test suite
       
       statement (string): tests/src/test.c cf_alloc_debug test
       
-        Tested allocator (pointer): 0x7ffeb3ccc450
-        Debug allocator (pointer): 0x7ffeb3ccc430
+        Tested allocator (pointer): 0x7ffd13028560
+        Debug allocator (pointer): 0x7ffd13028540
       
       live/free (diffr): (0/0)
       Max lived (count): 0
@@ -67,8 +67,8 @@ cf allocator capability-model test suite
       
       statement (string): cf_alloc_debug callback section
       
-        Tested allocator (pointer): 0x7ffeb3ccc5b0
-        Debug allocator (pointer): 0x7ffeb3ccc590
+        Tested allocator (pointer): 0x7ffd130286c0
+        Debug allocator (pointer): 0x7ffd130286a0
       
       live/free (diffr): (0/0)
       Max lived (count): 0
@@ -103,8 +103,8 @@ cf allocator capability-model test suite
       
       statement (string): cf_alloc_debug callback section
       
-        Tested allocator (pointer): 0x7ffeb3ccc5b0
-        Debug allocator (pointer): 0x7ffeb3ccc590
+        Tested allocator (pointer): 0x7ffd130286c0
+        Debug allocator (pointer): 0x7ffd130286a0
       
       live/free (diffr): (3/0)
       Max lived (count): 3
@@ -117,7 +117,7 @@ cf allocator capability-model test suite
       Invalid reallocation by Tested  (count): 0
       Invalid free by Tested          (count): 0
       
-      latest valid by Tested (pointer): 0x55ed59b19890
+      latest valid by Tested (pointer): 0x561f07e94890
 ========================================================
   PASS  realloc of untracked pointer returns null
   PASS  realloc of untracked pointer does not call backing realloc
@@ -131,8 +131,8 @@ cf allocator capability-model test suite
       
       statement (string): cf_alloc_debug callback section
       
-        Tested allocator (pointer): 0x7ffeb3ccc5b0
-        Debug allocator (pointer): 0x7ffeb3ccc590
+        Tested allocator (pointer): 0x7ffd130286c0
+        Debug allocator (pointer): 0x7ffd130286a0
       
       live/free (diffr): (3/0)
       Max lived (count): 3
@@ -145,7 +145,7 @@ cf allocator capability-model test suite
       Invalid reallocation by Tested  (count): 1
       Invalid free by Tested          (count): 0
       
-      latest valid by Tested (pointer): 0x55ed59b19890
+      latest valid by Tested (pointer): 0x561f07e94890
 ========================================================
   PASS  successful realloc returns non-null
   PASS  second tracked realloc hits backing realloc
@@ -159,8 +159,8 @@ cf allocator capability-model test suite
       
       statement (string): cf_alloc_debug callback section
       
-        Tested allocator (pointer): 0x7ffeb3ccc5b0
-        Debug allocator (pointer): 0x7ffeb3ccc590
+        Tested allocator (pointer): 0x7ffd130286c0
+        Debug allocator (pointer): 0x7ffd130286a0
       
       live/free (diffr): (3/0)
       Max lived (count): 3
@@ -173,7 +173,7 @@ cf allocator capability-model test suite
       Invalid reallocation by Tested  (count): 1
       Invalid free by Tested          (count): 0
       
-      latest valid by Tested (pointer): 0x55ed59b198d0
+      latest valid by Tested (pointer): 0x561f07e948d0
 ========================================================
   PASS  free of untracked pointer increments invalid free count
   PASS  free of untracked pointer does not call backing free
@@ -189,8 +189,8 @@ cf allocator capability-model test suite
       
       statement (string): cf_alloc_debug callback section
       
-        Tested allocator (pointer): 0x7ffeb3ccc5b0
-        Debug allocator (pointer): 0x7ffeb3ccc590
+        Tested allocator (pointer): 0x7ffd130286c0
+        Debug allocator (pointer): 0x7ffd130286a0
       
       live/free (diffr): (2/0)
       Max lived (count): 3
@@ -203,7 +203,7 @@ cf allocator capability-model test suite
       Invalid reallocation by Tested  (count): 1
       Invalid free by Tested          (count): 1
       
-      latest valid by Tested (pointer): 0x55ed59b198d0
+      latest valid by Tested (pointer): 0x561f07e948d0
 ========================================================
   PASS  free of head node hits backing free
   PASS  second free decrements live count
@@ -217,8 +217,8 @@ cf allocator capability-model test suite
       
       statement (string): cf_alloc_debug callback section
       
-        Tested allocator (pointer): 0x7ffeb3ccc5b0
-        Debug allocator (pointer): 0x7ffeb3ccc590
+        Tested allocator (pointer): 0x7ffd130286c0
+        Debug allocator (pointer): 0x7ffd130286a0
       
       live/free (diffr): (1/0)
       Max lived (count): 3
@@ -231,7 +231,7 @@ cf allocator capability-model test suite
       Invalid reallocation by Tested  (count): 1
       Invalid free by Tested          (count): 1
       
-      latest valid by Tested (pointer): 0x55ed59b19800
+      latest valid by Tested (pointer): 0x561f07e94800
 ========================================================
   PASS  free of final node hits backing free
   PASS  final free drains live ratio back to zero
@@ -244,8 +244,8 @@ cf allocator capability-model test suite
       
       statement (string): cf_alloc_debug callback section
       
-        Tested allocator (pointer): 0x7ffeb3ccc5b0
-        Debug allocator (pointer): 0x7ffeb3ccc590
+        Tested allocator (pointer): 0x7ffd130286c0
+        Debug allocator (pointer): 0x7ffd130286a0
       
       live/free (diffr): (0/0)
       Max lived (count): 3
@@ -269,8 +269,8 @@ cf allocator capability-model test suite
       
       statement (string): NO STATEMENT DECLARED
       
-        Tested allocator (pointer): 0x7ffeb3ccc5d0
-        Debug allocator (pointer): 0x7ffeb3ccc5b0
+        Tested allocator (pointer): 0x7ffd130286e0
+        Debug allocator (pointer): 0x7ffd130286c0
       
       live/free (diffr): (0/0)
       Max lived (count): 0
@@ -292,8 +292,8 @@ cf allocator capability-model test suite
       
       statement (string): cf_alloc_debug ratio switch
       
-        Tested allocator (pointer): 0x7ffeb3ccc5c0
-        Debug allocator (pointer): 0x7ffeb3ccc5a0
+        Tested allocator (pointer): 0x7ffd130286d0
+        Debug allocator (pointer): 0x7ffd130286b0
       
       live/free (diffr): (0/2)
       Max lived (count): 0
@@ -317,8 +317,8 @@ cf allocator capability-model test suite
       
       statement (string): cf_alloc_debug ratio switch
       
-        Tested allocator (pointer): 0x7ffeb3ccc5c0
-        Debug allocator (pointer): 0x7ffeb3ccc5a0
+        Tested allocator (pointer): 0x7ffd130286d0
+        Debug allocator (pointer): 0x7ffd130286b0
       
       live/free (diffr): (0/1)
       Max lived (count): 0
@@ -331,7 +331,7 @@ cf allocator capability-model test suite
       Invalid reallocation by Tested  (count): 0
       Invalid free by Tested          (count): 0
       
-      latest valid by Tested (pointer): 0x55ed59b19830
+      latest valid by Tested (pointer): 0x561f07e94830
 ========================================================
   PASS  second alloc succeeds while free surplus remains
   PASS  second alloc also consumes free surplus before live grows
@@ -341,8 +341,8 @@ cf allocator capability-model test suite
       
       statement (string): cf_alloc_debug ratio switch
       
-        Tested allocator (pointer): 0x7ffeb3ccc5c0
-        Debug allocator (pointer): 0x7ffeb3ccc5a0
+        Tested allocator (pointer): 0x7ffd130286d0
+        Debug allocator (pointer): 0x7ffd130286b0
       
       live/free (diffr): (0/0)
       Max lived (count): 0
@@ -355,7 +355,7 @@ cf allocator capability-model test suite
       Invalid reallocation by Tested  (count): 0
       Invalid free by Tested          (count): 0
       
-      latest valid by Tested (pointer): 0x55ed59b19870
+      latest valid by Tested (pointer): 0x561f07e94870
 ========================================================
   PASS  free sees no live-side surplus to drain
   PASS  free grows the free side once live side is zero
@@ -365,8 +365,8 @@ cf allocator capability-model test suite
       
       statement (string): cf_alloc_debug ratio switch
       
-        Tested allocator (pointer): 0x7ffeb3ccc5c0
-        Debug allocator (pointer): 0x7ffeb3ccc5a0
+        Tested allocator (pointer): 0x7ffd130286d0
+        Debug allocator (pointer): 0x7ffd130286b0
       
       live/free (diffr): (0/1)
       Max lived (count): 0
@@ -379,7 +379,7 @@ cf allocator capability-model test suite
       Invalid reallocation by Tested  (count): 0
       Invalid free by Tested          (count): 0
       
-      latest valid by Tested (pointer): 0x55ed59b19830
+      latest valid by Tested (pointer): 0x561f07e94830
 ========================================================
   PASS  final free leaves live side at zero
   PASS  final free restores the free-side surplus
@@ -390,8 +390,8 @@ cf allocator capability-model test suite
       
       statement (string): cf_alloc_debug ratio switch
       
-        Tested allocator (pointer): 0x7ffeb3ccc5c0
-        Debug allocator (pointer): 0x7ffeb3ccc5a0
+        Tested allocator (pointer): 0x7ffd130286d0
+        Debug allocator (pointer): 0x7ffd130286b0
       
       live/free (diffr): (0/2)
       Max lived (count): 0
@@ -476,7 +476,7 @@ cf allocator capability-model test suite
   PASS  null push keeps array length unchanged
   PASS  array push prepares diagnostics
 ========================= Array Info =========================
-  array (|--(data        0) -> ( pointer:          0x55ed59b199c0 )
+  array (|--(data        0) -> ( pointer:          0x561f07e949c0 )
          |  -> (type -> 1 byte: char/bool-sized primitive value or struct with 1-byte total size.)
          | 
           ----------------------------------------------------->)

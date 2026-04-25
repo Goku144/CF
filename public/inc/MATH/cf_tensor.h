@@ -43,4 +43,10 @@ typedef struct cf_tensor
   cf_tensor_device device;
 }cf_tensor;
 
+#ifdef CF_CUDA_AVAILABLE
+
+#else
+
+#endif
+
 #endif /* CF_TENSOR_H */
