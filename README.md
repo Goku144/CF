@@ -117,6 +117,9 @@ Implemented allocator modules:
 Implemented math module:
 
 - `cf_math_g8_mul_mod`: GF(2^8) multiplication helper used by AES.
+- `cf_math_rotl8` and `cf_math_rotr8`: 8-bit rotate helpers.
+- `cf_math_rotl32` and `cf_math_rotr32`: 32-bit rotate helpers.
+- `cf_math_min_usize` and `cf_math_max_usize`: `cf_usize` min/max helpers.
 
 ## Tests
 
@@ -127,7 +130,7 @@ helpers.
 Latest local test result:
 
 ```text
-Passed : 438
+Passed : 453
 Failed : 0
 ```
 

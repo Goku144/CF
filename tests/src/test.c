@@ -1,5 +1,6 @@
 #include "ALLOCATOR/cf_alloc.h"
 #include "ALLOCATOR/cf_alloc_debug.h"
+#include "MATH/cf_math.h"
 #include "MEMORY/cf_array.h"
 #include "RUNTIME/cf_io.h"
 #include "RUNTIME/cf_log.h"
@@ -1062,6 +1063,33 @@ static void test_cf_runtime_error_checks(void)
 }
 
 /*******************************************************************************
+ * Math Tests
+ ******************************************************************************/
+static void test_cf_math_primitives(void)
+{
+  test_section("cf_math primitives");
+
+  test_check(cf_math_g8_mul_mod(0x57, 0x83) == 0xC1, "g8 multiply matches AES reference example");
+  test_check(cf_math_g8_mul_mod(0x00, 0x83) == 0x00, "g8 multiply by zero returns zero");
+  test_check(cf_math_g8_mul_mod(0xAE, 0x01) == 0xAE, "g8 multiply by one returns input");
+
+  test_check(cf_math_rotl8(0x81, 1) == 0x03, "rotl8 wraps high bit");
+  test_check(cf_math_rotr8(0x81, 1) == 0xC0, "rotr8 wraps low bit");
+  test_check(cf_math_rotl8(0xA5, 8) == 0xA5, "rotl8 count wraps modulo eight");
+  test_check(cf_math_rotr8(0xA5, 16) == 0xA5, "rotr8 count wraps modulo eight");
+
+  test_check(cf_math_rotl32(0x80000001U, 1) == 0x00000003U, "rotl32 wraps high bit");
+  test_check(cf_math_rotr32(0x80000001U, 1) == 0xC0000000U, "rotr32 wraps low bit");
+  test_check(cf_math_rotl32(0x12345678U, 32) == 0x12345678U, "rotl32 count wraps modulo thirty-two");
+  test_check(cf_math_rotr32(0x12345678U, 64) == 0x12345678U, "rotr32 count wraps modulo thirty-two");
+
+  test_check(cf_math_min_usize(3, 9) == 3, "min usize returns smaller value");
+  test_check(cf_math_min_usize(9, 3) == 3, "min usize handles reversed order");
+  test_check(cf_math_max_usize(3, 9) == 9, "max usize returns larger value");
+  test_check(cf_math_max_usize(9, 3) == 9, "max usize handles reversed order");
+}
+
+/*******************************************************************************
  * Runtime Type Tests
  ******************************************************************************/
 static void test_cf_types_native_groups(void)
@@ -1295,6 +1323,7 @@ int main(void)
   test_cf_random_api();
   test_cf_log_api();
   test_cf_runtime_error_checks();
+  test_cf_math_primitives();
   test_cf_aes_block_vectors();
   test_cf_aes_pkcs7_padding();
   test_cf_aes_pkcs7_file_roundtrip();
