@@ -19,6 +19,6 @@
 #if !defined(CF_CBOR_H)
 #define CF_CBOR_H
 
-
+/* CBOR interfaces are not exposed yet. */
 
 #endif /* CF_CBOR_H */

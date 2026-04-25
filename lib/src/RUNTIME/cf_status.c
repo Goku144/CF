@@ -42,7 +42,17 @@ static const cf_status_desc CF_STATUS_DESC[] =
   {CF_ERR_UNSUPPORTED, "CF_ERR_UNSUPPORTED", "The requested behavior or platform capability is not supported."},
   {CF_ERR_SECURITY, "CF_ERR_SECURITY", "A security, integrity, or authentication check failed."},
   {CF_ERR_INTERNAL, "CF_ERR_INTERNAL", "An unexpected internal failure occurred."},
+  {CF_ERR_NOT_FOUND, "CF_ERR_NOT_FOUND", "A requested file or other resource was not found."},
   {CF_ERR_UNDEFINED, "CF_ERR_UNDEFINED", "The status code is undefined or unmapped."},
+  {CF_ERR_IO_OPEN, "CF_ERR_IO_OPEN", "Opening a file failed."},
+  {CF_ERR_IO_READ, "CF_ERR_IO_READ", "Reading from a file descriptor failed."},
+  {CF_ERR_IO_WRITE, "CF_ERR_IO_WRITE", "Writing to a file descriptor failed."},
+  {CF_ERR_IO_CLOSE, "CF_ERR_IO_CLOSE", "Closing a file descriptor failed."},
+  {CF_ERR_IO_METADATA, "CF_ERR_IO_METADATA", "Querying filesystem metadata failed."},
+  {CF_ERR_TIME_SLEEP, "CF_ERR_TIME_SLEEP", "Sleeping for the requested duration failed."},
+  {CF_ERR_TIME_CLOCK, "CF_ERR_TIME_CLOCK", "Reading the system clock failed."},
+  {CF_ERR_INVALID_PADDING, "CF_ERR_INVALID_PADDING", "PKCS#7 padding validation failed."},
+  {CF_ERR_RANDOM, "CF_ERR_RANDOM", "Random byte generation failed."},
 };
 
 static const char *cf_status_compose(cf_status state, cf_bool use_readable)
@@ -97,17 +107,7 @@ static const char *cf_status_compose(cf_status state, cf_bool use_readable)
   return buffer;
 }
 
-static const char *cf_state_readable(cf_status state)
-{
-  return cf_status_compose(state, CF_TRUE);
-}
-
-const char *cf_state_as_char(cf_status state)
+const char *cf_status_as_char(cf_status state)
 {
   return cf_status_compose(state, CF_FALSE);
-}
-
-void cf_state_print(cf_status state, const int line)
-{
-  (void)printf("[line %d] [%s] -> %s\n",line, cf_state_as_char(state), cf_state_readable(state));
 }

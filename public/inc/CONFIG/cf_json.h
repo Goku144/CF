@@ -19,6 +19,6 @@
 #if !defined(CF_JSON_H)
 #define CF_JSON_H
 
-
+/* JSON interfaces are not exposed yet. */
 
 #endif /* CF_JSON_H */

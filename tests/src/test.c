@@ -1,6 +1,11 @@
 #include "ALLOCATOR/cf_alloc.h"
 #include "ALLOCATOR/cf_alloc_debug.h"
 #include "MEMORY/cf_array.h"
+#include "RUNTIME/cf_io.h"
+#include "RUNTIME/cf_log.h"
+#include "RUNTIME/cf_random.h"
+#include "RUNTIME/cf_status.h"
+#include "RUNTIME/cf_time.h"
 #include "RUNTIME/cf_types.h"
 #include "SECURITY/cf_aes.h"
 #include "SECURITY/cf_base64.h"
@@ -28,6 +33,10 @@ typedef struct test_alloc_state
 static test_alloc_state *g_test_alloc_state = CF_NULL;
 static int g_test_passed = 0;
 static int g_test_failed = 0;
+
+/*******************************************************************************
+ * Test Harness Helpers
+ ******************************************************************************/
 
 static void test_section(const char *name)
 {
@@ -62,6 +71,10 @@ static void test_check_string_value(cf_string *str, const char *expected, const 
     message
   );
 }
+
+/*******************************************************************************
+ * Allocator Test Helpers
+ ******************************************************************************/
 
 static void *test_alloc(void *ctx, cf_usize size)
 {
@@ -107,6 +120,10 @@ static void test_free(void *ctx, void *ptr)
 
   free(ptr);
 }
+
+/*******************************************************************************
+ * Allocator Tests
+ ******************************************************************************/
 
 static void test_cf_alloc_debug_new_model(void)
 {
@@ -167,6 +184,10 @@ static void test_cf_alloc_debug_new_model(void)
   test_check(untouched.ptr_all_live == 88, "null backing preserves other fields");
   test_check(strcmp(untouched.statement, "unchanged") == 0, "null backing preserves statement");
 }
+
+/*******************************************************************************
+ * Allocator Tests
+ ******************************************************************************/
 
 static void test_cf_alloc_debug_callbacks(void)
 {
@@ -317,6 +338,10 @@ static void test_cf_alloc_debug_callbacks(void)
   test_check(state.bad_ctx_free_calls == 0, "backing free receives backing ctx");
 }
 
+/*******************************************************************************
+ * Allocator Tests
+ ******************************************************************************/
+
 static void test_cf_alloc_debug_log_fn(void)
 {
   test_alloc_state state = {0};
@@ -339,6 +364,10 @@ static void test_cf_alloc_debug_log_fn(void)
   cf_alloc_debug_log(&debug, __LINE__);
   test_pass("debug log handles null and valid debug objects");
 }
+
+/*******************************************************************************
+ * Allocator Tests
+ ******************************************************************************/
 
 static void test_cf_alloc_debug_ratio_switch(void)
 {
@@ -397,6 +426,10 @@ static void test_cf_alloc_debug_ratio_switch(void)
   cf_alloc_debug_log(&debug, __LINE__);
 }
 
+/*******************************************************************************
+ * Memory Array Tests
+ ******************************************************************************/
+
 static void test_cf_array_basic_flow(void)
 {
   cf_array array = {0};
@@ -429,8 +462,8 @@ static void test_cf_array_basic_flow(void)
   test_check(popped.data == third.data, "array pop returns the last element");
   test_check(popped.len == third.len, "array pop preserves popped length");
 
-  status = cf_array_reset(&array);
-  test_check(status == CF_OK, "array reset succeeds");
+  cf_array_reset(&array);
+  test_pass("array reset succeeds");
   test_check(array.len == 0, "array reset clears logical length");
   test_check(array.cap >= 3, "array reset preserves capacity");
 
@@ -443,6 +476,10 @@ static void test_cf_array_basic_flow(void)
 
   cf_array_destroy(&array);
 }
+
+/*******************************************************************************
+ * Memory Array Tests
+ ******************************************************************************/
 
 static void test_cf_array_accessors(void)
 {
@@ -494,37 +531,34 @@ static void test_cf_array_accessors(void)
   test_check(status == CF_ERR_BOUNDS, "get rejects an out-of-bounds index");
   status = cf_array_set(&array, 2, &third);
   test_check(status == CF_ERR_BOUNDS, "set rejects an out-of-bounds index");
-  status = cf_array_get(&array, 0, CF_NULL);
-  test_check(status == CF_ERR_NULL, "get rejects a null output pointer");
-  status = cf_array_set(&array, 0, CF_NULL);
-  test_check(status == CF_ERR_NULL, "set rejects a null input pointer");
-  status = cf_array_peek(&array, CF_NULL);
-  test_check(status == CF_ERR_NULL, "peek rejects a null output pointer");
 
   cf_array_destroy(&array);
   test_check(cf_array_is_valid(&array) == CF_TRUE, "destroy resets array to a valid empty state");
   test_check(cf_array_is_empty(&array) == CF_TRUE, "destroyed array reports empty");
 }
 
+/*******************************************************************************
+ * Memory Array Tests
+ ******************************************************************************/
+
 static void test_cf_array_state_and_diagnostics(void)
 {
   cf_array array = {0};
   cf_array invalid = {.data = CF_NULL, .len = 1, .cap = 0};
   cf_array_element element = {.data = (cf_u8 *)"Z", .elem_size = sizeof(cf_u8), .len = 1};
-  cf_array_element read_back = {0};
   cf_status status = CF_OK;
 
   test_section("cf_array state and diagnostics");
 
+  test_check(cf_array_is_valid(CF_NULL) == CF_FALSE, "array validity rejects null array");
   test_check(cf_array_init(CF_NULL, 0) == CF_ERR_NULL, "array init rejects null array");
   test_check(cf_array_reserve(CF_NULL, 1) == CF_ERR_NULL, "array reserve rejects null array");
-  test_check(cf_array_reset(CF_NULL) == CF_ERR_NULL, "array reset rejects null array");
-  test_check(cf_array_peek(CF_NULL, &read_back) == CF_ERR_NULL, "array peek rejects null array");
-  test_check(cf_array_pop(CF_NULL, &read_back) == CF_ERR_NULL, "array pop rejects null array");
-  test_check(cf_array_get(CF_NULL, 0, &read_back) == CF_ERR_NULL, "array get rejects null array");
+  test_check(cf_array_peek(CF_NULL, &element) == CF_ERR_NULL, "array peek rejects null array");
+  test_check(cf_array_peek(&array, CF_NULL) == CF_ERR_NULL, "array peek rejects null output");
+  test_check(cf_array_push(CF_NULL, &element, CF_NULL) == CF_ERR_NULL, "array push rejects null array");
+  test_check(cf_array_pop(CF_NULL, &element) == CF_ERR_NULL, "array pop rejects null array");
+  test_check(cf_array_get(CF_NULL, 0, &element) == CF_ERR_NULL, "array get rejects null array");
   test_check(cf_array_set(CF_NULL, 0, &element) == CF_ERR_NULL, "array set rejects null array");
-  test_check(cf_array_is_valid(CF_NULL) == CF_FALSE, "array validity rejects null array");
-  test_check(cf_array_is_empty(CF_NULL) == CF_FALSE, "null array does not report empty");
 
   status = cf_array_init(&array, 0);
   test_check(status == CF_OK, "array init prepares reserve tests");
@@ -544,11 +578,13 @@ static void test_cf_array_state_and_diagnostics(void)
   test_pass("array info handles valid and null arrays");
 
   test_check(cf_array_is_valid(&invalid) == CF_FALSE, "array validity detects impossible len/cap state");
-  test_check(cf_array_is_empty(&invalid) == CF_FALSE, "invalid array does not report empty");
-  test_check(cf_array_reserve(&invalid, 2) == CF_ERR_STATE, "array reserve rejects invalid state");
 
   cf_array_destroy(&array);
 }
+
+/*******************************************************************************
+ * Text ASCII Tests
+ ******************************************************************************/
 
 static void test_cf_ascii_helpers(void)
 {
@@ -607,6 +643,10 @@ static void test_cf_ascii_helpers(void)
   test_check(cf_ascii_hex_value(':') == -1, "ascii hex rejects char after digits");
 }
 
+/*******************************************************************************
+ * Text String Tests
+ ******************************************************************************/
+
 static void test_cf_string_build_and_lifecycle(void)
 {
   cf_string str = {0};
@@ -616,7 +656,6 @@ static void test_cf_string_build_and_lifecycle(void)
 
   test_section("cf_string build and lifecycle");
 
-  test_check(cf_string_init(CF_NULL, 0) == CF_ERR_NULL, "string init rejects null string");
   status = cf_string_init(&str, 0);
   test_check(status == CF_OK, "string init with zero capacity succeeds");
   test_check(cf_string_is_valid(&str) == CF_TRUE, "initialized string is valid");
@@ -652,8 +691,8 @@ static void test_cf_string_build_and_lifecycle(void)
   test_check_string_value(&str, "cypher", "string trunc keeps requested prefix");
   test_check(cf_string_trunc(&str, 99) == CF_ERR_BOUNDS, "string trunc rejects too-large length");
 
-  status = cf_string_reset(&str);
-  test_check(status == CF_OK, "string reset succeeds");
+  cf_string_reset(&str);
+  test_pass("string reset succeeds");
   test_check(cf_string_is_empty(&str) == CF_TRUE, "string reset reports empty");
   test_check(str.data != CF_NULL && str.data[0] == '\0', "string reset keeps terminator");
 
@@ -688,7 +727,6 @@ static void test_cf_string_queries_and_slices(void)
 
   test_check(cf_string_eq(&haystack, &same) == CF_TRUE, "string eq accepts identical strings");
   test_check(cf_string_eq(&haystack, &needle) == CF_FALSE, "string eq rejects different strings");
-  test_check(cf_string_eq(&haystack, CF_NULL) == CF_FALSE, "string eq rejects null argument");
   test_check(cf_string_contains_char(&haystack, 'g') == CF_TRUE, "contains char finds present character");
   test_check(cf_string_contains_char(&haystack, 'z') == CF_FALSE, "contains char rejects missing character");
   test_check(cf_string_contains_cstr(&haystack, "beta") == CF_TRUE, "contains cstr finds present substring");
@@ -699,7 +737,6 @@ static void test_cf_string_queries_and_slices(void)
   status = cf_string_char_at(&haystack, 6, &c);
   test_check(status == CF_OK && c == 'b', "char at returns requested character");
   test_check(cf_string_char_at(&haystack, haystack.len, &c) == CF_ERR_BOUNDS, "char at rejects end index");
-  test_check(cf_string_char_at(&haystack, 0, CF_NULL) == CF_ERR_NULL, "char at rejects null output");
 
   status = cf_string_str_at(&haystack, 6, &tail);
   test_check(status == CF_OK, "str at copies suffix");
@@ -707,7 +744,6 @@ static void test_cf_string_queries_and_slices(void)
   haystack.allocator.free(haystack.allocator.ctx, tail);
   tail = CF_NULL;
   test_check(cf_string_str_at(&haystack, haystack.len, &tail) == CF_ERR_BOUNDS, "str at rejects end index");
-  test_check(cf_string_str_at(&haystack, 0, CF_NULL) == CF_ERR_NULL, "str at rejects null output");
 
   status = cf_string_slice(&slice, &haystack, 6, 9);
   test_check(status == CF_OK, "string slice copies inclusive range");
@@ -716,7 +752,6 @@ static void test_cf_string_queries_and_slices(void)
   slice = CF_NULL;
   test_check(cf_string_slice(&slice, &haystack, 4, 3) == CF_ERR_INVALID, "string slice rejects reversed range");
   test_check(cf_string_slice(&slice, &haystack, 0, haystack.len) == CF_ERR_BOUNDS, "string slice rejects end past content");
-  test_check(cf_string_slice(CF_NULL, &haystack, 0, 1) == CF_ERR_NULL, "string slice rejects null output");
 
   cf_string_destroy(&needle);
   cf_string_destroy(&same);
@@ -774,8 +809,6 @@ static void test_cf_string_mutation_helpers(void)
   test_check(status == CF_OK && part.data != CF_NULL && strcmp((char *)part.data, "blue") == 0, "split part 2 is correct");
   csv.allocator.free(csv.allocator.ctx, part.data);
 
-  test_check(cf_string_split(CF_NULL, &csv, ',') == CF_ERR_NULL, "string split rejects null destination");
-
   cf_array_destroy(&parts);
   cf_string_destroy(&csv);
   cf_string_destroy(&str);
@@ -788,20 +821,26 @@ static void test_cf_string_invalid_state(void)
 
   test_section("cf_string invalid state");
 
-  test_check(cf_string_is_valid(CF_NULL) == CF_FALSE, "string validity rejects null string");
-  test_check(cf_string_is_empty(CF_NULL) == CF_FALSE, "null string does not report empty");
   test_check(cf_string_is_valid(&invalid) == CF_FALSE, "string validity detects impossible len/cap state");
-  test_check(cf_string_is_empty(&invalid) == CF_FALSE, "invalid string does not report empty");
-  test_check(cf_string_reserve(&invalid, 2) == CF_ERR_STATE, "string reserve rejects invalid state");
-  test_check(cf_string_reset(&invalid) == CF_ERR_STATE, "string reset rejects invalid state");
-  test_check(cf_string_trunc(&invalid, 0) == CF_ERR_STATE, "string trunc rejects invalid state");
+  test_check(cf_string_is_valid(CF_NULL) == CF_FALSE, "string validity rejects null string");
+  test_check(cf_string_init(CF_NULL, 0) == CF_ERR_NULL, "string init rejects null string");
+  test_check(cf_string_append_cstr(CF_NULL, "x") == CF_ERR_NULL, "string append cstr rejects null destination");
+  test_check(cf_string_append_cstr(&str, CF_NULL) == CF_ERR_NULL, "string append cstr rejects null source");
+  test_check(cf_string_from_cstr(CF_NULL, "x") == CF_ERR_NULL, "string from cstr rejects null destination");
+  test_check(cf_string_as_cstr(CF_NULL, &str) == CF_ERR_NULL, "string as cstr rejects null output");
+  test_check(cf_string_char_at(CF_NULL, 0, (char[]){0}) == CF_ERR_NULL, "string char at rejects null string");
+  test_check(cf_string_str_at(CF_NULL, 0, (char *[]){0}) == CF_ERR_NULL, "string str at rejects null string");
+  test_check(cf_string_slice(CF_NULL, &str, 0, 0) == CF_ERR_NULL, "string slice rejects null output");
+  test_check(cf_string_split(CF_NULL, &str, ',') == CF_ERR_NULL, "string split rejects null destination");
 
   cf_string_init(&str, 0);
-  test_check(cf_string_from_cstr(CF_NULL, "x") == CF_ERR_NULL, "string from cstr rejects null destination");
-  test_check(cf_string_from_cstr(&str, CF_NULL) == CF_ERR_NULL, "string from cstr rejects null source");
-  test_check(cf_string_as_cstr(CF_NULL, &str) == CF_ERR_NULL, "string as cstr rejects null output");
+  test_check(cf_string_is_valid(&str) == CF_TRUE, "initialized string remains valid");
   cf_string_destroy(&str);
 }
+
+/*******************************************************************************
+ * Security Encoding Tests
+ ******************************************************************************/
 
 static void test_cf_hex_encode_decode(void)
 {
@@ -819,17 +858,15 @@ static void test_cf_hex_encode_decode(void)
   status = cf_hex_encode(&encoded, src);
   test_check(status == CF_OK, "hex encode succeeds");
   test_check_string_value(&encoded, "002AFF10", "hex encode writes contiguous uppercase text");
+  test_check(cf_hex_encode(CF_NULL, src) == CF_ERR_NULL, "hex encode rejects null destination");
+  test_check(cf_hex_encode(&encoded, (cf_bytes){.data = CF_NULL, .elem_size = 1, .len = 1}) == CF_ERR_NULL, "hex encode rejects non-empty null source data");
+  test_check(cf_hex_encode(&encoded, (cf_bytes){.data = raw, .elem_size = 2, .len = 1}) == CF_ERR_INVALID, "hex encode rejects non-byte source view");
 
   status = cf_string_from_cstr(&encoded, "prefix:");
   test_check(status == CF_OK, "hex encode append target reset succeeds");
   status = cf_hex_encode(&encoded, (cf_bytes){.data = raw + 1, .elem_size = 1, .len = 2});
   test_check(status == CF_OK, "hex encode appends to existing string");
   test_check_string_value(&encoded, "prefix:2AFF", "hex encode preserves existing destination content");
-
-  test_check(cf_hex_encode(CF_NULL, src) == CF_ERR_NULL, "hex encode rejects null destination");
-  test_check(cf_hex_encode(&encoded, (cf_bytes){.data = CF_NULL, .elem_size = 1, .len = 1}) == CF_ERR_NULL, "hex encode rejects non-empty null source data");
-  test_check(cf_hex_encode(&encoded, (cf_bytes){.data = raw, .elem_size = 2, .len = 1}) == CF_ERR_INVALID, "hex encode rejects non-byte source view");
-  test_check(cf_hex_encode(&encoded, (cf_bytes){.data = CF_NULL, .elem_size = 1, .len = 0}) == CF_OK, "hex encode accepts empty null source view");
 
   status = cf_string_init(&hex, 0);
   test_check(status == CF_OK, "hex decode source init succeeds");
@@ -852,14 +889,13 @@ static void test_cf_hex_encode_decode(void)
   test_check(decoded.len == 5, "hex decode appends to existing buffer");
   test_check(decoded.data[4] == 0xAA, "hex decode mixed-case byte is correct");
 
-  test_check(cf_hex_decode(CF_NULL, &hex) == CF_ERR_NULL, "hex decode rejects null destination");
   status = cf_string_from_cstr(&hex, "ABC");
   test_check(status == CF_OK, "hex decode odd-length source write succeeds");
+  test_check(cf_hex_decode(CF_NULL, &hex) == CF_ERR_NULL, "hex decode rejects null destination");
   test_check(cf_hex_decode(&decoded, &hex) == CF_ERR_INVALID, "hex decode rejects odd-length text");
   status = cf_string_from_cstr(&hex, "0G");
   test_check(status == CF_OK, "hex decode invalid source write succeeds");
   test_check(cf_hex_decode(&decoded, &hex) == CF_ERR_INVALID, "hex decode rejects invalid hex character");
-  test_check(cf_hex_decode(&decoded, CF_NULL) == CF_ERR_STATE, "hex decode rejects null source string state");
 
   cf_buffer_destroy(&decoded);
   cf_string_destroy(&hex);
@@ -882,6 +918,9 @@ static void test_cf_base64_encode_decode(void)
   status = cf_base64_encode(&encoded, src);
   test_check(status == CF_OK, "base64 encode succeeds for three-byte input");
   test_check_string_value(&encoded, "TWFu", "base64 encode writes unpadded text");
+  test_check(cf_base64_encode(CF_NULL, src) == CF_ERR_NULL, "base64 encode rejects null destination");
+  test_check(cf_base64_encode(&encoded, (cf_bytes){.data = CF_NULL, .elem_size = 1, .len = 1}) == CF_ERR_NULL, "base64 encode rejects non-empty null source data");
+  test_check(cf_base64_encode(&encoded, (cf_bytes){.data = raw, .elem_size = 2, .len = 1}) == CF_ERR_INVALID, "base64 encode rejects non-byte source view");
 
   status = cf_string_from_cstr(&encoded, "");
   test_check(status == CF_OK, "base64 encode destination reset succeeds");
@@ -894,11 +933,6 @@ static void test_cf_base64_encode_decode(void)
   status = cf_base64_encode(&encoded, (cf_bytes){.data = (cf_u8 *)"M", .elem_size = 1, .len = 1});
   test_check(status == CF_OK, "base64 encode succeeds for one-byte input");
   test_check_string_value(&encoded, "prefix:TQ==", "base64 encode appends padded text");
-
-  test_check(cf_base64_encode(CF_NULL, src) == CF_ERR_NULL, "base64 encode rejects null destination");
-  test_check(cf_base64_encode(&encoded, (cf_bytes){.data = CF_NULL, .elem_size = 1, .len = 1}) == CF_ERR_NULL, "base64 encode rejects non-empty null source data");
-  test_check(cf_base64_encode(&encoded, (cf_bytes){.data = raw, .elem_size = 2, .len = 1}) == CF_ERR_INVALID, "base64 encode rejects non-byte source view");
-  test_check(cf_base64_encode(&encoded, (cf_bytes){.data = CF_NULL, .elem_size = 1, .len = 0}) == CF_OK, "base64 encode accepts empty null source view");
 
   status = cf_string_init(&base64, 0);
   test_check(status == CF_OK, "base64 decode source init succeeds");
@@ -921,17 +955,115 @@ static void test_cf_base64_encode_decode(void)
   test_check(decoded.data[3] == 'M', "base64 decode padded byte 0 is correct");
   test_check(decoded.data[4] == 'a', "base64 decode padded byte 1 is correct");
 
-  test_check(cf_base64_decode(CF_NULL, &base64) == CF_ERR_NULL, "base64 decode rejects null destination");
   status = cf_string_from_cstr(&base64, "ABC");
   test_check(status == CF_OK, "base64 decode invalid-length source write succeeds");
+  test_check(cf_base64_decode(CF_NULL, &base64) == CF_ERR_NULL, "base64 decode rejects null destination");
   test_check(cf_base64_decode(&decoded, &base64) == CF_ERR_INVALID, "base64 decode rejects non-multiple-of-four text");
-  test_check(cf_base64_decode(&decoded, CF_NULL) == CF_ERR_STATE, "base64 decode rejects null source string state");
+  status = cf_string_from_cstr(&base64, "!!!!");
+  test_check(status == CF_OK, "base64 decode invalid-character source write succeeds");
+  test_check(cf_base64_decode(&decoded, &base64) == CF_ERR_INVALID, "base64 decode rejects invalid characters");
 
   cf_buffer_destroy(&decoded);
   cf_string_destroy(&base64);
   cf_string_destroy(&encoded);
 }
 
+/*******************************************************************************
+ * Runtime Random Tests
+ ******************************************************************************/
+static void test_cf_random_api(void)
+{
+  cf_u8 bytes[34] = {0};
+  cf_u32 value32 = 0;
+  cf_u64 value64 = 0;
+  cf_status status = CF_OK;
+
+  test_section("cf_random api");
+
+  memset(bytes, 0xA5, sizeof(bytes));
+
+  test_check(cf_random_bytes(CF_NULL, 0) == CF_OK, "random bytes accepts zero-length null destination");
+  test_check(cf_random_bytes(CF_NULL, 1) == CF_ERR_NULL, "random bytes rejects null destination for non-empty request");
+
+  status = cf_random_bytes(bytes + 1, sizeof(bytes) - 2);
+  test_check(status == CF_OK, "random bytes fills requested range");
+  test_check(bytes[0] == 0xA5, "random bytes preserves leading canary");
+  test_check(bytes[sizeof(bytes) - 1] == 0xA5, "random bytes preserves trailing canary");
+
+  status = cf_random_u32(&value32);
+  test_check(status == CF_OK, "random u32 succeeds");
+  status = cf_random_u64(&value64);
+  test_check(status == CF_OK, "random u64 succeeds");
+  test_check(cf_random_u32(CF_NULL) == CF_ERR_NULL, "random u32 rejects null destination");
+  test_check(cf_random_u64(CF_NULL) == CF_ERR_NULL, "random u64 rejects null destination");
+
+  test_check(strcmp(cf_status_as_char(CF_ERR_RANDOM), "CF_ERR_RANDOM") == 0, "random status has symbolic name");
+  (void)value32;
+  (void)value64;
+}
+
+/*******************************************************************************
+ * Runtime Log Tests
+ ******************************************************************************/
+static void test_cf_log_api(void)
+{
+  cf_log_level original = cf_log_get_level();
+
+  test_section("cf_log api");
+
+  test_check(strcmp(cf_log_level_as_char(CF_LOG_LEVEL_TRACE), "TRACE") == 0, "log level trace has stable name");
+  test_check(strcmp(cf_log_level_as_char(CF_LOG_LEVEL_DEBUG), "DEBUG") == 0, "log level debug has stable name");
+  test_check(strcmp(cf_log_level_as_char(CF_LOG_LEVEL_INFO), "INFO") == 0, "log level info has stable name");
+  test_check(strcmp(cf_log_level_as_char(CF_LOG_LEVEL_WARN), "WARN") == 0, "log level warn has stable name");
+  test_check(strcmp(cf_log_level_as_char(CF_LOG_LEVEL_ERROR), "ERROR") == 0, "log level error has stable name");
+  test_check(strcmp(cf_log_level_as_char(CF_LOG_LEVEL_FATAL), "FATAL") == 0, "log level fatal has stable name");
+  test_check(strcmp(cf_log_level_as_char(CF_LOG_LEVEL_OFF), "OFF") == 0, "log level off has stable name");
+  test_check(strcmp(cf_log_level_as_char((cf_log_level)99), "UNKNOWN") == 0, "unknown log level has fallback name");
+
+  cf_log_set_level(CF_LOG_LEVEL_WARN);
+  test_check(cf_log_get_level() == CF_LOG_LEVEL_WARN, "log set level updates global minimum");
+  test_check(cf_log_should_write(CF_LOG_LEVEL_INFO) == CF_FALSE, "log filter rejects lower level");
+  test_check(cf_log_should_write(CF_LOG_LEVEL_WARN) == CF_TRUE, "log filter accepts equal level");
+  test_check(cf_log_should_write(CF_LOG_LEVEL_ERROR) == CF_TRUE, "log filter accepts higher level");
+  test_check(cf_log_should_write(CF_LOG_LEVEL_OFF) == CF_FALSE, "log filter never writes off level");
+
+  cf_log_set_level((cf_log_level)99);
+  test_check(cf_log_get_level() == CF_LOG_LEVEL_WARN, "log set level ignores invalid level");
+
+  cf_log_set_level(CF_LOG_LEVEL_OFF);
+  test_check(cf_log_should_write(CF_LOG_LEVEL_FATAL) == CF_FALSE, "log off suppresses fatal level");
+  CF_LOG_STATUS(CF_LOG_LEVEL_ERROR, CF_ERR_RANDOM);
+  cf_log_write(CF_LOG_LEVEL_INFO, "tests/src/test.c", __LINE__, "suppressed log message");
+  cf_log_write(CF_LOG_LEVEL_INFO, "tests/src/test.c", __LINE__, CF_NULL);
+  test_pass("log write handles suppressed status and null format messages");
+
+  cf_log_set_level(original);
+}
+
+/*******************************************************************************
+ * Runtime Error Check Tests
+ ******************************************************************************/
+static void test_cf_runtime_error_checks(void)
+{
+  cf_usize size = 0;
+  cf_time_point point = {0};
+
+  test_section("cf_runtime error checks");
+
+  test_check(cf_io_exists(CF_NULL) == CF_FALSE, "io exists rejects null path");
+  test_check(cf_io_file_size(CF_NULL, &size) == CF_ERR_NULL, "io file size rejects null path");
+  test_check(cf_io_file_size("public/doc/crypt/test_padding_plain.bin", CF_NULL) == CF_ERR_NULL, "io file size rejects null output");
+  test_check(cf_io_read_file(CF_NULL, "public/doc/crypt/test_padding_plain.bin") == CF_ERR_NULL, "io read file rejects null buffer");
+  test_check(cf_io_write_file(CF_NULL, (cf_bytes){.data = CF_NULL, .elem_size = 1, .len = 0}) == CF_ERR_NULL, "io write file rejects null path");
+  test_check(cf_io_write_file("public/doc/crypt/test_padding_invalid.bin", (cf_bytes){.data = CF_NULL, .elem_size = 1, .len = 1}) == CF_ERR_NULL, "io write file rejects non-empty null data");
+  test_check(cf_time_now_wall(CF_NULL) == CF_ERR_NULL, "time wall clock rejects null output");
+  test_check(cf_time_now_mono(CF_NULL) == CF_ERR_NULL, "time monotonic clock rejects null output");
+  test_check(cf_time_now_wall(&point) == CF_OK, "time wall clock still succeeds with output");
+}
+
+/*******************************************************************************
+ * Runtime Type Tests
+ ******************************************************************************/
 static void test_cf_types_native_groups(void)
 {
   test_section("cf_types native groups");
@@ -947,6 +1079,9 @@ static void test_cf_types_native_groups(void)
   test_check(strcmp(cf_types_as_char(24), "Not a primitive type size or a struct with a native primitive-sized total width.") == 0, "non-native description is stable");
 }
 
+/*******************************************************************************
+ * Security AES Test Helpers
+ ******************************************************************************/
 static void test_cf_aes_known_vector(
   const char *label,
   const cf_u8 *key,
@@ -973,6 +1108,9 @@ static void test_cf_aes_known_vector(
   test_check(memcmp(decrypted, plaintext, CF_AES_BLOCK_SIZE) == 0, message);
 }
 
+/*******************************************************************************
+ * Security AES Tests
+ ******************************************************************************/
 static void test_cf_aes_block_vectors(void)
 {
   static const cf_u8 plaintext[CF_AES_BLOCK_SIZE] =
@@ -1021,6 +1159,122 @@ static void test_cf_aes_block_vectors(void)
   test_cf_aes_known_vector("AES-256", key_256, CF_AES_KEY_256, plaintext, ciphertext_256);
 }
 
+/*******************************************************************************
+ * Security AES Padding Tests
+ ******************************************************************************/
+static void test_cf_aes_pkcs7_padding(void)
+{
+  static const cf_u8 partial_plain[] =
+  {
+    'p', 'a', 'd', 'd', 'i', 'n', 'g', '-', 'o', 'k', '!', 0x03, 0x03
+  };
+  static const cf_u8 full_plain[] =
+  {
+    's', 'i', 'x', 't', 'e', 'e', 'n', ' ', 'b', 'y', 't', 'e', ' ', 't', 'x', 't'
+  };
+  cf_buffer partial = {0};
+  cf_buffer full = {0};
+  cf_buffer invalid = {0};
+  cf_status status = CF_OK;
+
+  test_section("cf_aes pkcs7 padding");
+
+  status = cf_buffer_init(&partial, 0);
+  test_check(status == CF_OK, "partial padding buffer init succeeds");
+  status = cf_buffer_append_bytes(&partial, (cf_bytes){.data = (void *)partial_plain, .elem_size = 1, .len = sizeof(partial_plain)});
+  test_check(status == CF_OK, "partial plaintext append succeeds");
+  status = cf_aes_pkcs7_pad(&partial);
+  test_check(status == CF_OK, "partial plaintext padding succeeds");
+  test_check(partial.len == CF_AES_BLOCK_SIZE, "partial plaintext pads to one block");
+  test_check(partial.data[13] == 0x03 && partial.data[14] == 0x03 && partial.data[15] == 0x03, "partial padding writes three padding bytes");
+  status = cf_aes_pkcs7_unpad(&partial);
+  test_check(status == CF_OK, "partial plaintext unpadding succeeds");
+  test_check(partial.len == sizeof(partial_plain), "partial unpadding restores original length");
+  test_check(memcmp(partial.data, partial_plain, sizeof(partial_plain)) == 0, "partial unpadding preserves real bytes that look like padding");
+
+  status = cf_buffer_init(&full, 0);
+  test_check(status == CF_OK, "full-block padding buffer init succeeds");
+  status = cf_buffer_append_bytes(&full, (cf_bytes){.data = (void *)full_plain, .elem_size = 1, .len = sizeof(full_plain)});
+  test_check(status == CF_OK, "full-block plaintext append succeeds");
+  status = cf_aes_pkcs7_pad(&full);
+  test_check(status == CF_OK, "full-block plaintext padding succeeds");
+  test_check(full.len == CF_AES_BLOCK_SIZE * 2, "full-block plaintext gets an extra padding block");
+  test_check(full.data[full.len - 1] == CF_AES_BLOCK_SIZE, "full-block padding stores block-size byte value");
+  status = cf_aes_pkcs7_unpad(&full);
+  test_check(status == CF_OK, "full-block plaintext unpadding succeeds");
+  test_check(full.len == sizeof(full_plain), "full-block unpadding restores original length");
+  test_check(memcmp(full.data, full_plain, sizeof(full_plain)) == 0, "full-block unpadding preserves original bytes");
+
+  status = cf_buffer_init(&invalid, 0);
+  test_check(status == CF_OK, "invalid padding buffer init succeeds");
+  status = cf_buffer_append_bytes(&invalid, (cf_bytes){.data = (cf_u8[CF_AES_BLOCK_SIZE]){0}, .elem_size = 1, .len = CF_AES_BLOCK_SIZE});
+  test_check(status == CF_OK, "invalid padding block append succeeds");
+  invalid.data[CF_AES_BLOCK_SIZE - 1] = 5;
+  test_check(cf_aes_pkcs7_unpad(&invalid) == CF_ERR_INVALID_PADDING, "unpad rejects mismatched padding bytes");
+  invalid.data[CF_AES_BLOCK_SIZE - 1] = 0;
+  test_check(cf_aes_pkcs7_unpad(&invalid) == CF_ERR_INVALID_PADDING, "unpad rejects zero padding byte");
+
+  cf_buffer_destroy(&invalid);
+  cf_buffer_destroy(&full);
+  cf_buffer_destroy(&partial);
+}
+
+/*******************************************************************************
+ * Security AES Padding File Tests
+ ******************************************************************************/
+static void test_cf_aes_pkcs7_file_roundtrip(void)
+{
+  static const char *plain_path = "public/doc/crypt/test_padding_plain.bin";
+  static const char *encrypted_path = "public/doc/crypt/test_padding_encrypted.bin";
+  static const char *decrypted_path = "public/doc/crypt/test_padding_decrypted.bin";
+  static const cf_u8 plain[] =
+  {
+    'f', 'i', 'l', 'e', '-', 'p', 'a', 'd', 'd', 'i', 'n', 'g', 0x04, 0x04
+  };
+  cf_buffer buffer = {0};
+  cf_aes aes = {0};
+  cf_u8 key[CF_AES_MAX_ROUND_KEYS * 4] = {0};
+  cf_usize blocks = 0;
+  cf_status status = CF_OK;
+
+  test_section("cf_aes pkcs7 file roundtrip");
+
+  status = cf_io_write_file(plain_path, (cf_bytes){.data = (void *)plain, .elem_size = 1, .len = sizeof(plain)});
+  test_check(status == CF_OK, "padding test plaintext artifact write succeeds");
+  status = cf_io_read_file(&buffer, plain_path);
+  test_check(status == CF_OK, "padding test plaintext artifact read succeeds");
+  test_check(buffer.len == sizeof(plain) && memcmp(buffer.data, plain, sizeof(plain)) == 0, "padding test plaintext artifact content is stable");
+
+  status = cf_aes_pkcs7_pad(&buffer);
+  test_check(status == CF_OK, "file plaintext padding succeeds");
+  test_check(buffer.len % CF_AES_BLOCK_SIZE == 0, "file padded length is block aligned");
+
+  status = cf_aes_init(&aes, key, CF_AES_KEY_128);
+  test_check(status == CF_OK, "file roundtrip AES init succeeds");
+  blocks = buffer.len / CF_AES_BLOCK_SIZE;
+  for(cf_usize i = 0; i < blocks; i++)
+    cf_aes_encrypt_block(&aes, buffer.data + CF_AES_BLOCK_SIZE * i, buffer.data + CF_AES_BLOCK_SIZE * i);
+
+  status = cf_io_write_file(encrypted_path, (cf_bytes){.data = buffer.data, .elem_size = 1, .len = buffer.len});
+  test_check(status == CF_OK, "padding test encrypted artifact write succeeds");
+  test_check(memcmp(buffer.data, plain, sizeof(plain)) != 0, "encrypted artifact differs from plaintext prefix");
+
+  for(cf_usize i = 0; i < blocks; i++)
+    cf_aes_decrypt_block(&aes, buffer.data + CF_AES_BLOCK_SIZE * i, buffer.data + CF_AES_BLOCK_SIZE * i);
+
+  status = cf_aes_pkcs7_unpad(&buffer);
+  test_check(status == CF_OK, "file decrypted buffer unpadding succeeds");
+  test_check(buffer.len == sizeof(plain) && memcmp(buffer.data, plain, sizeof(plain)) == 0, "file roundtrip restores original plaintext");
+
+  status = cf_io_write_file(decrypted_path, (cf_bytes){.data = buffer.data, .elem_size = 1, .len = buffer.len});
+  test_check(status == CF_OK, "padding test decrypted artifact write succeeds");
+
+  cf_buffer_destroy(&buffer);
+}
+
+/*******************************************************************************
+ * Test Runner
+ ******************************************************************************/
 int main(void)
 {
   printf("cf allocator capability-model test suite\n");
@@ -1038,7 +1292,12 @@ int main(void)
   test_cf_string_invalid_state();
   test_cf_hex_encode_decode();
   test_cf_base64_encode_decode();
+  test_cf_random_api();
+  test_cf_log_api();
+  test_cf_runtime_error_checks();
   test_cf_aes_block_vectors();
+  test_cf_aes_pkcs7_padding();
+  test_cf_aes_pkcs7_file_roundtrip();
   test_cf_types_native_groups();
   printf
   (

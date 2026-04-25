@@ -56,8 +56,28 @@ typedef enum cf_status
   /* An unexpected internal failure occurred. */
   CF_ERR_INTERNAL = 0x400,
 
+  /* A requested file or other resource could not be found. */
+  CF_ERR_NOT_FOUND = 0x800,
+
   /* A fallback value for undefined or unmapped states. */
-  CF_ERR_UNDEFINED = 0x800,
+  CF_ERR_UNDEFINED = 0x1000,
+
+  /* Specific input or output operation failures. */
+  CF_ERR_IO_OPEN = 0x2000,
+  CF_ERR_IO_READ = 0x4000,
+  CF_ERR_IO_WRITE = 0x8000,
+  CF_ERR_IO_CLOSE = 0x10000,
+  CF_ERR_IO_METADATA = 0x20000,
+
+  /* Specific time operation failures. */
+  CF_ERR_TIME_SLEEP = 0x40000,
+  CF_ERR_TIME_CLOCK = 0x80000,
+
+  /* Specific security validation failures. */
+  CF_ERR_INVALID_PADDING = 0x100000,
+
+  /* Specific random number generation failures. */
+  CF_ERR_RANDOM = 0x200000,
 } cf_status;
 
 /**
@@ -73,25 +93,7 @@ typedef enum cf_status
  *   A stable null-terminated string such as "CF_OK" or "CF_ERR_IO".
  *   Unknown values return "CF_ERR_UNKNOWN".
  */
-const char *cf_state_as_char(cf_status state);
-
-/**
- * Print a framework status code in a readable diagnostic form.
- *
- * The printed output includes the caller-provided line number, the symbolic
- * status code, and a human-readable explanation, followed by a trailing
- * newline.
- *
- * @param state
- *   The status code to print.
- *
- * @param line
- *   A caller-provided source line number, typically the __LINE__ macro.
- *
- * @return
- *   This function does not return a value.
- */
-void cf_state_print(cf_status state, const int line);
+const char *cf_status_as_char(cf_status state);
 
  
 #endif /* CF_STATUS_H */

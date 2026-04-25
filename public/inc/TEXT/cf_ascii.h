@@ -20,7 +20,6 @@
 #define CF_ASCII_H
 
 #include "RUNTIME/cf_types.h"
-#include "RUNTIME/cf_status.h"
 
 /**
  * @brief Check whether a character is an ASCII alphabetic letter.

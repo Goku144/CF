@@ -19,6 +19,6 @@
 #if !defined(CF_CONFIG_H)
 #define CF_CONFIG_H
 
-
+/* Configuration interfaces are not exposed yet. */
 
 #endif /* CF_CONFIG_H */

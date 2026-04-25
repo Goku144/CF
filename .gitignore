@@ -1,5 +1,0 @@
-**/app/*
-**/bin/*
-**/build/*
-!**/.gitkeep
-!**/app/src/

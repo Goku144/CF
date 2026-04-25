@@ -16,9 +16,9 @@
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
-#if !defined(CF_SLAB_L)
-#define CF_SLAB_L
+#if !defined(CF_SLAB_H)
+#define CF_SLAB_H
 
+/* Slab allocator interfaces are not exposed yet. */
 
-
-#endif /* CF_SLAB_L */
+#endif /* CF_SLAB_H */

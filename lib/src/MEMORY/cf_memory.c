@@ -23,14 +23,6 @@
 #include <stdlib.h>
 #include <stdio.h>
 
-static cf_status cf_buffer_check(cf_buffer *buffer)
-{
-  if(buffer == CF_NULL) return CF_ERR_NULL;
-  CF_ASSERT_TYPE_SIZE(*buffer, cf_buffer);
-  if(buffer->len > buffer->cap) return CF_ERR_STATE;
-  return CF_OK;
-}
-
 static cf_usize cf_buffer_grow_size(cf_buffer *buffer, cf_usize required)
 {
   cf_usize min_cap = buffer->len + required;
@@ -42,11 +34,26 @@ static cf_usize cf_buffer_grow_size(cf_buffer *buffer, cf_usize required)
   return min_cap < buffer->len ? CF_USIZE_MAX : new_cap;
 }
 
+cf_bool cf_buffer_is_valid(cf_buffer *buffer)
+{
+  if(buffer == CF_NULL) return CF_FALSE;
+  CF_ASSERT_TYPE_SIZE(*buffer, cf_buffer);
+  if(buffer->data == CF_NULL)
+  {
+    if(buffer->cap != 0) return CF_FALSE;
+    if(buffer->len != 0) return CF_FALSE;
+  }
+  else
+  {
+    if(buffer->cap == 0) return CF_FALSE;
+    if(buffer->cap < buffer->len) return CF_FALSE;
+  }
+  return CF_TRUE;
+}
 
 cf_status cf_buffer_init(cf_buffer *buffer, cf_usize capacity)
 {
   if(buffer == CF_NULL) return CF_ERR_NULL;
-  CF_ASSERT_TYPE_SIZE(*buffer, cf_buffer);
 
   *buffer = (cf_buffer) {0};
   cf_alloc_new(&buffer->allocator);
@@ -62,13 +69,11 @@ cf_status cf_buffer_init(cf_buffer *buffer, cf_usize capacity)
 }
 
 cf_status cf_buffer_reserve(cf_buffer *buffer, cf_usize capacity)
-{
-  cf_status state = cf_buffer_check(buffer);
-  if(state != CF_OK) return state;
+{ 
+  if(buffer == CF_NULL) return CF_ERR_NULL;
+  if(cf_buffer_is_valid(buffer) == CF_FALSE) return CF_ERR_STATE;
+  if(buffer->allocator.realloc == CF_NULL) return CF_ERR_STATE;
 
-  if(buffer->data == CF_NULL) 
-    return cf_buffer_init(buffer, capacity);
-  
   if(capacity > buffer->cap)
   {
     void *ptr = buffer->allocator.realloc(buffer->allocator.ctx, buffer->data, capacity);
@@ -81,18 +86,22 @@ cf_status cf_buffer_reserve(cf_buffer *buffer, cf_usize capacity)
 
 void cf_buffer_destroy(cf_buffer *buffer)
 {
-  cf_status state = cf_buffer_check(buffer);
-  if(state != CF_OK) return;
-
+  if(buffer == CF_NULL) return;
+  if(buffer->allocator.free == CF_NULL)
+  {
+    *buffer = (cf_buffer) {0};
+    return;
+  }
   buffer->allocator.free(buffer->allocator.ctx,buffer->data);
   *buffer = (cf_buffer) {0};
 }
 
 cf_status cf_buffer_append_byte(cf_buffer *buffer, cf_u8 byte)
 {
-  cf_status state = cf_buffer_check(buffer);
-  if(state != CF_OK) return state;
+  if(buffer == CF_NULL) return CF_ERR_NULL;
+  if(cf_buffer_is_valid(buffer) == CF_FALSE) return CF_ERR_STATE;
 
+  cf_status state = CF_OK;
   if(buffer->len == buffer->cap)
   {
     state = cf_buffer_reserve(buffer, cf_buffer_grow_size(buffer, 1));
@@ -102,15 +111,17 @@ cf_status cf_buffer_append_byte(cf_buffer *buffer, cf_u8 byte)
   buffer->data[buffer->len] = byte;
   buffer->len++;
 
-  return CF_OK;
+  return state;
 }
 
 cf_status cf_buffer_append_bytes(cf_buffer *buffer, cf_bytes bytes)
 {
-  cf_status state = cf_buffer_check(buffer);
-  if(state != CF_OK) return state;
+  if(buffer == CF_NULL) return CF_ERR_NULL;
+  if(cf_buffer_is_valid(buffer) == CF_FALSE) return CF_ERR_STATE;
+  if(bytes.len == 0) return CF_OK;
+  if(bytes.data == CF_NULL) return CF_ERR_NULL;
 
-  if(bytes.data == CF_NULL) return CF_OK;
+  cf_status state = CF_OK;
 
   if(bytes.len > buffer->cap - buffer->len)
   {
@@ -120,16 +131,13 @@ cf_status cf_buffer_append_bytes(cf_buffer *buffer, cf_bytes bytes)
 
   memmove(buffer->data + buffer->len, (cf_u8 *)bytes.data, bytes.len);
   buffer->len += bytes.len;
-  return CF_OK;
+  return state;
 }
 
 cf_status cf_buffer_as_bytes(cf_buffer *buffer, cf_bytes *bytes, cf_usize start, cf_usize end)
 {
-  cf_status state = cf_buffer_check(buffer);
-  if(state != CF_OK) return state;
-
-  if(bytes == CF_NULL) return CF_ERR_NULL;
-
+  if(buffer == CF_NULL || bytes == CF_NULL) return CF_ERR_NULL;
+  if(cf_buffer_is_valid(buffer) == CF_FALSE) return CF_ERR_STATE;
   if(start > end) return CF_ERR_INVALID;
   if(end >= buffer->len) return CF_ERR_BOUNDS;
 
@@ -139,44 +147,25 @@ cf_status cf_buffer_as_bytes(cf_buffer *buffer, cf_bytes *bytes, cf_usize start,
   return CF_OK;
 }
 
-cf_status cf_buffer_reset(cf_buffer *buffer)
+void cf_buffer_reset(cf_buffer *buffer)
 {
-  cf_status state = cf_buffer_check(buffer);
-  if(state != CF_OK) return state;
+  if(buffer == CF_NULL) return;
   buffer->len = 0;
-  return CF_OK;
 }
 
 cf_status cf_buffer_trunc(cf_buffer *buffer, cf_usize len)
 {
-  cf_status state = cf_buffer_check(buffer);
-  if(state != CF_OK) return state;
-
+  if(buffer == CF_NULL) return CF_ERR_NULL;
+  if(cf_buffer_is_valid(buffer) == CF_FALSE) return CF_ERR_STATE;
   if(len > buffer->len) return CF_ERR_BOUNDS;
   buffer->len = len;
 
   return CF_OK;
 }
 
-cf_bool cf_buffer_is_valid(cf_buffer *buffer)
-{
-  if(buffer == CF_NULL) return CF_FALSE;
-  if(buffer->data == CF_NULL)
-  {
-    if(buffer->cap != 0) return CF_FALSE;
-    if(buffer->len != 0) return CF_FALSE;
-  }
-  else
-  {
-    if(buffer->cap == 0) return CF_FALSE;
-    if(buffer->cap < buffer->len) return CF_FALSE;
-  }
-  return CF_TRUE;
-}
-
 cf_bool cf_buffer_is_empty(cf_buffer *buffer)
 {
-  if(!cf_buffer_is_valid(buffer)) return CF_FALSE;
+  if(buffer == CF_NULL) return CF_FALSE;
   return buffer->len == 0;
 }
 
@@ -220,4 +209,3 @@ printf(
     buffer->allocator.free    ? "set" : "NULL"
   );
 }
-
