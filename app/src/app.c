@@ -12,6 +12,7 @@
 
 #include "MATH/cf_math.h"
 
+#include "TEXT/cf_ascii.h"
 #include "TEXT/cf_string.h"
 
 #include <stdio.h>
