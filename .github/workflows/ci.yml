@@ -18,6 +18,9 @@ jobs:
       - name: Checkout Repo
         uses: actions/checkout@v6
 
+      - name: Installing NASM
+        run: apt install nasm
+
       - name: Show test file
         run: |
           pwd
