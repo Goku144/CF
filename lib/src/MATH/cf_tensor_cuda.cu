@@ -18,7 +18,12 @@
 
 #include "MATH/cf_tensor.h"
 
-/* suppress ISO C empty translation unit warning */
-typedef int cf_tensor_placeholder;
+__global__ void cf_tensor_cuda_noop_kernel(void)
+{
+  
+}
 
-
+extern "C" int cf_tensor_cuda_available(void)
+{
+  return 1;
+}

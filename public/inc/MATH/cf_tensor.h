@@ -19,6 +19,28 @@
 #if !defined(CF_TENSOR_H)
 #define CF_TENSOR_H
 
-/* Tensor interfaces are not exposed yet. */
+#include "MEMORY/cf_memory.h"
+#include "MEMORY/cf_array.h"
+
+#include "RUNTIME/cf_status.h"
+#include "RUNTIME/cf_types.h"
+
+#define CF_TENSOR_HIGHEST_RANK 8
+
+typedef enum cf_tensor_device {
+  CF_TENSOR_DEVICE_CPU,
+  CF_TENSOR_DEVICE_CUDA,
+  CF_TENSOR_DEVICE_OPENCL,
+  CF_TENSOR_DEVICE_VULKAN
+} cf_tensor_device;
+
+typedef struct cf_tensor
+{
+  cf_array array;
+  cf_usize dim[CF_TENSOR_HIGHEST_RANK];
+  cf_usize stride[CF_TENSOR_HIGHEST_RANK];
+  cf_usize rank;
+  cf_tensor_device device;
+}cf_tensor;
 
 #endif /* CF_TENSOR_H */

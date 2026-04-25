@@ -25,6 +25,7 @@
 #include "RUNTIME/cf_types.h"
 
 #define CF_MEMORY_GROWTH_SIZE 5096
+
 #define CF_USIZE_MAX SIZE_MAX
 
 /* Writable non-owning view over a contiguous byte range. */

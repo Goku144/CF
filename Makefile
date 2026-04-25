@@ -17,14 +17,40 @@
 ##
 
 CC  := gcc
+CUDA_HOME ?= /usr/local/cuda
+NVCC ?= $(CUDA_HOME)/bin/nvcc
+USE_CUDA ?= auto
 ASM := nasm
 INC := public/inc
 FLAG := -Wall -Wextra -Wpedantic -Werror -O3
+FLAG_CUDA := -O3
 FLAG_ASM := -f elf64 -w+all
 SRCS := $(shell find lib/src -name '*.c')
 OBJS := $(patsubst lib/src/%.c, lib/bin/%.o, $(SRCS))
 SRCS_ASM := $(shell find lib/src -name '*.asm')
 OBJS_ASM := $(patsubst lib/src/%.asm, lib/bin/%.o, $(SRCS_ASM))
+CUDA_AVAILABLE := $(shell command -v $(NVCC) >/dev/null 2>&1 && echo 1 || echo 0)
+ENABLE_CUDA := 0
+
+ifeq ($(USE_CUDA),1)
+ENABLE_CUDA := 1
+endif
+
+ifeq ($(USE_CUDA),auto)
+ifeq ($(CUDA_AVAILABLE),1)
+ENABLE_CUDA := 1
+endif
+endif
+
+LINK := $(CC)
+SRCS_CUDA :=
+OBJS_CUDA :=
+
+ifeq ($(ENABLE_CUDA),1)
+LINK := $(NVCC)
+SRCS_CUDA := $(shell find lib/src -name '*.cu')
+OBJS_CUDA := $(patsubst lib/src/%.cu, lib/bin/%.o, $(SRCS_CUDA))
+endif
 
 ############
 # Build App
@@ -34,9 +60,9 @@ app: runApp
 runApp: app/build/app
 	@./$<
 
-app/build/app: app/bin/app.o $(OBJS) $(OBJS_ASM)
+app/build/app: app/bin/app.o $(OBJS) $(OBJS_CUDA) $(OBJS_ASM)
 	@mkdir -p $(dir $@)
-	@$(CC) $^ -o $@
+	@$(LINK) $^ -o $@
 
 app/bin/app.o: app/src/app.c
 	@mkdir -p $(dir $@)
@@ -45,12 +71,15 @@ app/bin/app.o: app/src/app.c
 ############
 # Build Lib
 ############
-lib: $(OBJS) $(OBJS_ASM)
+lib: $(OBJS) $(OBJS_CUDA) $(OBJS_ASM)
 
-# % matches the full subpath, e.g. ALLOCATOR/cf_alloc
 lib/bin/%.o: lib/src/%.c
 	@mkdir -p $(dir $@)
 	$(CC) $(FLAG) -I$(INC) -c $< -o $@
+
+lib/bin/%.o: lib/src/%.cu
+	@mkdir -p $(dir $@)
+	$(NVCC) $(FLAG_CUDA) -I$(INC) -c $< -o $@
 
 lib/bin/%.o: lib/src/%.asm
 	@mkdir -p $(dir $@)
@@ -64,9 +93,9 @@ test: runTests
 runTests: tests/build/test
 	@./$< > public/doc/test.result.txt 2>&1
 
-tests/build/test: tests/bin/test.o $(OBJS)
+tests/build/test: tests/bin/test.o $(OBJS) $(OBJS_CUDA)
 	@mkdir -p $(dir $@)
-	@$(CC) $^ -o $@
+	@$(LINK) $^ -o $@
 
 tests/bin/test.o: tests/src/test.c
 	@mkdir -p $(dir $@)
