@@ -15,3 +15,10 @@
  * You should have received a copy of the GNU General Public License
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
+
+#if !defined(CF_HMAC_H)
+#define CF_HMAC_H
+
+/* HMAC interfaces are not exposed yet. */
+
+#endif /* CF_HMAC_H */

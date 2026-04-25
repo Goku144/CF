@@ -19,8 +19,6 @@
 #if !defined(CF_BASE64_H)
 #define CF_BASE64_H
 
-#include "RUNTIME/cf_types.h"
-
 #include "TEXT/cf_string.h"
 
 static const char CF_BASE64_TABLE[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -54,10 +52,9 @@ static const cf_u8 CF_BASE64_INV_TABLE[] =
  * The output is appended to `dst`; existing string contents are preserved.
  *
  * @param dst Initialized string receiving encoded text.
- * @param src Byte view to encode. `src.elem_size` must be `1`.
- * @return `CF_OK` on success, `CF_ERR_NULL` for null destination or non-empty
- * null source data, `CF_ERR_INVALID` for non-byte input, or another status
- * from string growth.
+ * @param src Byte view to encode.
+ * @return `CF_OK` on success, `CF_ERR_OOM` when temporary staging allocation
+ * fails, or another status propagated from string growth.
  */
 cf_status cf_base64_encode(cf_string *dst, cf_bytes src);
 
@@ -69,11 +66,9 @@ cf_status cf_base64_encode(cf_string *dst, cf_bytes src);
  * Decoded bytes are appended to `dst`; existing buffer contents are preserved.
  *
  * @param dst Initialized buffer receiving decoded bytes.
- * @param src Valid Base64 string to decode.
- * @return `CF_OK` on success, `CF_ERR_NULL` for null destination,
- * `CF_ERR_STATE` for invalid source string state, `CF_ERR_INVALID` for source
- * lengths that are not a multiple of four, or another status from buffer
- * growth.
+ * @param src Base64 string to decode.
+ * @return `CF_OK` on success, `CF_ERR_INVALID` when the source length is not a
+ * multiple of four, or another status propagated from buffer growth.
  */
 cf_status cf_base64_decode(cf_buffer *dst, cf_string *src);
 

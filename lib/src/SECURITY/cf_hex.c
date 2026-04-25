@@ -25,8 +25,11 @@
 cf_status cf_hex_encode(cf_string *dst, cf_bytes src)
 {
   if(dst == CF_NULL) return CF_ERR_NULL;
-  if(src.data == CF_NULL && src.len != 0) return CF_ERR_NULL;
-  if(src.elem_size != 1) return CF_ERR_INVALID;
+  if(cf_string_is_valid(dst) == CF_FALSE) return CF_ERR_STATE;
+  if(src.len == 0) return CF_OK;
+  if(src.data == CF_NULL) return CF_ERR_NULL;
+  if(src.elem_size != sizeof(cf_u8)) return CF_ERR_INVALID;
+
   for (cf_usize i = 0; i < src.len; i++)
   {
     char c[] = {CF_HEX_TABLE[(((cf_u8 *)src.data)[i] >> 4)& 0x0F], CF_HEX_TABLE[((cf_u8 *)src.data)[i] & 0x0F], '\0'};
@@ -38,8 +41,9 @@ cf_status cf_hex_encode(cf_string *dst, cf_bytes src)
 
 cf_status cf_hex_decode(cf_buffer *dst, cf_string *src)
 {
-  if(dst == CF_NULL) return CF_ERR_NULL;
-  if(!cf_string_is_valid(src)) return CF_ERR_STATE;
+  if(dst == CF_NULL || src == CF_NULL) return CF_ERR_NULL;
+  if(cf_buffer_is_valid(dst) == CF_FALSE || cf_string_is_valid(src) == CF_FALSE) return CF_ERR_STATE;
+
   if(src->len % 2 != 0) return CF_ERR_INVALID;
   cf_usize size = src->len / 2;
   for (size_t i = 0; i < size; i++)

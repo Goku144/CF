@@ -19,6 +19,6 @@
 #if !defined(CF_RUNTIME_H)
 #define CF_RUNTIME_H
 
-
+/* AI runtime interfaces are not exposed yet. */
 
 #endif /* CF_RUNTIME_H */

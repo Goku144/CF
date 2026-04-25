@@ -36,10 +36,8 @@ static const char CF_HEX_TABLE[] =
  * The output is appended to `dst`; existing string contents are preserved.
  *
  * @param dst Initialized string receiving encoded text.
- * @param src Byte view to encode. `src.elem_size` must be `1`.
- * @return `CF_OK` on success, `CF_ERR_NULL` for null destination or non-empty
- * null source data, `CF_ERR_INVALID` for non-byte input, or another status
- * from string growth.
+ * @param src Byte view to encode.
+ * @return `CF_OK` on success or another status propagated from string growth.
  */
 cf_status cf_hex_encode(cf_string *dst, cf_bytes src);
 
@@ -51,10 +49,9 @@ cf_status cf_hex_encode(cf_string *dst, cf_bytes src);
  * preserved.
  *
  * @param dst Initialized buffer receiving decoded bytes.
- * @param src Valid hexadecimal string to decode.
- * @return `CF_OK` on success, `CF_ERR_NULL` for null destination,
- * `CF_ERR_STATE` for invalid source string state, `CF_ERR_INVALID` for odd
- * length or invalid hex characters, or another status from buffer growth.
+ * @param src Hexadecimal string to decode.
+ * @return `CF_OK` on success, `CF_ERR_INVALID` for odd length or invalid hex
+ * characters, or another status propagated from buffer growth.
  */
 cf_status cf_hex_decode(cf_buffer *dst, cf_string *src);
 

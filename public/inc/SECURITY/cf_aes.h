@@ -151,4 +151,8 @@ void cf_aes_encrypt_block(cf_aes *aes, cf_u8 dst[CF_AES_BLOCK_SIZE], const cf_u8
  */
 void cf_aes_decrypt_block(cf_aes *aes, cf_u8 dst[CF_AES_BLOCK_SIZE], const cf_u8 src[CF_AES_BLOCK_SIZE]);
 
+cf_status cf_aes_pkcs7_pad(cf_buffer *buffer);
+
+cf_status cf_aes_pkcs7_unpad(cf_buffer *buffer);
+
 #endif /* CF_AES_H */

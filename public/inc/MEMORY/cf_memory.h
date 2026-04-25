@@ -25,7 +25,6 @@
 #include "RUNTIME/cf_types.h"
 
 #define CF_MEMORY_GROWTH_SIZE 5096
-
 #define CF_USIZE_MAX SIZE_MAX
 
 /* Writable non-owning view over a contiguous byte range. */
@@ -46,59 +45,51 @@ typedef struct cf_buffer
 } cf_buffer, cf_string;
 
 /**
- * @brief Initializes a buffer with the default allocator and optional capacity.
+ * @brief Initialize a buffer with the default allocator and optional capacity.
  *
- * The buffer is reset to an empty state before any allocation is attempted.
- * When `capacity` is zero, no backing memory is allocated and the buffer
- * remains empty until later growth.
+ * The buffer is reset to an empty state, assigned the framework default
+ * allocator, and optionally given backing storage for `capacity` bytes.
  *
  * @param buffer Buffer to initialize.
  * @param capacity Initial capacity in bytes to allocate.
- * @return `CF_OK` on success, `CF_ERR_NULL` when `buffer` is `CF_NULL`, or
- * `CF_ERR_OOM` when the initial allocation fails.
+ * @return `CF_OK` on success or `CF_ERR_OOM` when allocation fails.
  */
 cf_status cf_buffer_init(cf_buffer *buffer, cf_usize capacity);
 
 /**
- * @brief Ensures that a buffer can hold at least the requested number of bytes.
+ * @brief Ensure that a buffer can hold at least the requested number of bytes.
  *
  * When the current capacity is already large enough, the buffer is left
- * unchanged. Otherwise the backing storage is allocated or reallocated to the
- * requested byte capacity.
+ * unchanged. Otherwise the backing storage is reallocated to the requested
+ * capacity.
  *
  * @param buffer Buffer whose capacity must be ensured.
  * @param capacity Minimum capacity in bytes required after the call.
- * @return `CF_OK` on success, or a status describing null, invalid-state, or
- * allocation failure conditions.
+ * @return `CF_OK` on success or `CF_ERR_OOM` when reallocation fails.
  */
 cf_status cf_buffer_reserve(cf_buffer *buffer, cf_usize capacity);
 
 /**
- * @brief Releases a buffer's owned storage and resets it to an empty state.
- *
- * When the buffer is valid, its allocator `free` callback is used on the
- * backing storage and all fields are cleared afterward.
+ * @brief Release a buffer's owned storage and reset it to an empty state.
  *
  * @param buffer Buffer to destroy.
- * @return void
  */
 void cf_buffer_destroy(cf_buffer *buffer);
 
 /**
- * @brief Appends one byte to the end of a buffer.
+ * @brief Append one byte to the end of a buffer.
  *
- * When the current capacity is full, the buffer grows just enough to store the
- * new byte before the append is written.
+ * When the current capacity is full, the buffer grows before the append is
+ * written.
  *
  * @param buffer Destination buffer receiving the new byte.
  * @param byte Byte value to append.
- * @return `CF_OK` on success, or a status describing null, invalid-state, or
- * allocation failure conditions.
+ * @return `CF_OK` on success or `CF_ERR_OOM` when growth fails.
  */
 cf_status cf_buffer_append_byte(cf_buffer *buffer, cf_u8 byte);
 
 /**
- * @brief Appends a byte view to the end of a buffer.
+ * @brief Append a byte view to the end of a buffer.
  *
  * The source bytes are copied into the buffer tail. When additional space is
  * needed, the buffer grows by just enough bytes to fit the appended range.
@@ -106,13 +97,12 @@ cf_status cf_buffer_append_byte(cf_buffer *buffer, cf_u8 byte);
  *
  * @param buffer Destination buffer receiving the copied bytes.
  * @param bytes Source byte view to append.
- * @return `CF_OK` on success, or a status describing invalid-state or
- * allocation failure conditions.
+ * @return `CF_OK` on success or `CF_ERR_OOM` when growth fails.
  */
 cf_status cf_buffer_append_bytes(cf_buffer *buffer, cf_bytes bytes);
 
 /**
- * @brief Exposes a contiguous range of a buffer as a non-owning byte view.
+ * @brief Expose a contiguous range of a buffer as a non-owning byte view.
  *
  * The returned `cf_bytes` points directly into the buffer storage and does not
  * allocate or copy memory. The requested range is inclusive on both ends.
@@ -121,42 +111,36 @@ cf_status cf_buffer_append_bytes(cf_buffer *buffer, cf_bytes bytes);
  * @param bytes Output byte view receiving the selected range.
  * @param start Inclusive start offset in bytes.
  * @param end Inclusive end offset in bytes.
- * @return `CF_OK` on success, `CF_ERR_INVALID` when `start > end`,
- * `CF_ERR_BOUNDS` when the requested range exceeds the current buffer length,
- * or another status for null or invalid-state conditions.
+ * @return `CF_OK` on success, `CF_ERR_INVALID` when `start > end`, or
+ * `CF_ERR_BOUNDS` when the requested range exceeds the current buffer length.
  */
 cf_status cf_buffer_as_bytes(cf_buffer *buffer, cf_bytes *bytes, cf_usize start, cf_usize end);
 
 /**
- * @brief Marks a buffer as empty without releasing its allocated capacity.
- *
- * The buffer length becomes zero while the backing allocation and capacity are
- * preserved for later reuse.
+ * @brief Mark a buffer as empty without releasing its allocated capacity.
  *
  * @param buffer Buffer to reset.
- * @return `CF_OK` on success, or a status describing null or invalid-state
- * conditions.
  */
-cf_status cf_buffer_reset(cf_buffer *buffer);
+void cf_buffer_reset(cf_buffer *buffer);
 
 /**
- * @brief Shrinks the logical length of a buffer to a smaller size.
+ * @brief Shrink the logical length of a buffer to a smaller size.
  *
  * The backing allocation is not changed. Truncation is only valid when `len`
  * is less than or equal to the current logical length.
  *
  * @param buffer Buffer to truncate.
  * @param len New logical length in bytes.
- * @return `CF_OK` on success, `CF_ERR_BOUNDS` when `len` exceeds the current
- * length, or another status for null or invalid-state conditions.
+ * @return `CF_OK` on success or `CF_ERR_BOUNDS` when `len` exceeds the current
+ * length.
  */
 cf_status cf_buffer_trunc(cf_buffer *buffer, cf_usize len);
 
 /**
  * @brief Check whether a buffer satisfies the framework's structural rules.
  *
- * A valid buffer has internally consistent `data`, `cap`, and `len` fields.
- * A null data pointer is only valid when both logical length and capacity are
+ * A valid buffer has internally consistent `data`, `cap`, and `len` fields. A
+ * null data pointer is only valid when both logical length and capacity are
  * zero.
  *
  * @param buffer Buffer to validate.
@@ -168,11 +152,8 @@ cf_bool cf_buffer_is_valid(cf_buffer *buffer);
 /**
  * @brief Report whether a buffer currently contains no logical data.
  *
- * Invalid buffers are treated as not empty.
- *
  * @param buffer Buffer to inspect.
- * @return `CF_TRUE` when the buffer is valid and its logical length is zero,
- * otherwise `CF_FALSE`.
+ * @return `CF_TRUE` when the buffer length is zero, otherwise `CF_FALSE`.
  */
 cf_bool cf_buffer_is_empty(cf_buffer *buffer);
 
@@ -183,7 +164,6 @@ cf_bool cf_buffer_is_empty(cf_buffer *buffer);
  * allocation capacity, and whether each allocator callback field is set.
  *
  * @param buffer Buffer to inspect and print.
- * @return void
  */
 void cf_buffer_info(cf_buffer *buffer);
 

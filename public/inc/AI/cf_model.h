@@ -19,6 +19,6 @@
 #if !defined(CF_MODEL_H)
 #define CF_MODEL_H
 
-
+/* Model interfaces are not exposed yet. */
 
 #endif /* CF_MODEL_H */

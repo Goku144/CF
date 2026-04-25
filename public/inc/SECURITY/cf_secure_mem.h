@@ -15,3 +15,10 @@
  * You should have received a copy of the GNU General Public License
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
+
+#if !defined(CF_SECURE_MEM_H)
+#define CF_SECURE_MEM_H
+
+/* Secure memory interfaces are not exposed yet. */
+
+#endif /* CF_SECURE_MEM_H */

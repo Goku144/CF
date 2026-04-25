@@ -20,8 +20,17 @@
 #define CF_MATH_H
 
 #include "RUNTIME/cf_types.h"
-#include "RUNTIME/cf_status.h"
 
+/**
+ * @brief Multiply two bytes in AES GF(2^8) using the 0x11B reduction polynomial.
+ *
+ * This helper performs finite-field multiplication suitable for AES round
+ * transformations such as MixColumns and InvMixColumns.
+ *
+ * @param p Left multiplicand byte.
+ * @param q Right multiplicand byte.
+ * @return Product reduced in GF(2^8).
+ */
 cf_u8 cf_math_g8_mul_mod(cf_u8 p, cf_u8 q);
 
 #endif /* CF_MATH_H */

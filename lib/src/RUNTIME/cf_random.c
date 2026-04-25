@@ -18,5 +18,38 @@
 
 #include "RUNTIME/cf_random.h"
 
-/* suppress ISO C empty translation unit warning */
-typedef int cf_random_placeholder;
+#include <errno.h>
+#include <sys/random.h>
+
+cf_status cf_random_bytes(void *dst, cf_usize len)
+{
+  if(len == 0) return CF_OK;
+  if(dst == CF_NULL) return CF_ERR_NULL;
+
+  cf_u8 *out = (cf_u8 *)dst;
+  cf_usize offset = 0;
+  while (offset < len)
+  {
+    cf_isize n = getrandom(out + offset, len - offset, 0);
+    if(n < 0)
+    {
+      if(errno == EINTR) continue;
+      return CF_ERR_RANDOM;
+    }
+
+    if(n == 0) return CF_ERR_RANDOM;
+
+    offset += n;
+  }
+  return CF_OK;
+}
+
+cf_status cf_random_u32(cf_u32 *dst)
+{
+  return cf_random_bytes(dst, sizeof(*dst));
+}
+
+cf_status cf_random_u64(cf_u64 *dst)
+{
+  return cf_random_bytes(dst, sizeof(*dst));
+}

@@ -19,6 +19,6 @@
 #if !defined(CF_TENSOR_H)
 #define CF_TENSOR_H
 
-
+/* Tensor interfaces are not exposed yet. */
 
 #endif /* CF_TENSOR_H */

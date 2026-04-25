@@ -19,6 +19,6 @@
 #if !defined(CF_ARENA_H)
 #define CF_ARENA_H
 
-
+/* Arena allocator interfaces are not exposed yet. */
 
 #endif /* CF_ARENA_H */

@@ -22,12 +22,21 @@
 #include <stdarg.h>
 #include <string.h>
 
-static cf_status cf_array_check(cf_array *array)
+cf_bool cf_array_is_valid(cf_array *array)
 {
-  if(array == CF_NULL) return CF_ERR_NULL;
+  if(array == CF_NULL) return CF_FALSE;
   CF_ASSERT_TYPE_SIZE(*array, cf_array);
-  if(array->len > array->cap) return CF_ERR_STATE;
-  return CF_OK;
+  if(array->data == CF_NULL)
+  {
+    if(array->cap != 0) return CF_FALSE;
+    if(array->len != 0) return CF_FALSE;
+  }
+  else
+  {
+    if(array->cap == 0) return CF_FALSE;
+    if(array->cap < array->len) return CF_FALSE;
+  }
+  return CF_TRUE;
 }
 
 static cf_usize cf_array_grow_size(cf_array *array, cf_usize required)
@@ -39,14 +48,14 @@ static cf_usize cf_array_grow_size(cf_array *array, cf_usize required)
                   : CF_MEMORY_GROWTH_SIZE
                 ): 1
               ) : required;
-  if(required > (cf_usize)-1 - array->cap) return CF_ERR_OVERFLOW;
+  if(required > CF_USIZE_MAX - array->cap) return CF_USIZE_MAX;
   return array->cap + required;
 }
 
 cf_status cf_array_init(cf_array *array, cf_usize capacity)
 {
   if(array == CF_NULL) return CF_ERR_NULL;
-  CF_ASSERT_TYPE_SIZE(*array, cf_array);
+  if(capacity > CF_USIZE_MAX / sizeof(cf_array_element)) return CF_ERR_OVERFLOW;
 
   *array = (cf_array) {0};
   cf_alloc_new(&array->allocator);
@@ -61,16 +70,12 @@ cf_status cf_array_init(cf_array *array, cf_usize capacity)
 }
 
 cf_status cf_array_reserve(cf_array *array, cf_usize capacity)
-{
-  cf_status state = cf_array_check(array);
-  if(state != CF_OK) return state;
+{ 
+  if(array == CF_NULL) return CF_ERR_NULL;
+  if(cf_array_is_valid(array) == CF_FALSE) return CF_ERR_STATE;
+  if(capacity > CF_USIZE_MAX / sizeof(cf_array_element)) return CF_ERR_OVERFLOW;
+  if(array->allocator.realloc == CF_NULL) return CF_ERR_STATE;
 
-  if(array->data == CF_NULL)
-  {
-    state = cf_array_init(array, capacity);
-    if(state != CF_OK) return state;
-  }
-  
   if(capacity > array->cap)
   {
     void *ptr = array->allocator.realloc(array->allocator.ctx, array->data, capacity * sizeof(cf_array_element));
@@ -83,27 +88,26 @@ cf_status cf_array_reserve(cf_array *array, cf_usize capacity)
 
 void cf_array_destroy(cf_array *array)
 {
-  cf_status state = cf_array_check(array);
-  if(state != CF_OK) return;
+  if(array == CF_NULL) return;
+  if(array->allocator.free == CF_NULL)
+  {
+    *array = (cf_array) {0};
+    return;
+  }
   array->allocator.free(array->allocator.ctx, array->data);
   *array = (cf_array) {0};
 }
 
-cf_status cf_array_reset(cf_array *array)
+void cf_array_reset(cf_array *array)
 {
-  cf_status state = cf_array_check(array);
-  if(state != CF_OK) return state;
+  if(array == CF_NULL) return;
   array->len = 0;
-  return CF_OK;
 }
 
 cf_status cf_array_peek(cf_array *array, cf_array_element *element)
 {
-  cf_status state = cf_array_check(array);
-  if(state != CF_OK) return state;
-
-  if(element == CF_NULL) return CF_ERR_NULL;
-  CF_ASSERT_TYPE_SIZE(*element, cf_array_element);
+  if(array == CF_NULL || element == CF_NULL) return CF_ERR_NULL;
+  if(cf_array_is_valid(array) == CF_FALSE) return CF_ERR_STATE;
 
   if(array->len == 0)
   {
@@ -117,9 +121,8 @@ cf_status cf_array_peek(cf_array *array, cf_array_element *element)
 
 cf_status cf_array_push(cf_array *array, cf_array_element *element, ...)
 {
-  cf_status state = cf_array_check(array);
-  if(state != CF_OK) return state;
-  if (element == CF_NULL) return CF_OK;
+  if(array == CF_NULL) return CF_ERR_NULL;
+  if(cf_array_is_valid(array) == CF_FALSE) return CF_ERR_STATE;
 
   va_list args;
   va_start(args, element);
@@ -130,7 +133,7 @@ cf_status cf_array_push(cf_array *array, cf_array_element *element, ...)
     CF_ASSERT_TYPE_SIZE(*current, cf_array_element);
     if(array->cap == array->len)
     {
-      state = cf_array_reserve(array, cf_array_grow_size(array, 1));
+      cf_status state = cf_array_reserve(array, cf_array_grow_size(array, 1));
       if (state != CF_OK)
       {
         va_end(args);
@@ -155,9 +158,8 @@ cf_status cf_array_pop(cf_array *array, cf_array_element *element)
 
 cf_status cf_array_get(cf_array *array, cf_usize index, cf_array_element *element)
 {
-  cf_status state = cf_array_check(array);
-  if(state != CF_OK) return state;
-  if (element == CF_NULL) return CF_ERR_NULL;
+  if(array == CF_NULL || element == CF_NULL) return CF_ERR_NULL;
+  if(cf_array_is_valid(array) == CF_FALSE) return CF_ERR_STATE;
   if(index >= array->len) return CF_ERR_BOUNDS;
   *element = array->data[index];
   return CF_OK;
@@ -165,34 +167,16 @@ cf_status cf_array_get(cf_array *array, cf_usize index, cf_array_element *elemen
 
 cf_status cf_array_set(cf_array *array, cf_usize index, cf_array_element *element)
 {
-  cf_status state = cf_array_check(array);
-  if(state != CF_OK) return state;
-  if (element == CF_NULL) return CF_ERR_NULL;
+  if(array == CF_NULL || element == CF_NULL) return CF_ERR_NULL;
+  if(cf_array_is_valid(array) == CF_FALSE) return CF_ERR_STATE;
   if(index >= array->len) return CF_ERR_BOUNDS;
   array->data[index] = *element;
   return CF_OK;
 }
 
-cf_bool cf_array_is_valid(cf_array *array)
-{
-  if(array == CF_NULL) return CF_FALSE;
-  CF_ASSERT_TYPE_SIZE(*array, cf_array);
-  if(array->data == CF_NULL)
-  {
-    if(array->cap != 0) return CF_FALSE;
-    if(array->len != 0) return CF_FALSE;
-  }
-  else
-  {
-    if(array->cap == 0) return CF_FALSE;
-    if(array->cap < array->len) return CF_FALSE;
-  }
-  return CF_TRUE;
-}
-
 cf_bool cf_array_is_empty(cf_array *array)
 {
-  if(!cf_array_is_valid(array)) return CF_FALSE;
+  if(array == CF_NULL || cf_array_is_valid(array) == CF_FALSE) return CF_FALSE;
   return array->len == 0;
 }
 

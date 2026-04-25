@@ -19,6 +19,6 @@
 #if !defined(CF_POOL_H)
 #define CF_POOL_H
 
-
+/* Pool allocator interfaces are not exposed yet. */
 
 #endif /* CF_POOL_H */

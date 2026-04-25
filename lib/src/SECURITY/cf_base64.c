@@ -23,11 +23,23 @@
 
 
 
+static cf_bool cf_base64_is_char(cf_u8 c)
+{
+  return (c >= 'A' && c <= 'Z') ||
+         (c >= 'a' && c <= 'z') ||
+         (c >= '0' && c <= '9') ||
+         c == '+' ||
+         c == '/';
+}
+
 cf_status cf_base64_encode(cf_string *dst, cf_bytes src)
 {
   if(dst == CF_NULL) return CF_ERR_NULL;
-  if(src.data == CF_NULL && src.len != 0) return CF_ERR_NULL;
-  if(src.elem_size != 1) return CF_ERR_INVALID;
+  if(cf_string_is_valid(dst) == CF_FALSE) return CF_ERR_STATE;
+  if(src.len == 0) return CF_OK;
+  if(src.data == CF_NULL) return CF_ERR_NULL;
+  if(src.elem_size != sizeof(cf_u8)) return CF_ERR_INVALID;
+  if(src.len > CF_USIZE_MAX - 2) return CF_ERR_OVERFLOW;
 
   cf_usize rem = src.len % 3;
   cf_usize padd_size = (rem == 0) ? 0 : (3 - rem);
@@ -59,12 +71,27 @@ cf_status cf_base64_encode(cf_string *dst, cf_bytes src)
 
 cf_status cf_base64_decode(cf_buffer *dst, cf_string *src)
 {
-  if(dst == CF_NULL) return CF_ERR_NULL;
-  if(!cf_string_is_valid(src)) return CF_ERR_STATE;
+  if(dst == CF_NULL || src == CF_NULL) return CF_ERR_NULL;
+  if(cf_buffer_is_valid(dst) == CF_FALSE || cf_string_is_valid(src) == CF_FALSE) return CF_ERR_STATE;
+
   if(src->len % 4 != 0 ) return CF_ERR_INVALID;
+  if(src->len == 0) return CF_OK;
+
   cf_usize len = src->len / 4;
   for (cf_usize i = 0; i < len; i++)
   {
+    cf_bool last_chunk = i == len - 1;
+    cf_u8 c0 = src->data[4 * i];
+    cf_u8 c1 = src->data[4 * i + 1];
+    cf_u8 c2 = src->data[4 * i + 2];
+    cf_u8 c3 = src->data[4 * i + 3];
+
+    if(!cf_base64_is_char(c0) || !cf_base64_is_char(c1)) return CF_ERR_INVALID;
+    if(c2 == '=' && (!last_chunk || c3 != '=')) return CF_ERR_INVALID;
+    if(c3 == '=' && !last_chunk) return CF_ERR_INVALID;
+    if(c2 != '=' && !cf_base64_is_char(c2)) return CF_ERR_INVALID;
+    if(c3 != '=' && !cf_base64_is_char(c3)) return CF_ERR_INVALID;
+
     cf_u8 b[] =
     {
       ((CF_BASE64_INV_TABLE[src->data[4 * i]]     << 2) & 0xFC) | ((CF_BASE64_INV_TABLE[src->data[4 * i + 1]] >> 4) & 0x03),

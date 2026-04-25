@@ -19,6 +19,6 @@
 #if !defined(CF_GRAPH_H)
 #define CF_GRAPH_H
 
-
+/* Graph interfaces are not exposed yet. */
 
 #endif /* CF_GRAPH_H */

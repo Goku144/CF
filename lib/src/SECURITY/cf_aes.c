@@ -194,6 +194,8 @@ static void cf_aes_add_round_key(cf_u8 state[4][4], cf_u32 word[4])
 
 void cf_aes_encrypt_block(cf_aes *aes, cf_u8 dst[CF_AES_BLOCK_SIZE], const cf_u8 src[CF_AES_BLOCK_SIZE])
 {
+  if(aes == CF_NULL || dst == CF_NULL || src == CF_NULL) return;
+
   cf_u8 state[4][4] =
   {
     {src[0], src[4], src[8],  src[12]},
@@ -219,6 +221,8 @@ void cf_aes_encrypt_block(cf_aes *aes, cf_u8 dst[CF_AES_BLOCK_SIZE], const cf_u8
 
 void cf_aes_decrypt_block(cf_aes *aes, cf_u8 dst[CF_AES_BLOCK_SIZE], const cf_u8 src[CF_AES_BLOCK_SIZE])
 {
+  if(aes == CF_NULL || dst == CF_NULL || src == CF_NULL) return;
+
   cf_u8 state[4][4] =
   {
     {src[0], src[4], src[8],  src[12]},
@@ -240,4 +244,38 @@ void cf_aes_decrypt_block(cf_aes *aes, cf_u8 dst[CF_AES_BLOCK_SIZE], const cf_u8
   for (cf_u8 i = 0; i < 4; i++)
     for (cf_u8 j = 0; j < 4; j++)
       dst[j * 4 + i] = state[i][j];
+}
+
+cf_status cf_aes_pkcs7_pad(cf_buffer *buffer)
+{
+  if(buffer == CF_NULL) return CF_ERR_NULL;
+  if(cf_buffer_is_valid(buffer) == CF_FALSE) return CF_ERR_STATE;
+
+  cf_usize pad_len = CF_AES_BLOCK_SIZE - buffer->len % CF_AES_BLOCK_SIZE;
+  cf_u8 byte[pad_len];
+  memset(byte, pad_len, pad_len);
+  cf_bytes bytes = (cf_bytes) {.data = byte, .elem_size = sizeof (cf_u8), .len = pad_len};
+  return cf_buffer_append_bytes(buffer, bytes);
+}
+
+cf_status cf_aes_pkcs7_unpad(cf_buffer *buffer)
+{
+  if(buffer == CF_NULL) return CF_ERR_NULL;
+  if(cf_buffer_is_valid(buffer) == CF_FALSE) return CF_ERR_STATE;
+  if(buffer->data == CF_NULL || buffer->len == 0 || buffer->len % CF_AES_BLOCK_SIZE != 0)
+    return CF_ERR_INVALID_PADDING;
+
+  cf_u8 pad = buffer->data[buffer->len - 1];
+
+  if (pad == 0 || pad > CF_AES_BLOCK_SIZE || pad > buffer->len)
+    return CF_ERR_INVALID_PADDING;
+
+  for (cf_usize i = 0; i < pad; i++)
+  {
+    if (buffer->data[buffer->len - 1 - i] != pad)
+      return CF_ERR_INVALID_PADDING;
+  }
+
+  buffer->len -= pad;
+  return CF_OK;
 }
