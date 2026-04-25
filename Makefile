@@ -26,8 +26,8 @@ INC := public/inc
 # C OPTIONS
 ############
 
-CC ?= $(shell command -v nvcc >/dev/null 2>&1)
-CC_AVAILABLE := $(shell command -v $(CC) >/dev/null 2>&1 && echo 1 || echo 0)
+CC ?= $(shell command -v gcc >/dev/null 2>&1)
+CC_AVAILABLE := $(if $(CC),1,0)
 FLAG_C := -Wall -Wextra -Wpedantic -Werror -O3
 SRCS_C :=
 OBJS_C :=
@@ -36,8 +36,8 @@ OBJS_C :=
 # ASM OPTIONS
 ##############
 
-ASM ?= $(shell command -v nvcc >/dev/null 2>&1)
-ASM_AVAILABLE := $(shell command -v $(ASM) >/dev/null 2>&1 && echo 1 || echo 0)
+ASM ?= $(shell command -v nasm >/dev/null 2>&1)
+ASM_AVAILABLE := $(if $(ASM),1,0)
 FLAG_ASM := -f elf64 -w+all
 SRCS_ASM :=
 OBJS_ASM :=
@@ -47,7 +47,7 @@ OBJS_ASM :=
 ###############
 
 NVCC ?= $(shell command -v nvcc >/dev/null 2>&1)
-CUDA_AVAILABLE := $(shell command -v $(NVCC) >/dev/null 2>&1 && echo 1 || echo 0)
+CUDA_AVAILABLE := $(if $(NVCC),1,0)
 FLAG_CUDA := -O3
 SRCS_CUDA :=
 OBJS_CUDA :=

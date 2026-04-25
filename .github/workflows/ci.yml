@@ -28,4 +28,4 @@ jobs:
           sed -n '1,120p' tests/src/test.c
 
       - name: Run tests
-        run: make test
+        run: make test 
