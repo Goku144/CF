@@ -19,7 +19,7 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Installing NASM
-        run: apt install nasm
+        run: sudo apt update && sudo apt install nasm
 
       - name: Show test file
         run: |
