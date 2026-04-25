@@ -46,7 +46,7 @@ OBJS_ASM :=
 # NVCC OPTIONS 
 ###############
 
-NVCC ?= $(shell which nvcc)
+NVCC ?= $(shell sudo which nvcc)
 CUDA_AVAILABLE := $(shell command -v $(NVCC) >/dev/null 2>&1 && echo 1 || echo 0)
 FLAG_CUDA := -O3
 SRCS_CUDA :=
@@ -56,7 +56,7 @@ OBJS_CUDA :=
 # CONDITIONS
 #############
 
-ifeq ($(ASM_AVAILABLE),1)
+ifeq ($(CC_AVAILABLE),1)
 SRCS_C := $(shell find lib/src -name '*.c')
 OBJS_C := $(patsubst lib/src/%.c, lib/bin/%.o, $(SRCS_C))
 else
@@ -98,7 +98,7 @@ app/build/app: app/bin/app.o $(OBJS_C) $(OBJS_ASM) $(OBJS_CUDA)
 
 app/bin/app.o: app/src/app.c
 	@mkdir -p $(dir $@)
-	@$(CC) $(FLAG) -I$(INC) -c $< -o $@
+	@$(CC) $(FLAG_C) -I$(INC) -c $< -o $@
 
 ############
 # Build Lib
@@ -106,13 +106,13 @@ app/bin/app.o: app/src/app.c
 
 lib: $(OBJS_C) $(OBJS_ASM) $(OBJS_CUDA)
 
-lib/bin/%.o: lib/src/%.asm
-	@mkdir -p $(dir $@)
-	$(ASM) $(FLAG_ASM) $< -o $@
-
 lib/bin/%.o: lib/src/%.c
 	@mkdir -p $(dir $@)
 	$(CC) $(FLAG_C) -I$(INC) -c $< -o $@
+
+lib/bin/%.o: lib/src/%.asm
+	@mkdir -p $(dir $@)
+	$(ASM) $(FLAG_ASM) $< -o $@
 
 lib/bin/%.o: lib/src/%.cu
 	@mkdir -p $(dir $@)
@@ -142,4 +142,4 @@ tests/bin/test.o: tests/src/test.c
 clean:
 	rm -rf lib/bin app/bin app/build tests/bin tests/build
 
-.PHONY: app runApp lib test runTests check-nasm clean 
+.PHONY: app runApp lib test runTests clean 
