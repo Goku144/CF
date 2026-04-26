@@ -43,10 +43,47 @@ typedef struct cf_tensor
   cf_tensor_device device;
 }cf_tensor;
 
+
 #ifdef CF_CUDA_AVAILABLE
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+cf_status cf_tensor_init_gpu(cf_tensor *tensor, cf_usize dim, cf_usize rank, cf_usize elem_size);
+
+cf_status cf_tensor_add_gpu(cf_tensor *t1, cf_tensor *t2, cf_tensor *t_out);
+
+cf_status cf_tensor_mul_gpu(cf_tensor *t1, cf_tensor *t2, cf_tensor *t_out);
+
+#ifdef __cplusplus
+}
+#endif
+
+#define cf_tensor_init(tp, rank, dim, elem_size) cf_tensor_init_gpu(tp, rank, dim, elem_size)
+
+#define cf_tensor_add(t1, t2, t_out) cf_tensor_add_gpu(t1, t2, t_out)
+
+#define cf_tensor_mul(t1, t2, t_out) cf_tensor_mul_gpu(t1, t2, t_out)
 
 #else
 
+cf_status cf_tensor_init_cpu(cf_tensor *tensor, cf_usize dim, cf_usize rank, cf_usize elem_size);
+
+cf_status cf_tensor_add_cpu(cf_tensor *t1, cf_tensor *t2, cf_tensor *t_out);
+
+cf_status cf_tensor_mul_cpu(cf_tensor *t1, cf_tensor *t2, cf_tensor *t_out);
+
+#define cf_tensor_init(tp, rank, dim, elem_size) cf_tensor_init_cpu(tp, dim, rank, elem_size)
+
+#define cf_tensor_add(t1, t2, t_out) cf_tensor_add_cpu(t1, t2, t_out)
+
+#define cf_tensor_mul(t1, t2, t_out) cf_tensor_mul_cpu(t1, t2, t_out)
+
 #endif
+
+cf_status cf_tensor_destroy(cf_tensor *tensor);
+
+cf_status cf_tensor_get(cf_tensor *tensor, cf_usize *indexs);
 
 #endif /* CF_TENSOR_H */
