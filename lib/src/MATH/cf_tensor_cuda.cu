@@ -63,6 +63,65 @@ static cf_status cf_tensor_require_same_type(cf_tensor *t1, cf_tensor *t2, cf_te
   return CF_OK;
 }
 
+static cf_status cf_tensor_cuda_bytes(cf_tensor *tensor, cf_usize *out_bytes)
+{
+  if(tensor->metadata.elem_size != 0 && tensor->metadata.len > CF_USIZE_MAX / tensor->metadata.elem_size)
+    return CF_ERR_OVERFLOW;
+
+  *out_bytes = tensor->metadata.len * tensor->metadata.elem_size;
+  return CF_OK;
+}
+
+extern "C" cf_status cf_tensor_to_gpu(cf_tensor *tensor)
+{
+  cf_status status = cf_tensor_require_data(tensor);
+  if(status != CF_OK) return status;
+
+  cf_usize bytes;
+  status = cf_tensor_cuda_bytes(tensor, &bytes);
+  if(status != CF_OK) return status;
+
+  if(tensor->device_data == NULL)
+  {
+    cudaError_t cuda_status = cudaMalloc(&tensor->device_data, bytes);
+    if(cuda_status != cudaSuccess) return CF_ERR_CUDA_MEMORY;
+  }
+
+  cudaError_t cuda_status = cudaMemcpy(tensor->device_data, tensor->data, bytes, cudaMemcpyHostToDevice);
+  if(cuda_status != cudaSuccess) return CF_ERR_CUDA_COPY;
+
+  tensor->device = CF_TENSOR_DEVICE_CUDA;
+  return CF_OK;
+}
+
+extern "C" cf_status cf_tensor_to_cpu(cf_tensor *tensor)
+{
+  cf_status status = cf_tensor_require_data(tensor);
+  if(status != CF_OK) return status;
+  if(tensor->device_data == NULL) return CF_ERR_NULL;
+
+  cf_usize bytes;
+  status = cf_tensor_cuda_bytes(tensor, &bytes);
+  if(status != CF_OK) return status;
+
+  cudaError_t cuda_status = cudaMemcpy(tensor->data, tensor->device_data, bytes, cudaMemcpyDeviceToHost);
+  if(cuda_status != cudaSuccess) return CF_ERR_CUDA_COPY;
+
+  tensor->device = CF_TENSOR_DEVICE_CPU;
+  return CF_OK;
+}
+
+extern "C" cf_status cf_tensor_free_gpu(cf_tensor *tensor)
+{
+  if(tensor == CF_NULL) return CF_ERR_NULL;
+  if(tensor->device_data == NULL) return CF_OK;
+
+  cudaError_t cuda_status = cudaFree(tensor->device_data);
+  tensor->device_data = NULL;
+  if(tensor->device == CF_TENSOR_DEVICE_CUDA) tensor->device = CF_TENSOR_DEVICE_CPU;
+  return cuda_status == cudaSuccess ? CF_OK : CF_ERR_CUDA_MEMORY;
+}
+
 extern "C" cf_status cf_tensor_add_gpu(cf_tensor *t1, cf_tensor *t2, cf_tensor *t_out)
 {
   cf_status status = cf_tensor_require_data(t1);
@@ -85,46 +144,63 @@ extern "C" cf_status cf_tensor_add_gpu(cf_tensor *t1, cf_tensor *t2, cf_tensor *
   int threads = 256;
   int blocks = (t1->metadata.len + threads - 1) / threads;
 
-  void *d_a = NULL;
-  void *d_b = NULL;
-  void *d_out = NULL;
+  void *d_a = t1->device == CF_TENSOR_DEVICE_CUDA ? t1->device_data : NULL;
+  void *d_b = t2->device == CF_TENSOR_DEVICE_CUDA ? t2->device_data : NULL;
+  void *d_out = t_out->device == CF_TENSOR_DEVICE_CUDA ? t_out->device_data : NULL;
+  cf_bool free_a = CF_FALSE;
+  cf_bool free_b = CF_FALSE;
+  cf_bool free_out = CF_FALSE;
   cudaError_t cuda_status;
 
-  cf_usize bytes = t1->metadata.len * t1->metadata.elem_size;
+  cf_usize bytes;
+  status = cf_tensor_cuda_bytes(t1, &bytes);
+  if(status != CF_OK) return status;
 
-  cuda_status = cudaMalloc(&d_a, bytes);
-  if(cuda_status != cudaSuccess)
+  if(d_a == NULL)
   {
-    status = CF_ERR_CUDA_MEMORY;
-    goto cleanup;
+    cuda_status = cudaMalloc(&d_a, bytes);
+    if(cuda_status != cudaSuccess)
+    {
+      status = CF_ERR_CUDA_MEMORY;
+      goto cleanup;
+    }
+    free_a = CF_TRUE;
+
+    cuda_status = cudaMemcpy(d_a, t1->data, bytes, cudaMemcpyHostToDevice);
+    if(cuda_status != cudaSuccess)
+    {
+      status = CF_ERR_CUDA_COPY;
+      goto cleanup;
+    }
   }
 
-  cuda_status = cudaMalloc(&d_b, bytes);
-  if(cuda_status != cudaSuccess)
+  if(d_b == NULL)
   {
-    status = CF_ERR_CUDA_MEMORY;
-    goto cleanup;
+    cuda_status = cudaMalloc(&d_b, bytes);
+    if(cuda_status != cudaSuccess)
+    {
+      status = CF_ERR_CUDA_MEMORY;
+      goto cleanup;
+    }
+    free_b = CF_TRUE;
+
+    cuda_status = cudaMemcpy(d_b, t2->data, bytes, cudaMemcpyHostToDevice);
+    if(cuda_status != cudaSuccess)
+    {
+      status = CF_ERR_CUDA_COPY;
+      goto cleanup;
+    }
   }
 
-  cuda_status = cudaMalloc(&d_out, bytes);
-  if(cuda_status != cudaSuccess)
+  if(d_out == NULL)
   {
-    status = CF_ERR_CUDA_MEMORY;
-    goto cleanup;
-  }
-
-  cuda_status = cudaMemcpy(d_a, t1->data, bytes, cudaMemcpyHostToDevice);
-  if(cuda_status != cudaSuccess)
-  {
-    status = CF_ERR_CUDA_COPY;
-    goto cleanup;
-  }
-
-  cuda_status = cudaMemcpy(d_b, t2->data, bytes, cudaMemcpyHostToDevice);
-  if(cuda_status != cudaSuccess)
-  {
-    status = CF_ERR_CUDA_COPY;
-    goto cleanup;
+    cuda_status = cudaMalloc(&d_out, bytes);
+    if(cuda_status != cudaSuccess)
+    {
+      status = CF_ERR_CUDA_MEMORY;
+      goto cleanup;
+    }
+    free_out = CF_TRUE;
   }
 
   switch(t_out->metadata.elem_type)
@@ -160,19 +236,25 @@ extern "C" cf_status cf_tensor_add_gpu(cf_tensor *t1, cf_tensor *t2, cf_tensor *
     goto cleanup;
   }
 
-  cuda_status = cudaMemcpy(t_out->data, d_out, bytes, cudaMemcpyDeviceToHost);
-  if(cuda_status != cudaSuccess)
+  if(t_out->device == CF_TENSOR_DEVICE_CUDA && t_out->device_data == d_out)
   {
-    status = CF_ERR_CUDA_COPY;
-    goto cleanup;
+    status = CF_OK;
+  }
+  else
+  {
+    cuda_status = cudaMemcpy(t_out->data, d_out, bytes, cudaMemcpyDeviceToHost);
+    if(cuda_status != cudaSuccess)
+    {
+      status = CF_ERR_CUDA_COPY;
+      goto cleanup;
+    }
+    status = CF_OK;
   }
 
-  status = CF_OK;
-
 cleanup:
-  if(d_a != NULL) cudaFree(d_a);
-  if(d_b != NULL) cudaFree(d_b);
-  if(d_out != NULL) cudaFree(d_out);
+  if(free_a && d_a != NULL) cudaFree(d_a);
+  if(free_b && d_b != NULL) cudaFree(d_b);
+  if(free_out && d_out != NULL) cudaFree(d_out);
   return status;
 }
 extern "C" cf_status cf_tensor_scalar_mul_gpu(cf_tensor *t1, void *scalar, cf_tensor *t_out)

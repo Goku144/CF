@@ -52,8 +52,9 @@ int main(void)
          ((double *) cpu_out.data)[CF_APP_TENSOR_ADD_LEN - 1]);
 
 #ifdef CF_CUDA_AVAILABLE
-  cf_tensor gpu_out;
+  cf_tensor gpu_out, gpu_fast_out;
   CF_LOG_INFO(cf_status_as_char(cf_tensor_init(&gpu_out, (cf_usize[]){CF_APP_TENSOR_ADD_LEN, 0, 0, 0, 0, 0, 0, 0}, 1, CF_TENSOR_DOUBLE)));
+  CF_LOG_INFO(cf_status_as_char(cf_tensor_init(&gpu_fast_out, (cf_usize[]){CF_APP_TENSOR_ADD_LEN, 0, 0, 0, 0, 0, 0, 0}, 1, CF_TENSOR_DOUBLE)));
 
   cf_time_now_mono(&start);
   cf_status gpu_status = cf_tensor_add_gpu(&a, &b, &gpu_out);
@@ -70,7 +71,32 @@ int main(void)
          ((double *) gpu_out.data)[0],
          ((double *) gpu_out.data)[CF_APP_TENSOR_ADD_LEN - 1]);
 
+  CF_LOG_INFO(cf_status_as_char(cf_tensor_to_gpu(&a)));
+  CF_LOG_INFO(cf_status_as_char(cf_tensor_to_gpu(&b)));
+  CF_LOG_INFO(cf_status_as_char(cf_tensor_to_gpu(&gpu_fast_out)));
+
+  cf_time_now_mono(&start);
+  cf_status gpu_fast_status = cf_tensor_add_gpu(&a, &b, &gpu_fast_out);
+  cf_time_now_mono(&end);
+  CF_LOG_INFO(cf_status_as_char(cf_tensor_to_cpu(&gpu_fast_out)));
+
+  cf_time gpu_fast_elapsed = cf_time_elapsed(start, end);
+  double gpu_fast_seconds = (double) cf_time_as_ns(gpu_fast_elapsed) / 1000000000.0;
+  double gpu_fast_gib_per_sec = bytes / gpu_fast_seconds / 1073741824.0;
+
+  printf("gpu resident add: %s | %.6f s | %.3f GiB/s | sample %.2f %.2f\n",
+         cf_status_as_char(gpu_fast_status),
+         gpu_fast_seconds,
+         gpu_fast_gib_per_sec,
+         ((double *) gpu_fast_out.data)[0],
+         ((double *) gpu_fast_out.data)[CF_APP_TENSOR_ADD_LEN - 1]);
+
+  cf_tensor_free_gpu(&a);
+  cf_tensor_free_gpu(&b);
+  cf_tensor_free_gpu(&gpu_fast_out);
+
   cf_tensor_destroy(&gpu_out);
+  cf_tensor_destroy(&gpu_fast_out);
 #else
   printf("gpu add: skipped; build without CF_CUDA_AVAILABLE\n");
 #endif
