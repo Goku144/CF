@@ -78,6 +78,16 @@ typedef enum cf_status
 
   /* Specific random number generation failures. */
   CF_ERR_RANDOM = 0x200000,
+
+  /* CUDA/GPU runtime failures. */
+  CF_ERR_CUDA = 0x400000,
+  CF_ERR_CUDA_DRIVER = 0x800000,
+  CF_ERR_CUDA_RUNTIME = 0x1000000,
+  CF_ERR_CUDA_DEVICE = 0x2000000,
+  CF_ERR_CUDA_MEMORY = 0x4000000,
+  CF_ERR_CUDA_COPY = 0x8000000,
+  CF_ERR_CUDA_LAUNCH = 0x10000000,
+  CF_ERR_CUDA_SYNC = 0x20000000,
 } cf_status;
 
 /**

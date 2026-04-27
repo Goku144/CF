@@ -53,6 +53,14 @@ static const cf_status_desc CF_STATUS_DESC[] =
   {CF_ERR_TIME_CLOCK, "CF_ERR_TIME_CLOCK", "Reading the system clock failed."},
   {CF_ERR_INVALID_PADDING, "CF_ERR_INVALID_PADDING", "PKCS#7 padding validation failed."},
   {CF_ERR_RANDOM, "CF_ERR_RANDOM", "Random byte generation failed."},
+  {CF_ERR_CUDA, "CF_ERR_CUDA", "A CUDA or GPU operation failed."},
+  {CF_ERR_CUDA_DRIVER, "CF_ERR_CUDA_DRIVER", "The CUDA driver API reported a failure."},
+  {CF_ERR_CUDA_RUNTIME, "CF_ERR_CUDA_RUNTIME", "The CUDA runtime API reported a failure."},
+  {CF_ERR_CUDA_DEVICE, "CF_ERR_CUDA_DEVICE", "CUDA device selection or capability validation failed."},
+  {CF_ERR_CUDA_MEMORY, "CF_ERR_CUDA_MEMORY", "CUDA device memory allocation or ownership failed."},
+  {CF_ERR_CUDA_COPY, "CF_ERR_CUDA_COPY", "Copying data to or from CUDA device memory failed."},
+  {CF_ERR_CUDA_LAUNCH, "CF_ERR_CUDA_LAUNCH", "Launching a CUDA kernel failed."},
+  {CF_ERR_CUDA_SYNC, "CF_ERR_CUDA_SYNC", "Synchronizing CUDA work failed."},
 };
 
 static const char *cf_status_compose(cf_status state, cf_bool use_readable)

@@ -20,7 +20,39 @@
 
 #include <cuda_runtime.h>
 
-__global__ void cf_tensor_cuda_noop_kernel(void)
+__global__ void cf_tensor_kernel_add(void)
 {
   
+}
+
+extern "C" cf_status cf_tensor_add_gpu(cf_tensor *t1, cf_tensor *t2, cf_tensor *t_out)
+{
+  CF_UNUSED(t1);
+  CF_UNUSED(t2);
+  CF_UNUSED(t_out);
+  return CF_ERR_UNSUPPORTED;
+}
+
+extern "C" cf_status cf_tensor_scalar_mul_gpu(cf_tensor *t1, void *scalar, cf_tensor *t_out)
+{
+  CF_UNUSED(t1);
+  CF_UNUSED(scalar);
+  CF_UNUSED(t_out);
+  return CF_ERR_UNSUPPORTED;
+}
+
+extern "C" cf_status cf_tensor_mul_gpu(cf_tensor *t1, cf_tensor *t2, cf_tensor *t_out)
+{
+  CF_UNUSED(t1);
+  CF_UNUSED(t2);
+  CF_UNUSED(t_out);
+  return CF_ERR_UNSUPPORTED;
+}
+
+extern "C" cf_status cf_tensor_matrix_mul_gpu(cf_tensor *t1, cf_tensor *t2, cf_tensor *t_out)
+{
+  CF_UNUSED(t1);
+  CF_UNUSED(t2);
+  CF_UNUSED(t_out);
+  return CF_ERR_UNSUPPORTED;
 }
