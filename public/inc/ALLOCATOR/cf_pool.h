@@ -19,6 +19,11 @@
 #if !defined(CF_POOL_H)
 #define CF_POOL_H
 
-/* Pool allocator interfaces are not exposed yet. */
+/*
+ * Public pool allocator API placeholder.
+ *
+ * Fixed-size object pool declarations should be added here when pooled
+ * allocation becomes part of the framework.
+ */
 
 #endif /* CF_POOL_H */

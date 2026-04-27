@@ -19,6 +19,11 @@
 #if !defined(CF_GRAPH_H)
 #define CF_GRAPH_H
 
-/* Graph interfaces are not exposed yet. */
+/*
+ * Public AI graph API placeholder.
+ *
+ * This header reserves the graph module boundary for future node, edge, and
+ * execution-plan types without exposing unfinished interfaces.
+ */
 
 #endif /* CF_GRAPH_H */

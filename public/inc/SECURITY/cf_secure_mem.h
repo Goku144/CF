@@ -19,6 +19,11 @@
 #if !defined(CF_SECURE_MEM_H)
 #define CF_SECURE_MEM_H
 
-/* Secure memory interfaces are not exposed yet. */
+/*
+ * Public secure-memory API placeholder.
+ *
+ * Secret zeroing and guarded memory declarations should be added here when the
+ * secure memory backend is implemented.
+ */
 
 #endif /* CF_SECURE_MEM_H */

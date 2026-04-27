@@ -23,6 +23,10 @@
 #include <stdlib.h>
 #include <stdio.h>
 
+/*
+ * Compute the next byte-buffer capacity. Small buffers grow geometrically while
+ * larger buffers grow in fixed framework chunks to limit realloc churn.
+ */
 static cf_usize cf_buffer_grow_size(cf_buffer *buffer, cf_usize required)
 {
   cf_usize min_cap = buffer->len + required;
@@ -34,6 +38,10 @@ static cf_usize cf_buffer_grow_size(cf_buffer *buffer, cf_usize required)
   return min_cap < buffer->len ? CF_USIZE_MAX : new_cap;
 }
 
+/*
+ * Validate the core cf_buffer invariant: NULL storage means zero length and
+ * capacity; live storage means capacity covers length.
+ */
 cf_bool cf_buffer_is_valid(cf_buffer *buffer)
 {
   if(buffer == CF_NULL) return CF_FALSE;
@@ -51,6 +59,10 @@ cf_bool cf_buffer_is_valid(cf_buffer *buffer)
   return CF_TRUE;
 }
 
+/*
+ * Initialize a byte buffer with the default allocator and optional starting
+ * capacity.
+ */
 cf_status cf_buffer_init(cf_buffer *buffer, cf_usize capacity)
 {
   if(buffer == CF_NULL) return CF_ERR_NULL;
@@ -68,6 +80,9 @@ cf_status cf_buffer_init(cf_buffer *buffer, cf_usize capacity)
   return CF_OK;
 }
 
+/*
+ * Ensure a byte buffer has at least the requested capacity.
+ */
 cf_status cf_buffer_reserve(cf_buffer *buffer, cf_usize capacity)
 { 
   if(buffer == CF_NULL) return CF_ERR_NULL;
@@ -84,6 +99,9 @@ cf_status cf_buffer_reserve(cf_buffer *buffer, cf_usize capacity)
   return CF_OK;
 }
 
+/*
+ * Release byte-buffer storage through its allocator and reset the object.
+ */
 void cf_buffer_destroy(cf_buffer *buffer)
 {
   if(buffer == CF_NULL) return;
@@ -96,6 +114,9 @@ void cf_buffer_destroy(cf_buffer *buffer)
   *buffer = (cf_buffer) {0};
 }
 
+/*
+ * Append one byte, growing storage when needed.
+ */
 cf_status cf_buffer_append_byte(cf_buffer *buffer, cf_u8 byte)
 {
   if(buffer == CF_NULL) return CF_ERR_NULL;
@@ -114,6 +135,9 @@ cf_status cf_buffer_append_byte(cf_buffer *buffer, cf_u8 byte)
   return state;
 }
 
+/*
+ * Append a byte span to the buffer. The source is a view and is not retained.
+ */
 cf_status cf_buffer_append_bytes(cf_buffer *buffer, cf_bytes bytes)
 {
   if(buffer == CF_NULL) return CF_ERR_NULL;
@@ -134,6 +158,9 @@ cf_status cf_buffer_append_bytes(cf_buffer *buffer, cf_bytes bytes)
   return state;
 }
 
+/*
+ * Expose a checked slice of the buffer as a cf_bytes view.
+ */
 cf_status cf_buffer_as_bytes(cf_buffer *buffer, cf_bytes *bytes, cf_usize start, cf_usize end)
 {
   if(buffer == CF_NULL || bytes == CF_NULL) return CF_ERR_NULL;
@@ -147,12 +174,18 @@ cf_status cf_buffer_as_bytes(cf_buffer *buffer, cf_bytes *bytes, cf_usize start,
   return CF_OK;
 }
 
+/*
+ * Clear logical contents while keeping allocated capacity for reuse.
+ */
 void cf_buffer_reset(cf_buffer *buffer)
 {
   if(buffer == CF_NULL) return;
   buffer->len = 0;
 }
 
+/*
+ * Truncate logical length without changing capacity.
+ */
 cf_status cf_buffer_trunc(cf_buffer *buffer, cf_usize len)
 {
   if(buffer == CF_NULL) return CF_ERR_NULL;
@@ -163,12 +196,18 @@ cf_status cf_buffer_trunc(cf_buffer *buffer, cf_usize len)
   return CF_OK;
 }
 
+/*
+ * Test whether a buffer currently has no logical bytes.
+ */
 cf_bool cf_buffer_is_empty(cf_buffer *buffer)
 {
   if(buffer == CF_NULL) return CF_FALSE;
   return buffer->len == 0;
 }
 
+/*
+ * Print byte-buffer internals for debugging allocator and capacity behavior.
+ */
 void cf_buffer_info(cf_buffer *buffer)
 {
   if(buffer == CF_NULL)

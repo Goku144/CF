@@ -19,6 +19,11 @@
 #if !defined(CF_JSON_H)
 #define CF_JSON_H
 
-/* JSON interfaces are not exposed yet. */
+/*
+ * Public JSON config API placeholder.
+ *
+ * Text configuration decoding/encoding declarations should be added here when
+ * the JSON backend is implemented.
+ */
 
 #endif /* CF_JSON_H */

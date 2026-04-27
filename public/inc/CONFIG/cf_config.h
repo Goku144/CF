@@ -19,6 +19,11 @@
 #if !defined(CF_CONFIG_H)
 #define CF_CONFIG_H
 
-/* Configuration interfaces are not exposed yet. */
+/*
+ * Public configuration API placeholder.
+ *
+ * Format-independent config loading and validation declarations should live
+ * here, while JSON/CBOR details stay in their codec headers.
+ */
 
 #endif /* CF_CONFIG_H */

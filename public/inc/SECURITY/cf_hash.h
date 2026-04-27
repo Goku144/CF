@@ -19,6 +19,11 @@
 #if !defined(CF_HASH_H)
 #define CF_HASH_H
 
-/* Hash interfaces are not exposed yet. */
+/*
+ * Public hash API placeholder.
+ *
+ * Digest contexts and one-shot hashing declarations should be added here when
+ * concrete hash algorithms are implemented.
+ */
 
 #endif /* CF_HASH_H */

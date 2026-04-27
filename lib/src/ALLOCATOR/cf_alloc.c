@@ -23,24 +23,36 @@
 #include <stdlib.h>
 #include <stdarg.h>
 
+/*
+ * Default allocation callback backed by malloc.
+ */
 static void *cf_alloc_alloc(void *ctx, cf_usize size)
 {
   CF_UNUSED(ctx);
   return malloc(size);
 }
 
+/*
+ * Default reallocation callback backed by realloc.
+ */
 static void *cf_alloc_realloc(void *ctx, void *ptr, cf_usize size)
 {
   CF_UNUSED(ctx);
   return realloc(ptr, size);
 }
 
+/*
+ * Default free callback backed by free.
+ */
 static void cf_alloc_free(void *ctx, void *ptr)
 {
   CF_UNUSED(ctx);
   free(ptr);
 }
 
+/*
+ * Build the default allocator vtable used by buffers, arrays, and strings.
+ */
 static cf_alloc cf_alloc_create(void)
 {
   return (cf_alloc) 
@@ -52,6 +64,9 @@ static cf_alloc cf_alloc_create(void)
   };
 }
 
+/*
+ * Public initializer for the default allocator object.
+ */
 void cf_alloc_new(cf_alloc *alloc)
 {
   if(alloc == CF_NULL) return;

@@ -18,5 +18,8 @@
 
 #include "CONFIG/cf_cbor.h"
 
-/* suppress ISO C empty translation unit warning */
+/*
+ * CBOR configuration placeholder. Binary configuration parsing should be added
+ * here so config codecs stay separated by format.
+ */
 typedef int cf_cbor_placeholder;

@@ -22,6 +22,9 @@
 
 #include <string.h>
 
+/*
+ * Apply the AES S-box to each byte of a key-schedule word.
+ */
 static cf_u32 cf_aes_sub_word(cf_u32 word)
 {
   return ((cf_u32)CF_AES_SBOX[(word >> 0x18) & 0xFF] << 0x18)|
@@ -30,6 +33,9 @@ static cf_u32 cf_aes_sub_word(cf_u32 word)
          ((cf_u32)CF_AES_SBOX[word & 0xFF]);
 }
 
+/*
+ * AES key-schedule core: rotate, substitute, and mix in the round constant.
+ */
 static cf_u32 cf_aes_g_func(cf_u32 word, cf_u8 round_i)
 {
   cf_u8 tmp[] = {word >> 0x10, word >> 0x08, word, word >> 0x18};
@@ -39,6 +45,9 @@ static cf_u32 cf_aes_g_func(cf_u32 word, cf_u8 round_i)
           ((cf_u32)CF_AES_SBOX[tmp[3]]);
 }
 
+/*
+ * Expand the caller key into all AES round keys stored in cf_aes.
+ */
 static void cf_aes_key_expansion(cf_aes *aes, const cf_u8 key[CF_AES_MAX_ROUND_KEYS * 4], cf_aes_key_size key_size)
 {
   cf_u8 row_size = key_size / 4;
@@ -66,6 +75,9 @@ static void cf_aes_key_expansion(cf_aes *aes, const cf_u8 key[CF_AES_MAX_ROUND_K
   }
 }
 
+/*
+ * Initialize an AES context for 128, 192, or 256-bit keys.
+ */
 cf_status cf_aes_init(cf_aes *aes, const cf_u8 key[CF_AES_MAX_ROUND_KEYS * 4], cf_aes_key_size key_size)
 {
   if(aes == CF_NULL || key == CF_NULL) return CF_ERR_NULL;
@@ -75,6 +87,9 @@ cf_status cf_aes_init(cf_aes *aes, const cf_u8 key[CF_AES_MAX_ROUND_KEYS * 4], c
   return CF_OK;
 }
 
+/*
+ * Forward AES SubBytes transform.
+ */
 static void cf_aes_sub_bytes(cf_u8 state[4][4])
 {
   for (cf_u8 i = 0; i < 4; i++)
@@ -82,6 +97,9 @@ static void cf_aes_sub_bytes(cf_u8 state[4][4])
       state[i][j] = CF_AES_SBOX[state[i][j]];
 }
 
+/*
+ * Inverse AES SubBytes transform.
+ */
 static void cf_aes_inv_sub_bytes(cf_u8 state[4][4])
 {
   for (cf_u8 i = 0; i < 4; i++)
@@ -89,6 +107,9 @@ static void cf_aes_inv_sub_bytes(cf_u8 state[4][4])
       state[i][j] = CF_AES_INV_SBOX[state[i][j]];
 }
 
+/*
+ * Forward AES ShiftRows transform on the 4x4 state matrix.
+ */
 static void cf_aes_shift_rows(cf_u8 state[4][4])
 {
   const cf_u8 tmp[4][4] =
@@ -102,6 +123,9 @@ static void cf_aes_shift_rows(cf_u8 state[4][4])
     memcpy(state[i], tmp[i], sizeof (cf_u8) * 4);
 }
 
+/*
+ * Inverse AES ShiftRows transform on the 4x4 state matrix.
+ */
 static void cf_aes_inv_shift_rows(cf_u8 state[4][4])
 {
   const cf_u8 tmp[4][4] =
@@ -115,6 +139,9 @@ static void cf_aes_inv_shift_rows(cf_u8 state[4][4])
     memcpy(state[i], tmp[i], sizeof (cf_u8) * 4);
 }
 
+/*
+ * Forward AES MixColumns transform using GF(2^8) multiplication from MATH.
+ */
 static void cf_aes_mix_columns(cf_u8 state[4][4])
 {
   for (cf_u8 i = 0; i < 4; i++)
@@ -148,6 +175,9 @@ static void cf_aes_mix_columns(cf_u8 state[4][4])
   }
 }
 
+/*
+ * Inverse AES MixColumns transform using the inverse coefficient table.
+ */
 static void cf_aes_inv_mix_columns(cf_u8 state[4][4])
 {
   for (cf_u8 i = 0; i < 4; i++)
@@ -181,6 +211,9 @@ static void cf_aes_inv_mix_columns(cf_u8 state[4][4])
   }
 }
 
+/*
+ * XOR one round-key word set into the AES state matrix.
+ */
 static void cf_aes_add_round_key(cf_u8 state[4][4], cf_u32 word[4])
 {
   for (cf_u8 i = 0; i < 4; i++)
@@ -192,6 +225,9 @@ static void cf_aes_add_round_key(cf_u8 state[4][4], cf_u32 word[4])
   }
 }
 
+/*
+ * Encrypt one 16-byte block using an initialized AES context.
+ */
 void cf_aes_encrypt_block(cf_aes *aes, cf_u8 dst[CF_AES_BLOCK_SIZE], const cf_u8 src[CF_AES_BLOCK_SIZE])
 {
   if(aes == CF_NULL || dst == CF_NULL || src == CF_NULL) return;
@@ -219,6 +255,9 @@ void cf_aes_encrypt_block(cf_aes *aes, cf_u8 dst[CF_AES_BLOCK_SIZE], const cf_u8
       dst[j * 4 + i] = state[i][j];
 }
 
+/*
+ * Decrypt one 16-byte block using an initialized AES context.
+ */
 void cf_aes_decrypt_block(cf_aes *aes, cf_u8 dst[CF_AES_BLOCK_SIZE], const cf_u8 src[CF_AES_BLOCK_SIZE])
 {
   if(aes == CF_NULL || dst == CF_NULL || src == CF_NULL) return;
@@ -246,6 +285,9 @@ void cf_aes_decrypt_block(cf_aes *aes, cf_u8 dst[CF_AES_BLOCK_SIZE], const cf_u8
       dst[j * 4 + i] = state[i][j];
 }
 
+/*
+ * Apply PKCS#7 padding to a mutable byte buffer for AES block processing.
+ */
 cf_status cf_aes_pkcs7_pad(cf_buffer *buffer)
 {
   if(buffer == CF_NULL) return CF_ERR_NULL;
@@ -258,6 +300,9 @@ cf_status cf_aes_pkcs7_pad(cf_buffer *buffer)
   return cf_buffer_append_bytes(buffer, bytes);
 }
 
+/*
+ * Validate and remove PKCS#7 padding after AES block processing.
+ */
 cf_status cf_aes_pkcs7_unpad(cf_buffer *buffer)
 {
   if(buffer == CF_NULL) return CF_ERR_NULL;

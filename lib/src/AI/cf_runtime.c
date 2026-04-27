@@ -18,5 +18,8 @@
 
 #include "AI/cf_runtime.h"
 
-/* suppress ISO C empty translation unit warning */
+/*
+ * AI runtime placeholder. Execution contexts, device selection, and graph
+ * evaluation policy should be implemented here.
+ */
 typedef int cf_runtime_placeholder;

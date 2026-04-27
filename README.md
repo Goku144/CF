@@ -13,7 +13,7 @@ context/        Project notes and diagrams
 lib/src/        Framework implementation files
 public/inc/     Public framework headers
 tests/src/      Test suite source
-public/doc/     Generated test output and crypto test artifacts
+public/doc/     Public documentation, generated test output, and crypto artifacts
 ```
 
 The public include tree mirrors the implementation tree:
@@ -31,11 +31,18 @@ TEXT/
 
 ## Build
 
-The project uses `gcc`, `make`, and `nasm`.
+The project uses `gcc`, `make`, and `nasm`. CUDA is optional.
 
-CUDA is optional. If `nvcc` is found, the build defines
-`CF_CUDA_AVAILABLE=1` and compiles `.cu` files with `nvcc`; otherwise the
-framework builds and runs with CPU tensor paths only.
+If `nvcc` is found on `PATH`, the build defines `CF_CUDA_AVAILABLE=1`, compiles
+`.cu` files with `nvcc`, and links with `nvcc`. Otherwise the framework builds
+and runs with CPU tensor paths only.
+
+If CUDA is installed but not on `PATH`, direct CUDA compilation can still work,
+for example:
+
+```sh
+/usr/local/cuda-13.2/bin/nvcc -O3 -Ipublic/inc -c lib/src/MATH/cf_tensor_cuda.cu -o /tmp/cf_tensor_cuda.o
+```
 
 Build the library objects:
 
@@ -124,51 +131,108 @@ Implemented math module:
 - `cf_math_rotl8` and `cf_math_rotr8`: 8-bit rotate helpers.
 - `cf_math_rotl32` and `cf_math_rotr32`: 32-bit rotate helpers.
 - `cf_math_min_usize` and `cf_math_max_usize`: `cf_usize` min/max helpers.
-- `cf_tensor`: dense CPU tensor initialization, destruction, validation,
-  element get/set, readable printing, elementwise addition, scalar
-  multiplication, and matrix multiplication.
+- `cf_tensor`: dense tensor validation, CPU lifecycle, CPU get/set, readable
+  CPU printing, CPU elementwise addition, CPU elementwise multiplication, CPU
+  scalar multiplication, and CPU matrix multiplication.
+- `cf_tensor_cuda`: CUDA tensor lifecycle, CUDA get/set, CPU/GPU transfer
+  helpers, CUDA elementwise addition, and unsupported placeholders for future
+  CUDA scalar multiply, elementwise multiply, and matrix multiplication.
 
 Tensor outputs are caller-owned. Initialize the output tensor with the expected
-shape before calling tensor operations, then release it with
-`cf_tensor_destroy`.
+shape before calling tensor operations.
+
+Tensor setup is now explicit:
+
+- `cf_tensor_init_cpu` creates CPU-backed tensors with `tensor.data`.
+- `cf_tensor_init_gpu` creates GPU-backed tensors with `tensor.device_data`.
+- `cf_tensor_to_gpu` uploads an existing CPU tensor to CUDA storage.
+- `cf_tensor_to_cpu` downloads an existing CUDA tensor to CPU storage.
+- `cf_tensor_destroy_cpu` frees CPU storage.
+- `cf_tensor_destroy_gpu` frees CUDA storage and any optional CPU mirror.
+
+The generic macros select the default backend:
+
+- CPU-only builds map `cf_tensor_init`, `cf_tensor_get`, `cf_tensor_set`,
+  `cf_tensor_destroy`, and math operations to CPU functions.
+- CUDA builds map those generic names to GPU functions.
+
+Important: in CUDA builds, code that writes directly through `tensor.data`
+should call `cf_tensor_init_cpu` explicitly.
 
 Example:
 
 ```c
 cf_tensor a, b, out;
 
-cf_tensor_init(&a, (cf_usize[]){1, 3, 0, 0, 0, 0, 0, 0}, 2, CF_TENSOR_DOUBLE);
-cf_tensor_init(&b, (cf_usize[]){3, 1, 0, 0, 0, 0, 0, 0}, 2, CF_TENSOR_DOUBLE);
-cf_tensor_init(&out, (cf_usize[]){1, 1, 0, 0, 0, 0, 0, 0}, 2, CF_TENSOR_DOUBLE);
+cf_tensor_init_cpu(&a, (cf_usize[]){1, 3, 0, 0, 0, 0, 0, 0}, 2, CF_TENSOR_DOUBLE);
+cf_tensor_init_cpu(&b, (cf_usize[]){3, 1, 0, 0, 0, 0, 0, 0}, 2, CF_TENSOR_DOUBLE);
+cf_tensor_init_cpu(&out, (cf_usize[]){1, 1, 0, 0, 0, 0, 0, 0}, 2, CF_TENSOR_DOUBLE);
 
 cf_tensor_matrice_mul(&a, &b, &out);
 cf_tensor_print(&out);
 
-cf_tensor_destroy(&a);
-cf_tensor_destroy(&b);
-cf_tensor_destroy(&out);
+cf_tensor_destroy_cpu(&a);
+cf_tensor_destroy_cpu(&b);
+cf_tensor_destroy_cpu(&out);
 ```
 
-CUDA tensor entry points are scaffolded for future kernels. They currently
-return `CF_ERR_UNSUPPORTED` rather than performing GPU work.
+CUDA currently supports tensor add for:
+
+```text
+char, short, int, long, long long,
+float, double,
+cf_u8, cf_u16, cf_u32, cf_u64
+```
+
+CUDA does not currently support `CF_TENSOR_LD` or `CF_TENSOR_U128`.
+
+CUDA scalar multiplication, elementwise multiplication, and matrix
+multiplication currently return `CF_ERR_UNSUPPORTED`. Future matrix
+multiplication should use cuBLAS for GEMM and cuTENSOR for general tensor
+contractions.
+
+## Documentation
+
+Public documentation lives under:
+
+```text
+public/doc/project/
+```
+
+Start here:
+
+```text
+public/doc/project/index.md
+```
+
+Available pages:
+
+- `project-hierarchy.md`: repository layout, implemented modules, placeholders,
+  and dependency direction.
+- `implemented-api.md`: function-by-function reference for implemented APIs.
+- `tensor-cuda.md`: tensor layout, CPU/GPU setup, CUDA behavior, and
+  performance notes.
+- `extension-guide.md`: how to add modules, functions, tests, and CUDA tensor
+  operations.
 
 ## Tests
 
 The test suite currently covers allocator, array, ASCII, string, hex, Base64,
-random, log, AES block vectors, AES PKCS#7 padding, file roundtrips, and type
-helpers.
+random, log, runtime error checks, math primitives, tensor CPU behavior, tensor
+CUDA declarations when compiled with CUDA support, AES block vectors, AES
+PKCS#7 padding, file roundtrips, and type helpers.
 
 Latest local test result:
 
 ```text
-Passed : 453
+Passed : 484
 Failed : 0
 ```
 
 The test report is written to:
 
 ```text
-public/doc/test.result.txt
+public/doc/test/test.result.txt
 ```
 
 AES padding file artifacts are written under:
@@ -210,9 +274,9 @@ The codebase still contains placeholder modules so the project structure can
 grow without changing layout later. These placeholders compile but do not expose
 real public APIs yet.
 
-Tensor GPU execution is not implemented yet. The public device enum and CUDA
-function declarations are present so CUDA kernels can be added without another
-public API reshuffle.
+Tensor GPU lifecycle, get/set, transfer helpers, and elementwise addition are
+implemented. More CUDA math kernels are intentionally still explicit
+`CF_ERR_UNSUPPORTED` placeholders.
 
 ## Not Implemented Yet
 
@@ -242,12 +306,20 @@ Security work still needed:
 - HMAC implementation.
 - Secure memory wiping and secret handling.
 
+CUDA tensor work still needed:
+
+- CUDA scalar multiplication kernel.
+- CUDA elementwise multiplication kernel.
+- cuBLAS-backed matrix multiplication.
+- cuTENSOR-backed tensor contraction/reduction paths.
+- CUB-backed reductions such as sum/min/max.
+
 Infrastructure work still needed:
 
 - Public API design for the placeholder modules.
 - Tests for every new module as it becomes real.
 - Better app examples beyond the current development/demo flow.
-- Documentation for each public header.
+- Keeping `public/doc/project/implemented-api.md` updated for each public API.
 
 ## License
 

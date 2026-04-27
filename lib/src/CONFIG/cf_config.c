@@ -18,5 +18,8 @@
 
 #include "CONFIG/cf_config.h"
 
-/* suppress ISO C empty translation unit warning */
+/*
+ * Shared configuration placeholder. Format-independent config loading and
+ * validation should be coordinated from this module.
+ */
 typedef int cf_config_placeholder;

@@ -18,5 +18,8 @@
 
 #include "AI/cf_tokenizer.h"
 
-/* suppress ISO C empty translation unit warning */
+/*
+ * AI tokenizer placeholder. Vocabulary loading, tokenization, and detokenizing
+ * utilities should be implemented here.
+ */
 typedef int cf_tokenizer_placeholder;

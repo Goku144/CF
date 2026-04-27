@@ -19,6 +19,11 @@
 #if !defined(CF_MODEL_H)
 #define CF_MODEL_H
 
-/* Model interfaces are not exposed yet. */
+/*
+ * Public AI model API placeholder.
+ *
+ * Model metadata, weights, and serialization declarations should be added here
+ * once the model layer is implemented.
+ */
 
 #endif /* CF_MODEL_H */

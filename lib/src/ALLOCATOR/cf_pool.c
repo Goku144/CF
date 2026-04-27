@@ -18,4 +18,8 @@
 
 #include "ALLOCATOR/cf_pool.h"
 
+/*
+ * Pool allocator placeholder. This module is reserved for fixed-size object
+ * reuse when framework subsystems need predictable allocation cost.
+ */
 typedef int cf_pool_placeholder;

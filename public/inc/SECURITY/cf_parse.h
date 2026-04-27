@@ -19,6 +19,10 @@
 #if !defined(CF_PARSE_H)
 #define CF_PARSE_H
 
-/* Parse interfaces are not exposed yet. */
+/*
+ * Public security parsing API placeholder.
+ *
+ * Key, certificate, or token parsing declarations should be added here.
+ */
 
 #endif /* CF_PARSE_H */

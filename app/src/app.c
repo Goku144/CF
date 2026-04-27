@@ -25,9 +25,9 @@ int main(void)
   cf_tensor a, b, cpu_out;
   cf_time_point start, end;
 
-  CF_LOG_INFO(cf_status_as_char(cf_tensor_init(&a, (cf_usize[]){CF_APP_TENSOR_ADD_LEN, 0, 0, 0, 0, 0, 0, 0}, 1, CF_TENSOR_DOUBLE)));
-  CF_LOG_INFO(cf_status_as_char(cf_tensor_init(&b, (cf_usize[]){CF_APP_TENSOR_ADD_LEN, 0, 0, 0, 0, 0, 0, 0}, 1, CF_TENSOR_DOUBLE)));
-  CF_LOG_INFO(cf_status_as_char(cf_tensor_init(&cpu_out, (cf_usize[]){CF_APP_TENSOR_ADD_LEN, 0, 0, 0, 0, 0, 0, 0}, 1, CF_TENSOR_DOUBLE)));
+  CF_LOG_INFO(cf_status_as_char(cf_tensor_init_cpu(&a, (cf_usize[]){CF_APP_TENSOR_ADD_LEN, 0, 0, 0, 0, 0, 0, 0}, 1, CF_TENSOR_DOUBLE)));
+  CF_LOG_INFO(cf_status_as_char(cf_tensor_init_cpu(&b, (cf_usize[]){CF_APP_TENSOR_ADD_LEN, 0, 0, 0, 0, 0, 0, 0}, 1, CF_TENSOR_DOUBLE)));
+  CF_LOG_INFO(cf_status_as_char(cf_tensor_init_cpu(&cpu_out, (cf_usize[]){CF_APP_TENSOR_ADD_LEN, 0, 0, 0, 0, 0, 0, 0}, 1, CF_TENSOR_DOUBLE)));
 
   for (cf_usize i = 0; i < CF_APP_TENSOR_ADD_LEN; i++)
   {
@@ -53,8 +53,8 @@ int main(void)
 
 #ifdef CF_CUDA_AVAILABLE
   cf_tensor gpu_out, gpu_fast_out;
-  CF_LOG_INFO(cf_status_as_char(cf_tensor_init(&gpu_out, (cf_usize[]){CF_APP_TENSOR_ADD_LEN, 0, 0, 0, 0, 0, 0, 0}, 1, CF_TENSOR_DOUBLE)));
-  CF_LOG_INFO(cf_status_as_char(cf_tensor_init(&gpu_fast_out, (cf_usize[]){CF_APP_TENSOR_ADD_LEN, 0, 0, 0, 0, 0, 0, 0}, 1, CF_TENSOR_DOUBLE)));
+  CF_LOG_INFO(cf_status_as_char(cf_tensor_init_cpu(&gpu_out, (cf_usize[]){CF_APP_TENSOR_ADD_LEN, 0, 0, 0, 0, 0, 0, 0}, 1, CF_TENSOR_DOUBLE)));
+  CF_LOG_INFO(cf_status_as_char(cf_tensor_init_cpu(&gpu_fast_out, (cf_usize[]){CF_APP_TENSOR_ADD_LEN, 0, 0, 0, 0, 0, 0, 0}, 1, CF_TENSOR_DOUBLE)));
 
   cf_time_now_mono(&start);
   cf_status gpu_status = cf_tensor_add_gpu(&a, &b, &gpu_out);

@@ -19,6 +19,11 @@
 #if !defined(CF_CBOR_H)
 #define CF_CBOR_H
 
-/* CBOR interfaces are not exposed yet. */
+/*
+ * Public CBOR config API placeholder.
+ *
+ * Binary configuration decoding/encoding declarations should be added here
+ * when the CBOR backend is implemented.
+ */
 
 #endif /* CF_CBOR_H */

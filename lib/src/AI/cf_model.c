@@ -18,5 +18,8 @@
 
 #include "AI/cf_model.h"
 
-/* suppress ISO C empty translation unit warning */
+/*
+ * AI model placeholder. Model metadata, weights, and serialization hooks should
+ * live here as the framework AI layer grows.
+ */
 typedef int cf_model_placeholder;

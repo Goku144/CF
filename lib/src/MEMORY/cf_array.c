@@ -22,6 +22,10 @@
 #include <stdarg.h>
 #include <string.h>
 
+/*
+ * Validate the generic array invariant shared by parser, text, and test code:
+ * NULL storage implies zero length/capacity, and live storage covers len.
+ */
 cf_bool cf_array_is_valid(cf_array *array)
 {
   if(array == CF_NULL) return CF_FALSE;
@@ -39,6 +43,9 @@ cf_bool cf_array_is_valid(cf_array *array)
   return CF_TRUE;
 }
 
+/*
+ * Compute the next element capacity for cf_array growth.
+ */
 static cf_usize cf_array_grow_size(cf_array *array, cf_usize required)
 {
   required = required < CF_MEMORY_GROWTH_SIZE ? 
@@ -52,6 +59,9 @@ static cf_usize cf_array_grow_size(cf_array *array, cf_usize required)
   return array->cap + required;
 }
 
+/*
+ * Initialize a generic array with the default framework allocator.
+ */
 cf_status cf_array_init(cf_array *array, cf_usize capacity)
 {
   if(array == CF_NULL) return CF_ERR_NULL;
@@ -69,6 +79,9 @@ cf_status cf_array_init(cf_array *array, cf_usize capacity)
   return CF_OK;
 }
 
+/*
+ * Ensure the array can hold at least capacity elements.
+ */
 cf_status cf_array_reserve(cf_array *array, cf_usize capacity)
 { 
   if(array == CF_NULL) return CF_ERR_NULL;
@@ -86,6 +99,9 @@ cf_status cf_array_reserve(cf_array *array, cf_usize capacity)
   return CF_OK;
 }
 
+/*
+ * Release array storage through its allocator and reset the object.
+ */
 void cf_array_destroy(cf_array *array)
 {
   if(array == CF_NULL) return;
@@ -98,12 +114,18 @@ void cf_array_destroy(cf_array *array)
   *array = (cf_array) {0};
 }
 
+/*
+ * Clear logical array contents while retaining capacity.
+ */
 void cf_array_reset(cf_array *array)
 {
   if(array == CF_NULL) return;
   array->len = 0;
 }
 
+/*
+ * Return the last array element without removing it.
+ */
 cf_status cf_array_peek(cf_array *array, cf_array_element *element)
 {
   if(array == CF_NULL || element == CF_NULL) return CF_ERR_NULL;
@@ -119,6 +141,9 @@ cf_status cf_array_peek(cf_array *array, cf_array_element *element)
   return CF_OK;
 }
 
+/*
+ * Push one or more cf_array_element values, ending the variadic list with NULL.
+ */
 cf_status cf_array_push(cf_array *array, cf_array_element *element, ...)
 {
   if(array == CF_NULL) return CF_ERR_NULL;
@@ -148,6 +173,9 @@ cf_status cf_array_push(cf_array *array, cf_array_element *element, ...)
   return CF_OK;
 }
 
+/*
+ * Remove and return the last array element.
+ */
 cf_status cf_array_pop(cf_array *array, cf_array_element *element)
 {
   cf_status state = cf_array_peek(array, element);
@@ -156,6 +184,9 @@ cf_status cf_array_pop(cf_array *array, cf_array_element *element)
   return CF_OK;
   }
 
+/*
+ * Read an array element by index.
+ */
 cf_status cf_array_get(cf_array *array, cf_usize index, cf_array_element *element)
 {
   if(array == CF_NULL || element == CF_NULL) return CF_ERR_NULL;
@@ -165,6 +196,9 @@ cf_status cf_array_get(cf_array *array, cf_usize index, cf_array_element *elemen
   return CF_OK;
 }
 
+/*
+ * Replace an array element by index.
+ */
 cf_status cf_array_set(cf_array *array, cf_usize index, cf_array_element *element)
 {
   if(array == CF_NULL || element == CF_NULL) return CF_ERR_NULL;
@@ -174,12 +208,18 @@ cf_status cf_array_set(cf_array *array, cf_usize index, cf_array_element *elemen
   return CF_OK;
 }
 
+/*
+ * Test whether the array currently has no logical elements.
+ */
 cf_bool cf_array_is_empty(cf_array *array)
 {
   if(array == CF_NULL || cf_array_is_valid(array) == CF_FALSE) return CF_FALSE;
   return array->len == 0;
 }
 
+/*
+ * Print array internals for debugging generic container state.
+ */
 void cf_array_info(cf_array *array)
 {
   if(array == CF_NULL)

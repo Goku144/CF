@@ -125,7 +125,8 @@ lib/bin/%.o: lib/src/%.cu
 test: runTests
 
 runTests: tests/build/test
-	@./$< > public/doc/test.result.txt 2>&1
+	@mkdir -p public/doc/test
+	@./$< > public/doc/test/test.result.txt 2>&1
 
 tests/build/test: tests/bin/test.o $(OBJS_C) $(OBJS_ASM) $(OBJS_CUDA)
 	@mkdir -p $(dir $@)

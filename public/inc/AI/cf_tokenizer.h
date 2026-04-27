@@ -19,6 +19,11 @@
 #if !defined(CF_TOKENIZER_H)
 #define CF_TOKENIZER_H
 
-/* Tokenizer interfaces are not exposed yet. */
+/*
+ * Public tokenizer API placeholder.
+ *
+ * Vocabulary, tokenization, and detokenization interfaces should be declared
+ * here once the text-to-token layer is implemented.
+ */
 
 #endif /* CF_TOKENIZER_H */

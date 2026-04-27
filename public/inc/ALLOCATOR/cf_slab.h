@@ -19,6 +19,11 @@
 #if !defined(CF_SLAB_H)
 #define CF_SLAB_H
 
-/* Slab allocator interfaces are not exposed yet. */
+/*
+ * Public slab allocator API placeholder.
+ *
+ * Size-class/slab allocation declarations should be added here when that
+ * allocator backend is implemented.
+ */
 
 #endif /* CF_SLAB_H */

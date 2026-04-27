@@ -18,4 +18,8 @@
 
 #include "ALLOCATOR/cf_arena.h"
 
+/*
+ * Arena allocator placeholder. This module is reserved for monotonic region
+ * allocation once the framework needs fast bulk-lifetime memory.
+ */
 typedef int cf_arena_placeholder;

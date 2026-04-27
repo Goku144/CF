@@ -22,6 +22,10 @@
 
 #include "TEXT/cf_ascii.h"
 
+/*
+ * Encode raw bytes as lowercase hexadecimal text for security and diagnostic
+ * serialization paths.
+ */
 cf_status cf_hex_encode(cf_string *dst, cf_bytes src)
 {
   if(dst == CF_NULL) return CF_ERR_NULL;
@@ -39,6 +43,10 @@ cf_status cf_hex_encode(cf_string *dst, cf_bytes src)
   return CF_OK;
 }
 
+/*
+ * Decode hexadecimal text into raw bytes, rejecting odd lengths and non-hex
+ * ASCII digits.
+ */
 cf_status cf_hex_decode(cf_buffer *dst, cf_string *src)
 {
   if(dst == CF_NULL || src == CF_NULL) return CF_ERR_NULL;

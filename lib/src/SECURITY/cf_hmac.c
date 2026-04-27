@@ -18,5 +18,8 @@
 
 #include "SECURITY/cf_hmac.h"
 
-/* suppress ISO C empty translation unit warning */
+/*
+ * HMAC API implementation placeholder. It keeps the security module layout
+ * stable until keyed-hash primitives are implemented.
+ */
 typedef int cf_hmac_placeholder;
