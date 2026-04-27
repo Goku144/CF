@@ -1,6 +1,7 @@
 #include "ALLOCATOR/cf_alloc.h"
 #include "ALLOCATOR/cf_alloc_debug.h"
 #include "MATH/cf_math.h"
+#include "MATH/cf_tensor.h"
 #include "MEMORY/cf_array.h"
 #include "RUNTIME/cf_io.h"
 #include "RUNTIME/cf_log.h"
@@ -1090,6 +1091,150 @@ static void test_cf_math_primitives(void)
 }
 
 /*******************************************************************************
+ * Tensor Tests
+ ******************************************************************************/
+static void test_cf_tensor_cpu_api(void)
+{
+  cf_tensor a = {0};
+  cf_tensor b = {0};
+  cf_tensor out = {0};
+  cf_tensor scalar_out = {0};
+  cf_tensor mat_a = {0};
+  cf_tensor mat_b = {0};
+  cf_tensor mat_out = {0};
+  cf_usize vec_dim[CF_TENSOR_HIGHEST_RANK] = {4, 0, 0, 0, 0, 0, 0, 0};
+  cf_usize mat_a_dim[CF_TENSOR_HIGHEST_RANK] = {2, 3, 0, 0, 0, 0, 0, 0};
+  cf_usize mat_b_dim[CF_TENSOR_HIGHEST_RANK] = {3, 2, 0, 0, 0, 0, 0, 0};
+  cf_usize mat_out_dim[CF_TENSOR_HIGHEST_RANK] = {2, 2, 0, 0, 0, 0, 0, 0};
+  cf_usize idx[CF_TENSOR_HIGHEST_RANK] = {0};
+  double value = 0.0;
+  double scalar = 2.0;
+
+  test_section("cf_tensor cpu api");
+
+  test_check(cf_tensor_init_cpu(&a, vec_dim, 1, CF_TENSOR_DOUBLE) == CF_OK, "tensor cpu init a succeeds");
+  test_check(cf_tensor_init_cpu(&b, vec_dim, 1, CF_TENSOR_DOUBLE) == CF_OK, "tensor cpu init b succeeds");
+  test_check(cf_tensor_init_cpu(&out, vec_dim, 1, CF_TENSOR_DOUBLE) == CF_OK, "tensor cpu init output succeeds");
+  test_check(cf_tensor_init_cpu(&scalar_out, vec_dim, 1, CF_TENSOR_DOUBLE) == CF_OK, "tensor cpu init scalar output succeeds");
+  test_check(cf_tensor_is_valid(&a) == CF_TRUE, "tensor cpu object is valid");
+  test_check(a.device == CF_TENSOR_DEVICE_CPU, "tensor cpu init marks CPU device");
+  test_check(a.metadata.len == 4, "tensor cpu len stores element count");
+  test_check(a.metadata.stride[0] == 1, "tensor cpu vector stride is one");
+
+  for(cf_usize i = 0; i < 4; i++)
+  {
+    idx[0] = i;
+    value = (double)(i + 1);
+    test_check(cf_tensor_set_cpu(&a, idx, &value) == CF_OK, "tensor set cpu writes a value");
+    value = (double)((i + 1) * 10);
+    test_check(cf_tensor_set_cpu(&b, idx, &value) == CF_OK, "tensor set cpu writes b value");
+  }
+
+  idx[0] = 2;
+  value = 0.0;
+  test_check(cf_tensor_get_cpu(&value, &a, idx) == CF_OK && value == 3.0, "tensor get cpu reads by logical index");
+  idx[0] = 4;
+  test_check(cf_tensor_get_cpu(&value, &a, idx) == CF_ERR_BOUNDS, "tensor get cpu rejects out-of-bounds index");
+
+  test_check(cf_tensor_add_cpu(&a, &b, &out) == CF_OK, "tensor add cpu succeeds");
+  test_check(((double *)out.data)[0] == 11.0 && ((double *)out.data)[3] == 44.0, "tensor add cpu computes expected values");
+
+  test_check(cf_tensor_mul_cpu(&a, &b, &out) == CF_OK, "tensor elementwise mul cpu succeeds");
+  test_check(((double *)out.data)[0] == 10.0 && ((double *)out.data)[3] == 160.0, "tensor elementwise mul cpu computes expected values");
+
+  test_check(cf_tensor_scalar_mul_cpu(&a, &scalar, &scalar_out) == CF_OK, "tensor scalar mul cpu succeeds");
+  test_check(((double *)scalar_out.data)[0] == 2.0 && ((double *)scalar_out.data)[3] == 8.0, "tensor scalar mul cpu computes expected values");
+
+  test_check(cf_tensor_init_cpu(&mat_a, mat_a_dim, 2, CF_TENSOR_DOUBLE) == CF_OK, "matrix tensor a init succeeds");
+  test_check(cf_tensor_init_cpu(&mat_b, mat_b_dim, 2, CF_TENSOR_DOUBLE) == CF_OK, "matrix tensor b init succeeds");
+  test_check(cf_tensor_init_cpu(&mat_out, mat_out_dim, 2, CF_TENSOR_DOUBLE) == CF_OK, "matrix tensor output init succeeds");
+
+  ((double *)mat_a.data)[0] = 1.0;
+  ((double *)mat_a.data)[1] = 2.0;
+  ((double *)mat_a.data)[2] = 3.0;
+  ((double *)mat_a.data)[3] = 4.0;
+  ((double *)mat_a.data)[4] = 5.0;
+  ((double *)mat_a.data)[5] = 6.0;
+
+  ((double *)mat_b.data)[0] = 7.0;
+  ((double *)mat_b.data)[1] = 8.0;
+  ((double *)mat_b.data)[2] = 9.0;
+  ((double *)mat_b.data)[3] = 10.0;
+  ((double *)mat_b.data)[4] = 11.0;
+  ((double *)mat_b.data)[5] = 12.0;
+
+  test_check(cf_tensor_matrix_mul_cpu(&mat_a, &mat_b, &mat_out) == CF_OK, "matrix multiplication cpu succeeds");
+  test_check(
+    ((double *)mat_out.data)[0] == 58.0 &&
+    ((double *)mat_out.data)[1] == 64.0 &&
+    ((double *)mat_out.data)[2] == 139.0 &&
+    ((double *)mat_out.data)[3] == 154.0,
+    "matrix multiplication cpu computes expected values"
+  );
+
+#ifndef CF_CUDA_AVAILABLE
+  {
+    cf_tensor macro_tensor = {0};
+    test_check(cf_tensor_init(&macro_tensor, vec_dim, 1, CF_TENSOR_DOUBLE) == CF_OK, "tensor macro init maps to cpu without CUDA");
+    test_check(macro_tensor.device == CF_TENSOR_DEVICE_CPU && macro_tensor.data != CF_NULL, "tensor macro cpu init allocates host storage");
+    cf_tensor_destroy(&macro_tensor);
+  }
+#endif
+
+  cf_tensor_destroy_cpu(&mat_out);
+  cf_tensor_destroy_cpu(&mat_b);
+  cf_tensor_destroy_cpu(&mat_a);
+  cf_tensor_destroy_cpu(&scalar_out);
+  cf_tensor_destroy_cpu(&out);
+  cf_tensor_destroy_cpu(&b);
+  cf_tensor_destroy_cpu(&a);
+}
+
+#ifdef CF_CUDA_AVAILABLE
+static void test_cf_tensor_cuda_api(void)
+{
+  cf_tensor a = {0};
+  cf_tensor b = {0};
+  cf_tensor out = {0};
+  cf_tensor unsupported = {0};
+  cf_usize dim[CF_TENSOR_HIGHEST_RANK] = {4, 0, 0, 0, 0, 0, 0, 0};
+  cf_usize idx[CF_TENSOR_HIGHEST_RANK] = {0};
+  double value = 0.0;
+  double read = 0.0;
+
+  test_section("cf_tensor cuda api");
+
+  test_check(cf_tensor_init_gpu(&a, dim, 1, CF_TENSOR_DOUBLE) == CF_OK, "tensor gpu init a succeeds");
+  test_check(cf_tensor_init_gpu(&b, dim, 1, CF_TENSOR_DOUBLE) == CF_OK, "tensor gpu init b succeeds");
+  test_check(cf_tensor_init_gpu(&out, dim, 1, CF_TENSOR_DOUBLE) == CF_OK, "tensor gpu init output succeeds");
+  test_check(a.device == CF_TENSOR_DEVICE_CUDA && a.device_data != CF_NULL && a.data == CF_NULL, "tensor gpu init creates device-only storage");
+  test_check(cf_tensor_init_gpu(&unsupported, dim, 1, CF_TENSOR_LD) == CF_ERR_UNSUPPORTED, "tensor gpu init rejects unsupported long double");
+
+  for(cf_usize i = 0; i < 4; i++)
+  {
+    idx[0] = i;
+    value = (double)(i + 1);
+    test_check(cf_tensor_set_gpu(&a, idx, &value) == CF_OK, "tensor set gpu writes a value");
+    value = (double)((i + 1) * 10);
+    test_check(cf_tensor_set_gpu(&b, idx, &value) == CF_OK, "tensor set gpu writes b value");
+  }
+
+  idx[0] = 2;
+  test_check(cf_tensor_get_gpu(&read, &a, idx) == CF_OK && read == 3.0, "tensor get gpu reads a value");
+  test_check(cf_tensor_add_gpu(&a, &b, &out) == CF_OK, "tensor add gpu succeeds");
+  test_check(cf_tensor_to_cpu(&out) == CF_OK, "tensor gpu output copies to cpu");
+  test_check(((double *)out.data)[0] == 11.0 && ((double *)out.data)[3] == 44.0, "tensor add gpu computes expected values");
+  test_check(cf_tensor_mul_gpu(&a, &b, &out) == CF_ERR_UNSUPPORTED, "tensor mul gpu reports unsupported placeholder");
+  test_check(cf_tensor_scalar_mul_gpu(&a, &value, &out) == CF_ERR_UNSUPPORTED, "tensor scalar mul gpu reports unsupported placeholder");
+  test_check(cf_tensor_matrix_mul_gpu(&a, &b, &out) == CF_ERR_UNSUPPORTED, "tensor matrix mul gpu reports unsupported placeholder");
+
+  cf_tensor_destroy_gpu(&out);
+  cf_tensor_destroy_gpu(&b);
+  cf_tensor_destroy_gpu(&a);
+}
+#endif
+
+/*******************************************************************************
  * Runtime Type Tests
  ******************************************************************************/
 static void test_cf_types_native_groups(void)
@@ -1324,6 +1469,10 @@ int main(void)
   test_cf_log_api();
   test_cf_runtime_error_checks();
   test_cf_math_primitives();
+  test_cf_tensor_cpu_api();
+#ifdef CF_CUDA_AVAILABLE
+  test_cf_tensor_cuda_api();
+#endif
   test_cf_aes_block_vectors();
   test_cf_aes_pkcs7_padding();
   test_cf_aes_pkcs7_file_roundtrip();

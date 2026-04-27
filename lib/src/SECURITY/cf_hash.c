@@ -18,5 +18,8 @@
 
 #include "SECURITY/cf_hash.h"
 
-/* suppress ISO C empty translation unit warning */
+/*
+ * Hash API implementation placeholder. The public module exists so callers can
+ * include the security surface now while concrete hash algorithms are added.
+ */
 typedef int cf_hash_placeholder;

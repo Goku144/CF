@@ -18,6 +18,10 @@
 
 #include "RUNTIME/cf_types.h"
 
+/*
+ * Classify a byte width into the native size groups used by diagnostics and
+ * generic container metadata.
+ */
 cf_native_group cf_types_type_size(cf_usize type_size)
 {
   switch(type_size)
@@ -31,6 +35,9 @@ cf_native_group cf_types_type_size(cf_usize type_size)
   }
 }
 
+/*
+ * Return a readable description of a native size group for debug printers.
+ */
 const char *cf_types_as_char(cf_usize type_size)
 {
   switch(cf_types_type_size(type_size))

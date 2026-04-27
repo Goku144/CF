@@ -18,4 +18,8 @@
 
 #include "ALLOCATOR/cf_slab.h"
 
+/*
+ * Slab allocator placeholder. Future slab classes should live behind this
+ * module so containers can opt into size-class allocation cleanly.
+ */
 typedef int cf_slab_placeholder;

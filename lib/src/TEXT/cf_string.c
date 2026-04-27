@@ -27,6 +27,10 @@
 #include <string.h>
 
 
+/*
+ * Validate the cf_string invariant: it is a byte buffer with spare capacity for
+ * a trailing null terminator at data[len].
+ */
 cf_bool cf_string_is_valid(cf_string *str)
 {
   if(str == CF_NULL) return CF_FALSE;
@@ -45,6 +49,9 @@ cf_bool cf_string_is_valid(cf_string *str)
   return CF_TRUE;
 }
 
+/*
+ * Initialize a string with capacity for user bytes plus a terminator.
+ */
 cf_status cf_string_init(cf_string *str, cf_usize capacity)
 {
   if(str == CF_NULL) return CF_ERR_NULL;
@@ -56,6 +63,9 @@ cf_status cf_string_init(cf_string *str, cf_usize capacity)
   return CF_OK;
 }
 
+/*
+ * Reserve user-visible string capacity while preserving the terminator slot.
+ */
 cf_status cf_string_reserve(cf_string *str, cf_usize capacity)
 {
   if(str == CF_NULL) return CF_ERR_NULL;
@@ -68,6 +78,9 @@ cf_status cf_string_reserve(cf_string *str, cf_usize capacity)
   return CF_OK;
 }
 
+/*
+ * Clear logical string contents and keep existing allocation for reuse.
+ */
 void cf_string_reset(cf_string *str)
 {
   if(str == CF_NULL) return;
@@ -76,12 +89,18 @@ void cf_string_reset(cf_string *str)
     str->data[str->len] = '\0';
 }
 
+/*
+ * Release string storage through the underlying buffer allocator.
+ */
 void cf_string_destroy(cf_string *str)
 {
   if(str == CF_NULL) return;
   cf_buffer_destroy(str);
 }
 
+/*
+ * Append one character and restore null termination.
+ */
 cf_status cf_string_append_char(cf_string *dst, char c)
 {
   if(dst == CF_NULL) return CF_ERR_NULL;
@@ -98,6 +117,9 @@ cf_status cf_string_append_char(cf_string *dst, char c)
   return CF_OK;
 }
 
+/*
+ * Append a null-terminated C string into a framework string.
+ */
 cf_status cf_string_append_cstr(cf_string *dst, char *c)
 {
   if(dst == CF_NULL || c == CF_NULL) return CF_ERR_NULL;
@@ -114,6 +136,9 @@ cf_status cf_string_append_cstr(cf_string *dst, char *c)
   return CF_OK;
 }
 
+/*
+ * Append one framework string to another without retaining source storage.
+ */
 cf_status cf_string_append_str(cf_string *dst, cf_string *src)
 {
   if(dst == CF_NULL || src == CF_NULL) return CF_ERR_NULL;
@@ -130,6 +155,9 @@ cf_status cf_string_append_str(cf_string *dst, cf_string *src)
   return CF_OK;
 }
 
+/*
+ * Replace a framework string's contents from a null-terminated C string.
+ */
 cf_status cf_string_from_cstr(cf_string *dst, char *src)
 {
   if(dst == CF_NULL || src == CF_NULL) return CF_ERR_NULL;
@@ -147,6 +175,9 @@ cf_status cf_string_from_cstr(cf_string *dst, char *src)
   return CF_OK;
 }
 
+/*
+ * Allocate and copy a framework string into an owned C string for interop.
+ */
 cf_status cf_string_as_cstr(char **cdst, cf_string *src)
 {
   if(cdst == CF_NULL || src == CF_NULL) return CF_ERR_NULL;
@@ -159,6 +190,9 @@ cf_status cf_string_as_cstr(char **cdst, cf_string *src)
   return CF_OK;
 }
 
+/*
+ * Truncate a string to a checked length and maintain null termination.
+ */
 cf_status cf_string_trunc(cf_string *str, cf_usize len)
 {
   if(str == CF_NULL) return CF_ERR_NULL;
@@ -170,12 +204,18 @@ cf_status cf_string_trunc(cf_string *str, cf_usize len)
   return CF_OK;
 }
 
+/*
+ * Test whether a valid string currently contains no user bytes.
+ */
 cf_bool cf_string_is_empty(cf_string *str)
 {
   if(str == CF_NULL || cf_string_is_valid(str) == CF_FALSE) return CF_FALSE;
   return str->len == 0;
 }
 
+/*
+ * Print string internals for debugging allocator, capacity, and content state.
+ */
 void cf_string_info(cf_string *str)
 {
   if(str == CF_NULL)
@@ -220,6 +260,9 @@ printf(
   );
 }
 
+/*
+ * Compare two valid framework strings by length and byte content.
+ */
 cf_bool cf_string_eq(cf_string *str1, cf_string *str2)
 {
   if(str1 == CF_NULL || str2 == CF_NULL) return CF_FALSE;
@@ -231,6 +274,9 @@ cf_bool cf_string_eq(cf_string *str1, cf_string *str2)
   return memcmp(str1->data, str2->data, str1->len) == 0;
 }
 
+/*
+ * Search for one character inside a valid framework string.
+ */
 cf_bool cf_string_contains_char(cf_string *str, char c)
 {
   if(str == CF_NULL || cf_string_is_valid(str) == CF_FALSE) return CF_FALSE;
@@ -239,6 +285,9 @@ cf_bool cf_string_contains_char(cf_string *str, char c)
   return CF_FALSE;
 }
 
+/*
+ * Search for a C-string fragment inside a framework string.
+ */
 cf_bool cf_string_contains_cstr(cf_string *str, char *c)
 {
   if(str == CF_NULL || c == CF_NULL || cf_string_is_valid(str) == CF_FALSE) return CF_FALSE;
@@ -247,6 +296,9 @@ cf_bool cf_string_contains_cstr(cf_string *str, char *c)
   return CF_FALSE;
 }
 
+/*
+ * Search for one framework string inside another.
+ */
 cf_bool cf_string_contains_str(cf_string *str1, cf_string *str2)
 {
   if(str1 == CF_NULL || str2 == CF_NULL) return CF_FALSE;
@@ -260,6 +312,9 @@ cf_bool cf_string_contains_str(cf_string *str1, cf_string *str2)
   return CF_FALSE;
 }
 
+/*
+ * Read one character by checked index.
+ */
 cf_status cf_string_char_at(cf_string *str, cf_usize index, char *c)
 {
   if(str == CF_NULL || c == CF_NULL) return CF_ERR_NULL;
@@ -270,6 +325,9 @@ cf_status cf_string_char_at(cf_string *str, cf_usize index, char *c)
   return CF_OK;
 }
 
+/*
+ * Allocate and copy the suffix that begins at index.
+ */
 cf_status cf_string_str_at(cf_string *str, cf_usize index, char **c)
 {
   if(str == CF_NULL || c == CF_NULL) return CF_ERR_NULL;
@@ -283,6 +341,9 @@ cf_status cf_string_str_at(cf_string *str, cf_usize index, char **c)
   return CF_OK;
 }
 
+/*
+ * Remove leading ASCII whitespace in place.
+ */
 cf_status cf_string_trim_left(cf_string *str)
 {
   if(str == CF_NULL) return CF_ERR_NULL;
@@ -297,6 +358,9 @@ cf_status cf_string_trim_left(cf_string *str)
   return CF_OK;
 }
 
+/*
+ * Remove trailing ASCII whitespace in place.
+ */
 cf_status cf_string_trim_right(cf_string *str)
 {
   if(str == CF_NULL) return CF_ERR_NULL;
@@ -311,6 +375,9 @@ cf_status cf_string_trim_right(cf_string *str)
   return CF_OK;
 }
 
+/*
+ * Remove leading and trailing ASCII whitespace in place.
+ */
 cf_status cf_string_trim(cf_string *str)
 {
   cf_status state = cf_string_trim_right(str);
@@ -318,6 +385,9 @@ cf_status cf_string_trim(cf_string *str)
   return cf_string_trim_left(str);
 }
 
+/*
+ * Remove all ASCII whitespace from a string in place.
+ */
 cf_status cf_string_strip(cf_string *str)
 {
   if(str == CF_NULL) return CF_ERR_NULL;
@@ -338,6 +408,9 @@ cf_status cf_string_strip(cf_string *str)
   return CF_OK;
 }
 
+/*
+ * Replace all occurrences of one character in place.
+ */
 cf_status cf_string_replace(cf_string *str, char targetc, char newc)
 {
   if(str == CF_NULL) return CF_ERR_NULL;
@@ -354,6 +427,9 @@ cf_status cf_string_replace(cf_string *str, char targetc, char newc)
   return CF_OK;
 }
 
+/*
+ * Allocate and copy an inclusive string slice.
+ */
 cf_status cf_string_slice(char **dst, cf_string *src, cf_usize start, cf_usize end)
 {
   if(dst == CF_NULL || src == CF_NULL) return CF_ERR_NULL;
@@ -369,6 +445,9 @@ cf_status cf_string_slice(char **dst, cf_string *src, cf_usize start, cf_usize e
   return CF_OK;
 }
 
+/*
+ * Split a string by one delimiter into an array of allocated C-string elements.
+ */
 cf_status cf_string_split(cf_array *dst, cf_string *src, char c)
 {
   if(dst == CF_NULL || src == CF_NULL) return CF_ERR_NULL;

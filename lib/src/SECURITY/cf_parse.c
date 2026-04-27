@@ -18,5 +18,8 @@
 
 #include "SECURITY/cf_parse.h"
 
-/* suppress ISO C empty translation unit warning */
+/*
+ * Security parsing placeholder. Future certificate/key/token parsers should
+ * live behind this module boundary.
+ */
 typedef int cf_parse_placeholder;

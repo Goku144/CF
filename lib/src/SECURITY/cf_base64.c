@@ -23,6 +23,9 @@
 
 
 
+/*
+ * Validate one non-padding base64 alphabet byte.
+ */
 static cf_bool cf_base64_is_char(cf_u8 c)
 {
   return (c >= 'A' && c <= 'Z') ||
@@ -32,6 +35,10 @@ static cf_bool cf_base64_is_char(cf_u8 c)
          c == '/';
 }
 
+/*
+ * Encode raw bytes as base64 text. This is used by security/file formats that
+ * need binary data carried through text-only channels.
+ */
 cf_status cf_base64_encode(cf_string *dst, cf_bytes src)
 {
   if(dst == CF_NULL) return CF_ERR_NULL;
@@ -69,6 +76,9 @@ cf_status cf_base64_encode(cf_string *dst, cf_bytes src)
   return CF_OK;
 }
 
+/*
+ * Decode base64 text into raw bytes and validate padding placement.
+ */
 cf_status cf_base64_decode(cf_buffer *dst, cf_string *src)
 {
   if(dst == CF_NULL || src == CF_NULL) return CF_ERR_NULL;

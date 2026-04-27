@@ -19,6 +19,11 @@
 #if !defined(CF_ARENA_H)
 #define CF_ARENA_H
 
-/* Arena allocator interfaces are not exposed yet. */
+/*
+ * Public arena allocator API placeholder.
+ *
+ * Monotonic region-allocation declarations should be added here when the arena
+ * allocator is implemented.
+ */
 
 #endif /* CF_ARENA_H */

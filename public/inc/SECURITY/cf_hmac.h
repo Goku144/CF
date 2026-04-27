@@ -19,6 +19,10 @@
 #if !defined(CF_HMAC_H)
 #define CF_HMAC_H
 
-/* HMAC interfaces are not exposed yet. */
+/*
+ * Public HMAC API placeholder.
+ *
+ * Keyed-hash declarations should be added here once hash primitives exist.
+ */
 
 #endif /* CF_HMAC_H */

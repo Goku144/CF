@@ -18,5 +18,8 @@
 
 #include "CONFIG/cf_json.h"
 
-/* suppress ISO C empty translation unit warning */
+/*
+ * JSON configuration placeholder. Text configuration parsing should be added
+ * here so JSON-specific code does not leak into the generic config layer.
+ */
 typedef int cf_json_placeholder;

@@ -18,5 +18,8 @@
 
 #include "SECURITY/cf_secure_mem.h"
 
-/* suppress ISO C empty translation unit warning */
+/*
+ * Secure-memory placeholder. This module is reserved for explicit zeroing,
+ * guarded allocation, and secret-handling helpers.
+ */
 typedef int cf_secure_mem_placeholder;

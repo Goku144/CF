@@ -24,12 +24,20 @@
 #include <stdio.h>
 #include <sys/stat.h>
 
+/*
+ * Lightweight filesystem existence check used before higher-level read/write
+ * flows decide whether a missing resource is expected.
+ */
 cf_bool cf_io_exists(const char *path)
 {
   if(path == CF_NULL) return CF_FALSE;
   return access(path, F_OK) == 0;
 }
 
+/*
+ * Query file size through stat and translate metadata failures into framework
+ * IO status codes.
+ */
 cf_status cf_io_file_size(const char *path, cf_usize *size)
 {
   if(path == CF_NULL || size == CF_NULL) return CF_ERR_NULL;
@@ -41,6 +49,10 @@ cf_status cf_io_file_size(const char *path, cf_usize *size)
   return CF_OK;
 }
 
+/*
+ * Read all bytes from an open descriptor into a cf_buffer. This is the common
+ * low-level loop behind binary and text file readers.
+ */
 cf_status cf_io_read_fd(cf_buffer *dst, int fd)
 {
   if(dst == CF_NULL) return CF_ERR_NULL;
@@ -66,6 +78,10 @@ cf_status cf_io_read_fd(cf_buffer *dst, int fd)
   }
 }
 
+/*
+ * Write an entire cf_bytes view to an open descriptor, retrying interrupted
+ * writes and preserving partial-write correctness.
+ */
 cf_status cf_io_write_fd(int fd, cf_bytes src)
 {
   if(fd < 0) return CF_ERR_IO_WRITE;
@@ -87,6 +103,10 @@ cf_status cf_io_write_fd(int fd, cf_bytes src)
   return CF_OK;
 }
 
+/*
+ * Open and read a binary file into a framework byte buffer, creating the buffer
+ * storage lazily when the caller passes an empty object.
+ */
 cf_status cf_io_read_file(cf_buffer *dst, const char *path)
 {
   if(dst == CF_NULL || path == CF_NULL) return CF_ERR_NULL;
@@ -114,6 +134,9 @@ cf_status cf_io_read_file(cf_buffer *dst, const char *path)
   return CF_OK;
 }
 
+/*
+ * Replace or create a binary file from a cf_bytes view.
+ */
 cf_status cf_io_write_file(const char *path, cf_bytes src)
 {
   if(path == CF_NULL) return CF_ERR_NULL;
@@ -136,6 +159,9 @@ cf_status cf_io_write_file(const char *path, cf_bytes src)
   return CF_OK;
 }
 
+/*
+ * Append a cf_bytes view to a binary file, creating it when it does not exist.
+ */
 cf_status cf_io_append_file(const char *path, cf_bytes src)
 {
   if(path == CF_NULL) return CF_ERR_NULL;
@@ -158,6 +184,10 @@ cf_status cf_io_append_file(const char *path, cf_bytes src)
   return CF_OK;
 }
 
+/*
+ * Read a text file into a cf_string and keep it null-terminated for callers
+ * that need C-string interop.
+ */
 cf_status cf_io_read_text(cf_string *dst, const char *path)
 {
   if(dst == CF_NULL || path == CF_NULL) return CF_ERR_NULL;
@@ -186,6 +216,9 @@ cf_status cf_io_read_text(cf_string *dst, const char *path)
   return CF_OK;
 }
 
+/*
+ * Replace or create a text file from a valid framework string.
+ */
 cf_status cf_io_write_text(const char *path, cf_string *src)
 {
   if(path == CF_NULL || src == CF_NULL) return CF_ERR_NULL;
@@ -207,6 +240,10 @@ cf_status cf_io_write_text(const char *path, cf_string *src)
   return CF_OK;
 }
 
+/*
+ * Append a framework string to a text file, preserving the string length rather
+ * than relying on null termination.
+ */
 cf_status cf_io_append_text(const char *path, cf_string *src)
 {
   if(path == CF_NULL || src == CF_NULL) return CF_ERR_NULL;

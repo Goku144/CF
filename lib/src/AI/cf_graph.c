@@ -18,5 +18,8 @@
 
 #include "AI/cf_graph.h"
 
-/* suppress ISO C empty translation unit warning */
+/*
+ * AI graph placeholder. Future compute graph nodes, edges, and scheduling
+ * helpers should be implemented here.
+ */
 typedef int cf_graph_placeholder;

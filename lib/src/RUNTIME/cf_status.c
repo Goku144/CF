@@ -29,6 +29,10 @@ typedef struct cf_status_desc
   const char *readable;
 } cf_status_desc;
 
+/*
+ * Status description table for the framework error bitset. Each entry keeps
+ * the symbolic API name beside a human-readable diagnostic string.
+ */
 static const cf_status_desc CF_STATUS_DESC[] =
 {
   {CF_ERR_NULL, "CF_ERR_NULL", "A required pointer argument was NULL."},
@@ -63,6 +67,10 @@ static const cf_status_desc CF_STATUS_DESC[] =
   {CF_ERR_CUDA_SYNC, "CF_ERR_CUDA_SYNC", "Synchronizing CUDA work failed."},
 };
 
+/*
+ * Compose single or combined status flags into a stable static string buffer.
+ * Multiple buffers allow nested logging calls to print more than one status.
+ */
 static const char *cf_status_compose(cf_status state, cf_bool use_readable)
 {
   static char buffers[4][512];
@@ -115,6 +123,9 @@ static const char *cf_status_compose(cf_status state, cf_bool use_readable)
   return buffer;
 }
 
+/*
+ * Public symbolic status formatter used throughout logs, tests, and examples.
+ */
 const char *cf_status_as_char(cf_status state)
 {
   return cf_status_compose(state, CF_FALSE);

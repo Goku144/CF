@@ -22,6 +22,10 @@
 #include <stdlib.h>
 #include <stdio.h>
 
+/*
+ * Debug allocator allocation hook. It forwards to the wrapped allocator while
+ * tracking live pointer counts and allocation failures.
+ */
 static void *cf_alloc_debug_alloc(void *ctx, cf_usize size)
 {
   if(ctx == CF_NULL) return CF_NULL;
@@ -49,6 +53,10 @@ static void *cf_alloc_debug_alloc(void *ctx, cf_usize size)
   return ptr;
 }
 
+/*
+ * Debug allocator reallocation hook. Only pointers known to the tracker are
+ * accepted so invalid realloc attempts are visible.
+ */
 static void *cf_alloc_debug_realloc(void *ctx, void *ptr, cf_usize size)
 {
   if(ctx == CF_NULL) return CF_NULL;
@@ -71,6 +79,10 @@ static void *cf_alloc_debug_realloc(void *ctx, void *ptr, cf_usize size)
   return CF_NULL;
 }
 
+/*
+ * Debug allocator free hook. It removes tracked pointers and records invalid
+ * frees against the wrapped allocator.
+ */
 static void cf_alloc_debug_free(void *ctx, void *ptr)
 {
   if(ctx == CF_NULL) return;
@@ -107,6 +119,10 @@ static void cf_alloc_debug_free(void *ctx, void *ptr)
 }
 
 
+/*
+ * Create the debug allocator state and callback table before it is bound to a
+ * concrete allocator by cf_alloc_debug_new.
+ */
 static cf_alloc_debug cf_alloc_debug_create(void)
 {
   cf_alloc_debug alloc_debug = {0};
@@ -120,6 +136,10 @@ static cf_alloc_debug cf_alloc_debug_create(void)
   return alloc_debug;
 }
 
+/*
+ * Wrap an allocator with debug accounting and attach a human-readable statement
+ * used in diagnostic logs.
+ */
 void cf_alloc_debug_new(cf_alloc_debug *alloc_debug, cf_alloc *alloc, char* statement)
 {
   if (alloc_debug == CF_NULL || alloc == CF_NULL) return;
@@ -131,6 +151,9 @@ void cf_alloc_debug_new(cf_alloc_debug *alloc_debug, cf_alloc *alloc, char* stat
   alloc_debug->statement = statement == CF_NULL ? "NO STATEMENT DECLARED" : statement;
 }
 
+/*
+ * Print allocator accounting for tests and leak/invalid-free diagnostics.
+ */
 void cf_alloc_debug_log(cf_alloc_debug *debug, int line)
 {
   if(debug == CF_NULL) return;

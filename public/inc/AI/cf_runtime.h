@@ -19,6 +19,11 @@
 #if !defined(CF_RUNTIME_H)
 #define CF_RUNTIME_H
 
-/* AI runtime interfaces are not exposed yet. */
+/*
+ * Public AI runtime API placeholder.
+ *
+ * Runtime execution contexts and device policy declarations should live here
+ * when graph/model execution becomes public.
+ */
 
 #endif /* CF_RUNTIME_H */

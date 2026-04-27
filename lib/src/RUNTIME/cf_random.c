@@ -21,6 +21,10 @@
 #include <errno.h>
 #include <sys/random.h>
 
+/*
+ * Fill caller-owned memory with kernel-provided random bytes. Security and test
+ * modules use this wrapper so entropy failures become cf_status values.
+ */
 cf_status cf_random_bytes(void *dst, cf_usize len)
 {
   if(len == 0) return CF_OK;
@@ -44,11 +48,17 @@ cf_status cf_random_bytes(void *dst, cf_usize len)
   return CF_OK;
 }
 
+/*
+ * Convenience wrapper for one random 32-bit framework integer.
+ */
 cf_status cf_random_u32(cf_u32 *dst)
 {
   return cf_random_bytes(dst, sizeof(*dst));
 }
 
+/*
+ * Convenience wrapper for one random 64-bit framework integer.
+ */
 cf_status cf_random_u64(cf_u64 *dst)
 {
   return cf_random_bytes(dst, sizeof(*dst));

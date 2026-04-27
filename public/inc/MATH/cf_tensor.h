@@ -112,26 +112,26 @@ cf_bool cf_tensor_is_valid(cf_tensor *tensor);
  * @return `CF_OK` on success, `CF_ERR_NULL`, `CF_ERR_INVALID`,
  * `CF_ERR_OVERFLOW`, or `CF_ERR_OOM`.
  */
-cf_status cf_tensor_init(cf_tensor *tensor, cf_usize dim[CF_TENSOR_HIGHEST_RANK], cf_usize rank, cf_tensor_type elem_type);
+cf_status cf_tensor_init_cpu(cf_tensor *tensor, cf_usize dim[CF_TENSOR_HIGHEST_RANK], cf_usize rank, cf_tensor_type elem_type);
 
 /**
  * Release tensor storage and reset the tensor to zero.
  */
-void cf_tensor_destroy(cf_tensor *tensor);
+void cf_tensor_destroy_cpu(cf_tensor *tensor);
 
 /**
  * Read one element from `tensor` into `out_value`.
  *
  * `indexs` must contain one coordinate for every active rank dimension.
  */
-cf_status cf_tensor_get(void *out_value, cf_tensor *tensor, cf_usize indexs[CF_TENSOR_HIGHEST_RANK]);
+cf_status cf_tensor_get_cpu(void *out_value, cf_tensor *tensor, cf_usize indexs[CF_TENSOR_HIGHEST_RANK]);
 
 /**
  * Write one element into `tensor`.
  *
  * `indexs` must contain one coordinate for every active rank dimension.
  */
-cf_status cf_tensor_set(cf_tensor *tensor, cf_usize indexs[CF_TENSOR_HIGHEST_RANK], void *value);
+cf_status cf_tensor_set_cpu(cf_tensor *tensor, cf_usize indexs[CF_TENSOR_HIGHEST_RANK], void *value);
 
 /**
  * Print a tensor to stdout in a readable nested matrix form.
@@ -146,6 +146,8 @@ void cf_tensor_print(cf_tensor *tensor);
  */
 cf_status cf_tensor_add_cpu(cf_tensor *t1, cf_tensor *t2, cf_tensor *t_out);
 
+cf_status cf_tensor_mul_cpu(cf_tensor *t1, cf_tensor *t2, cf_tensor *t_out);
+
 cf_status cf_tensor_scalar_mul_cpu(cf_tensor *t1, void *scalar, cf_tensor *t_out);
 
 cf_status cf_tensor_matrix_mul_cpu(cf_tensor *t1, cf_tensor *t2, cf_tensor *t_out);
@@ -158,6 +160,14 @@ cf_status cf_tensor_matrix_mul_cpu(cf_tensor *t1, cf_tensor *t2, cf_tensor *t_ou
  * `t_out` must already be initialized with the expected output shape.
  */
 cf_status cf_tensor_add_gpu(cf_tensor *t1, cf_tensor *t2, cf_tensor *t_out);
+
+cf_status cf_tensor_init_gpu(cf_tensor *tensor, cf_usize dim[CF_TENSOR_HIGHEST_RANK], cf_usize rank, cf_tensor_type elem_type);
+
+void cf_tensor_destroy_gpu(cf_tensor *tensor);
+
+cf_status cf_tensor_get_gpu(void *out_value, cf_tensor *tensor, cf_usize indexs[CF_TENSOR_HIGHEST_RANK]);
+
+cf_status cf_tensor_set_gpu(cf_tensor *tensor, cf_usize indexs[CF_TENSOR_HIGHEST_RANK], void *value);
 
 cf_status cf_tensor_to_gpu(cf_tensor *tensor);
 
@@ -189,6 +199,14 @@ cf_status cf_tensor_mul_gpu(cf_tensor *t1, cf_tensor *t2, cf_tensor *t_out);
 cf_status cf_tensor_matrix_mul_gpu(cf_tensor *t1, cf_tensor *t2, cf_tensor *t_out);
 
 #define cf_tensor_add(t1, t2, t_out) cf_tensor_add_gpu(t1, t2, t_out)
+
+#define cf_tensor_init(tensor, dim, rank, elem_type) cf_tensor_init_gpu(tensor, dim, rank, elem_type)
+
+#define cf_tensor_destroy(tensor) cf_tensor_destroy_gpu(tensor)
+
+#define cf_tensor_get(out_value, tensor, indexs) cf_tensor_get_gpu(out_value, tensor, indexs)
+
+#define cf_tensor_set(tensor, indexs, value) cf_tensor_set_gpu(tensor, indexs, value)
 
 #define cf_tensor_mul(t1, t2, t_out) cf_tensor_mul_gpu(t1, t2, t_out)
 
@@ -225,6 +243,16 @@ cf_status cf_tensor_scalar_mul_cpu(cf_tensor *t1, void *scalar, cf_tensor *t_out
 cf_status cf_tensor_matrix_mul_cpu(cf_tensor *t1, cf_tensor *t2, cf_tensor *t_out);
 
 #define cf_tensor_add(t1, t2, t_out) cf_tensor_add_cpu(t1, t2, t_out)
+
+#define cf_tensor_init(tensor, dim, rank, elem_type) cf_tensor_init_cpu(tensor, dim, rank, elem_type)
+
+#define cf_tensor_destroy(tensor) cf_tensor_destroy_cpu(tensor)
+
+#define cf_tensor_get(out_value, tensor, indexs) cf_tensor_get_cpu(out_value, tensor, indexs)
+
+#define cf_tensor_set(tensor, indexs, value) cf_tensor_set_cpu(tensor, indexs, value)
+
+#define cf_tensor_mul(t1, t2, t_out) cf_tensor_mul_cpu(t1, t2, t_out)
 
 #define cf_tensor_scalar_mul(t1, scalar, t_out) cf_tensor_scalar_mul_cpu(t1, scalar, t_out)
 
