@@ -462,19 +462,19 @@ cf_status cf_tensor_matrix_mul_cpu(cf_tensor *t1, cf_tensor *t2, cf_tensor *t_ou
 
   switch (t1->metadata.elem_type)
   {
-    CF_TENSOR_MATRIX_MUL_CASE(CF_TENSOR_CHAR, t1, t2, t_out, char);
-    CF_TENSOR_MATRIX_MUL_CASE(CF_TENSOR_SHORT, t1, t2, t_out, short);
-    CF_TENSOR_MATRIX_MUL_CASE(CF_TENSOR_INT, t1, t2, t_out, int);
-    CF_TENSOR_MATRIX_MUL_CASE(CF_TENSOR_LONG, t1, t2, t_out, long);
-    CF_TENSOR_MATRIX_MUL_CASE(CF_TENSOR_LL, t1, t2, t_out, long long);
-    CF_TENSOR_MATRIX_MUL_CASE(CF_TENSOR_FLOAT, t1, t2, t_out, float);
-    CF_TENSOR_MATRIX_MUL_CASE(CF_TENSOR_DOUBLE, t1, t2, t_out, double);
-    CF_TENSOR_MATRIX_MUL_CASE(CF_TENSOR_LD, t1, t2, t_out, long double);
-    CF_TENSOR_MATRIX_MUL_CASE(CF_TENSOR_U8, t1, t2, t_out, cf_u8);
-    CF_TENSOR_MATRIX_MUL_CASE(CF_TENSOR_U16, t1, t2, t_out, cf_u16);
-    CF_TENSOR_MATRIX_MUL_CASE(CF_TENSOR_U32, t1, t2, t_out, cf_u32);
-    CF_TENSOR_MATRIX_MUL_CASE(CF_TENSOR_U64, t1, t2, t_out, cf_u64);
-    CF_TENSOR_MATRIX_MUL_CASE(CF_TENSOR_U128, t1, t2, t_out, cf_u128);
+    CF_TENSOR_MATRIX_MUL_CASE(CF_TENSOR_CHAR, (&tmp1), (&tmp2), t_out, char);
+    CF_TENSOR_MATRIX_MUL_CASE(CF_TENSOR_SHORT, (&tmp1), (&tmp2), t_out, short);
+    CF_TENSOR_MATRIX_MUL_CASE(CF_TENSOR_INT, (&tmp1), (&tmp2), t_out, int);
+    CF_TENSOR_MATRIX_MUL_CASE(CF_TENSOR_LONG, (&tmp1), (&tmp2), t_out, long);
+    CF_TENSOR_MATRIX_MUL_CASE(CF_TENSOR_LL, (&tmp1), (&tmp2), t_out, long long);
+    CF_TENSOR_MATRIX_MUL_CASE(CF_TENSOR_FLOAT, (&tmp1), (&tmp2), t_out, float);
+    CF_TENSOR_MATRIX_MUL_CASE(CF_TENSOR_DOUBLE, (&tmp1), (&tmp2), t_out, double);
+    CF_TENSOR_MATRIX_MUL_CASE(CF_TENSOR_LD, (&tmp1), (&tmp2), t_out, long double);
+    CF_TENSOR_MATRIX_MUL_CASE(CF_TENSOR_U8, (&tmp1), (&tmp2), t_out, cf_u8);
+    CF_TENSOR_MATRIX_MUL_CASE(CF_TENSOR_U16, (&tmp1), (&tmp2), t_out, cf_u16);
+    CF_TENSOR_MATRIX_MUL_CASE(CF_TENSOR_U32, (&tmp1), (&tmp2), t_out, cf_u32);
+    CF_TENSOR_MATRIX_MUL_CASE(CF_TENSOR_U64, (&tmp1), (&tmp2), t_out, cf_u64);
+    CF_TENSOR_MATRIX_MUL_CASE(CF_TENSOR_U128, (&tmp1), (&tmp2), t_out, cf_u128);
     default: return CF_ERR_INVALID;
   }
 

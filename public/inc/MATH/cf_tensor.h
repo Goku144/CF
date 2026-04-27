@@ -202,11 +202,10 @@ cf_status cf_tensor_scalar_mul_cpu(cf_tensor *t1, void *scalar, cf_tensor *t_out
 /**
  * CPU matrix multiplication.
  *
- * This function is still under implementation. The intended shape contract is
- * scalar fallback for rank 0 inputs, vector/matrix normalization for rank 1,
- * and batched matrix multiplication with broadcast-compatible leading
- * dimensions. `t_out` must already be initialized with the expected result
- * shape.
+ * Supports scalar fallback for rank 0 inputs, vector/matrix normalization for
+ * rank 1 inputs, and batched matrix multiplication with broadcast-compatible
+ * leading dimensions. `t_out` must already be initialized with the expected
+ * result shape.
  */
 cf_status cf_tensor_matrix_mul_cpu(cf_tensor *t1, cf_tensor *t2, cf_tensor *t_out);
 
