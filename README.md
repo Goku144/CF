@@ -33,6 +33,10 @@ TEXT/
 
 The project uses `gcc`, `make`, and `nasm`.
 
+CUDA is optional. If `nvcc` is found, the build defines
+`CF_CUDA_AVAILABLE=1` and compiles `.cu` files with `nvcc`; otherwise the
+framework builds and runs with CPU tensor paths only.
+
 Build the library objects:
 
 ```sh
@@ -120,6 +124,33 @@ Implemented math module:
 - `cf_math_rotl8` and `cf_math_rotr8`: 8-bit rotate helpers.
 - `cf_math_rotl32` and `cf_math_rotr32`: 32-bit rotate helpers.
 - `cf_math_min_usize` and `cf_math_max_usize`: `cf_usize` min/max helpers.
+- `cf_tensor`: dense CPU tensor initialization, destruction, validation,
+  element get/set, readable printing, elementwise addition, scalar
+  multiplication, and matrix multiplication.
+
+Tensor outputs are caller-owned. Initialize the output tensor with the expected
+shape before calling tensor operations, then release it with
+`cf_tensor_destroy`.
+
+Example:
+
+```c
+cf_tensor a, b, out;
+
+cf_tensor_init(&a, (cf_usize[]){1, 3, 0, 0, 0, 0, 0, 0}, 2, CF_TENSOR_DOUBLE);
+cf_tensor_init(&b, (cf_usize[]){3, 1, 0, 0, 0, 0, 0, 0}, 2, CF_TENSOR_DOUBLE);
+cf_tensor_init(&out, (cf_usize[]){1, 1, 0, 0, 0, 0, 0, 0}, 2, CF_TENSOR_DOUBLE);
+
+cf_tensor_matrice_mul(&a, &b, &out);
+cf_tensor_print(&out);
+
+cf_tensor_destroy(&a);
+cf_tensor_destroy(&b);
+cf_tensor_destroy(&out);
+```
+
+CUDA tensor entry points are scaffolded for future kernels. They currently
+return `CF_ERR_UNSUPPORTED` rather than performing GPU work.
 
 ## Tests
 
@@ -179,6 +210,10 @@ The codebase still contains placeholder modules so the project structure can
 grow without changing layout later. These placeholders compile but do not expose
 real public APIs yet.
 
+Tensor GPU execution is not implemented yet. The public device enum and CUDA
+function declarations are present so CUDA kernels can be added without another
+public API reshuffle.
+
 ## Not Implemented Yet
 
 The following modules are still placeholders or incomplete:
@@ -193,7 +228,6 @@ The following modules are still placeholders or incomplete:
 - `ALLOCATOR/cf_arena`
 - `ALLOCATOR/cf_pool`
 - `ALLOCATOR/cf_slab`
-- `MATH/cf_tensor`
 - `SECURITY/cf_hash`
 - `SECURITY/cf_hmac`
 - `SECURITY/cf_parse`
