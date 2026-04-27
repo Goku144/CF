@@ -22,20 +22,20 @@ int main(void)
 {
   cf_tensor a, b, out;
 
-  cf_tensor_init(&a, (cf_usize[]){3, 1, 0, 0, 0, 0, 0, 0}, 2, CF_TENSOR_DOUBLE);
-  cf_tensor_init(&b, (cf_usize[]){1, 3, 0, 0, 0, 0, 0, 0}, 2, CF_TENSOR_DOUBLE);
-  cf_tensor_init(&out, (cf_usize[]){3, 3, 0, 0, 0, 0, 0, 0}, 2, CF_TENSOR_DOUBLE);
+  cf_tensor_init(&a, (cf_usize[]){3, 0, 0, 0, 0, 0, 0, 0}, 1, CF_TENSOR_DOUBLE);
+  cf_tensor_init(&b, (cf_usize[]){3, 0, 0, 0, 0, 0, 0, 0}, 1, CF_TENSOR_DOUBLE);
+  cf_tensor_init(&out, (cf_usize[]){1, 1, 0, 0, 0, 0, 0, 0}, 2, CF_TENSOR_DOUBLE);
 
   ((double *)a.data)[0] = 1.0;
-  ((double *)a.data)[1] = 2.0;
-  ((double *)a.data)[2] = 3.0;
+
+
   // ((double *)a.data)[3] = 4.0;
   // ((double *)a.data)[4] = 5.0;
   // ((double *)a.data)[5] = 6.0;
 
   ((double *)b.data)[0] = 7.0;
-  ((double *)b.data)[1] = 8.0;
-  ((double *)b.data)[2] = 9.0;
+
+
   // ((double *)b.data)[3] = 10.0;
   // ((double *)b.data)[4] = 11.0;
   // ((double *)b.data)[5] = 12.0;
