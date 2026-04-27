@@ -86,6 +86,7 @@ typedef struct cf_tensor_metadata
 typedef struct cf_tensor
 {
   void *data;
+  void *device_data;
   cf_usize dim[CF_TENSOR_HIGHEST_RANK];
   cf_usize rank;
   cf_tensor_device device;
@@ -157,6 +158,12 @@ cf_status cf_tensor_matrix_mul_cpu(cf_tensor *t1, cf_tensor *t2, cf_tensor *t_ou
  * `t_out` must already be initialized with the expected output shape.
  */
 cf_status cf_tensor_add_gpu(cf_tensor *t1, cf_tensor *t2, cf_tensor *t_out);
+
+cf_status cf_tensor_to_gpu(cf_tensor *tensor);
+
+cf_status cf_tensor_to_cpu(cf_tensor *tensor);
+
+cf_status cf_tensor_free_gpu(cf_tensor *tensor);
 
 /**
  * CUDA scalar multiplication entry point.
