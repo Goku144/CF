@@ -18,35 +18,65 @@
 
 #include <stdio.h>
 
+#define CF_APP_TENSOR_ADD_LEN ((cf_usize) 16777216)
+
 int main(void)
 {
-  cf_tensor a, b, out;
+  cf_tensor a, b, cpu_out;
+  cf_time_point start, end;
 
-  cf_tensor_init(&a, (cf_usize[]){3, 0, 0, 0, 0, 0, 0, 0}, 1, CF_TENSOR_DOUBLE);
-  cf_tensor_init(&b, (cf_usize[]){3, 0, 0, 0, 0, 0, 0, 0}, 1, CF_TENSOR_DOUBLE);
-  cf_tensor_init(&out, (cf_usize[]){1, 1, 0, 0, 0, 0, 0, 0}, 2, CF_TENSOR_DOUBLE);
+  CF_LOG_INFO(cf_status_as_char(cf_tensor_init(&a, (cf_usize[]){CF_APP_TENSOR_ADD_LEN, 0, 0, 0, 0, 0, 0, 0}, 1, CF_TENSOR_DOUBLE)));
+  CF_LOG_INFO(cf_status_as_char(cf_tensor_init(&b, (cf_usize[]){CF_APP_TENSOR_ADD_LEN, 0, 0, 0, 0, 0, 0, 0}, 1, CF_TENSOR_DOUBLE)));
+  CF_LOG_INFO(cf_status_as_char(cf_tensor_init(&cpu_out, (cf_usize[]){CF_APP_TENSOR_ADD_LEN, 0, 0, 0, 0, 0, 0, 0}, 1, CF_TENSOR_DOUBLE)));
 
-  ((double *)a.data)[0] = 1.0;
+  for (cf_usize i = 0; i < CF_APP_TENSOR_ADD_LEN; i++)
+  {
+    ((double *) a.data)[i] = (double) i * 0.25;
+    ((double *) b.data)[i] = (double) i * 0.5;
+  }
 
+  cf_time_now_mono(&start);
+  cf_status cpu_status = cf_tensor_add_cpu(&a, &b, &cpu_out);
+  cf_time_now_mono(&end);
 
-  // ((double *)a.data)[3] = 4.0;
-  // ((double *)a.data)[4] = 5.0;
-  // ((double *)a.data)[5] = 6.0;
+  cf_time cpu_elapsed = cf_time_elapsed(start, end);
+  double cpu_seconds = (double) cf_time_as_ns(cpu_elapsed) / 1000000000.0;
+  double bytes = (double) CF_APP_TENSOR_ADD_LEN * sizeof(double) * 3.0;
+  double cpu_gib_per_sec = bytes / cpu_seconds / 1073741824.0;
 
-  ((double *)b.data)[0] = 7.0;
+  printf("cpu add: %s | %.6f s | %.3f GiB/s | sample %.2f %.2f\n",
+         cf_status_as_char(cpu_status),
+         cpu_seconds,
+         cpu_gib_per_sec,
+         ((double *) cpu_out.data)[0],
+         ((double *) cpu_out.data)[CF_APP_TENSOR_ADD_LEN - 1]);
 
+#ifdef CF_CUDA_AVAILABLE
+  cf_tensor gpu_out;
+  CF_LOG_INFO(cf_status_as_char(cf_tensor_init(&gpu_out, (cf_usize[]){CF_APP_TENSOR_ADD_LEN, 0, 0, 0, 0, 0, 0, 0}, 1, CF_TENSOR_DOUBLE)));
 
-  // ((double *)b.data)[3] = 10.0;
-  // ((double *)b.data)[4] = 11.0;
-  // ((double *)b.data)[5] = 12.0;
+  cf_time_now_mono(&start);
+  cf_status gpu_status = cf_tensor_add_gpu(&a, &b, &gpu_out);
+  cf_time_now_mono(&end);
 
-  CF_LOG_INFO(cf_status_as_char(cf_tensor_matrice_mul(&a, &b, &out)));
-  cf_tensor_print(&a);
-  cf_tensor_print(&b);
-  cf_tensor_print(&out);
+  cf_time gpu_elapsed = cf_time_elapsed(start, end);
+  double gpu_seconds = (double) cf_time_as_ns(gpu_elapsed) / 1000000000.0;
+  double gpu_gib_per_sec = bytes / gpu_seconds / 1073741824.0;
+
+  printf("gpu add: %s | %.6f s | %.3f GiB/s | sample %.2f %.2f\n",
+         cf_status_as_char(gpu_status),
+         gpu_seconds,
+         gpu_gib_per_sec,
+         ((double *) gpu_out.data)[0],
+         ((double *) gpu_out.data)[CF_APP_TENSOR_ADD_LEN - 1]);
+
+  cf_tensor_destroy(&gpu_out);
+#else
+  printf("gpu add: skipped; build without CF_CUDA_AVAILABLE\n");
+#endif
 
   cf_tensor_destroy(&a);
   cf_tensor_destroy(&b);
-  cf_tensor_destroy(&out);
+  cf_tensor_destroy(&cpu_out);
   return 0;
 }

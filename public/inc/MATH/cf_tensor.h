@@ -92,6 +92,10 @@ typedef struct cf_tensor
   cf_tensor_metadata metadata;
 }cf_tensor;
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /**
  * Check whether a tensor has a consistent shape, data pointer, element type,
  * byte size, length, and row-major stride metadata.
@@ -133,11 +137,19 @@ cf_status cf_tensor_set(cf_tensor *tensor, cf_usize indexs[CF_TENSOR_HIGHEST_RAN
  */
 void cf_tensor_print(cf_tensor *tensor);
 
-#ifdef CF_CUDA_AVAILABLE
+/**
+ * CPU elementwise tensor addition.
+ *
+ * All tensors must have matching rank and dimensions. `t_out` must already be
+ * initialized with the same shape.
+ */
+cf_status cf_tensor_add_cpu(cf_tensor *t1, cf_tensor *t2, cf_tensor *t_out);
 
-#ifdef __cplusplus
-extern "C" {
-#endif
+cf_status cf_tensor_scalar_mul_cpu(cf_tensor *t1, void *scalar, cf_tensor *t_out);
+
+cf_status cf_tensor_matrix_mul_cpu(cf_tensor *t1, cf_tensor *t2, cf_tensor *t_out);
+
+#ifdef CF_CUDA_AVAILABLE
 
 /**
  * CUDA elementwise tensor addition.
@@ -168,10 +180,6 @@ cf_status cf_tensor_mul_gpu(cf_tensor *t1, cf_tensor *t2, cf_tensor *t_out);
  * the CPU implementation before launching future kernels.
  */
 cf_status cf_tensor_matrix_mul_gpu(cf_tensor *t1, cf_tensor *t2, cf_tensor *t_out);
-
-#ifdef __cplusplus
-}
-#endif
 
 #define cf_tensor_add(t1, t2, t_out) cf_tensor_add_gpu(t1, t2, t_out)
 
@@ -215,6 +223,10 @@ cf_status cf_tensor_matrix_mul_cpu(cf_tensor *t1, cf_tensor *t2, cf_tensor *t_ou
 
 #define cf_tensor_matrice_mul(t1, t2, t_out) cf_tensor_matrix_mul_cpu(t1, t2, t_out)
 
+#endif
+
+#ifdef __cplusplus
+}
 #endif
 
 #endif /* CF_TENSOR_H */
