@@ -148,8 +148,8 @@ Implemented math module:
   scalar multiplication, and CPU batched matrix multiplication.
 - `cf_tensor_cuda`: CUDA tensor lifecycle, CUDA get/set, CPU/GPU transfer
   helpers, CUDA elementwise addition, CUDA elementwise multiplication, CUDA
-  scalar multiplication, and cuBLASLt-backed batched float/double matrix
-  multiplication.
+  scalar multiplication, backend-cached CUDA matrix metadata, and
+  cuBLAS/cuBLASLt-backed float/double matrix multiplication.
 
 Tensor operations are in-place: `op1` is both the left operand and destination.
 Elementwise hot paths do not validate shape/type compatibility, so callers keep
@@ -214,9 +214,10 @@ explicitly through `cf_tensor_to_cpu`.
 
 Matrix multiplication supports `[..., M, K] @ [..., K, N] -> [..., M, N]`
 through `cf_tensor_batch_mul_*`; `cf_tensor_matrix_mul_*` uses the
-same implementation. CUDA uses cuBLASLt for `CF_TENSOR_FLOAT` and
-`CF_TENSOR_DOUBLE`. Other CUDA element types currently return
-`CF_ERR_UNSUPPORTED` for matrix multiplication.
+same implementation. CUDA uses cached cuBLASLt layouts and cached last-match
+cuBLASLt heuristics for single/broadcasted matrix work, plus cuBLAS
+strided-batched GEMM for dense batches. Other CUDA element types currently
+return `CF_ERR_UNSUPPORTED` for matrix multiplication.
 
 ## Documentation
 

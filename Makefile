@@ -48,7 +48,7 @@ OBJS_ASM :=
 
 NVCC ?= $(shell command -v nvcc 2>&1)
 CUDA_AVAILABLE := $(if $(NVCC),1,0)
-FLAG_CUDA := -O3
+FLAG_CUDA := -O3 -Wno-deprecated-gpu-targets
 LIBS_CUDA :=
 SRCS_CUDA :=
 OBJS_CUDA :=

@@ -915,6 +915,7 @@ cf_status cf_tensor_resize_gpu(
 cf_status cf_tensor_to_gpu(cf_tensor *tensor);
 cf_status cf_tensor_to_cpu(cf_tensor *tensor);
 cf_status cf_tensor_free_gpu(cf_tensor *tensor);
+cf_status cf_tensor_sync_gpu(void);
 ```
 
 Critical points:
@@ -925,6 +926,8 @@ Critical points:
 - `cf_tensor_to_cpu` downloads and allocates CPU storage when needed.
 - `cf_tensor_free_gpu` frees only device storage and preserves CPU storage when
   available.
+- `cf_tensor_sync_gpu` waits for queued CUDA work and is useful for timing
+  GPU-resident operations without forcing a download.
 - CUDA resize grows device storage and invalidates stale CPU mirrors.
 
 ### Tensor CUDA Accessors And Math
@@ -968,8 +971,9 @@ Critical points:
 - GPU get/set copy one element between host and device.
 - `cf_tensor_add_gpu`, `cf_tensor_mul_gpu`, and `cf_tensor_scalar_mul_gpu` are
   implemented with custom CUDA kernels and mutate `op1`.
-- `cf_tensor_batch_mul_gpu` loops cuBLASLt GEMM over broadcasted
-  batches for `CF_TENSOR_FLOAT` and `CF_TENSOR_DOUBLE`.
+- `cf_tensor_batch_mul_gpu` uses cached cuBLASLt layout/heuristic data for
+  single/broadcasted matrix GEMM and cuBLAS strided-batched GEMM for dense
+  non-broadcast batches.
 - `cf_tensor_matrix_mul_gpu` uses the same implementation.
 - CUDA math operations require existing CUDA storage and keep results on device.
 - Unsupported CUDA tensor element types return `CF_ERR_UNSUPPORTED`, including

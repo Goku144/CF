@@ -19,35 +19,59 @@
 #include "MATH/cf_tensor.h"
 
 #include <cublasLt.h>
+#include <cublas_v2.h>
 #include <cuda_runtime_api.h>
+#include <limits.h>
 #include <stdlib.h>
 #include <string.h>
 
 #define CF_TENSOR_CUDA_THREADS 256
+#define CF_TENSOR_CUDA_MAX_BLOCKS 65535
 #define CF_TENSOR_CUBLASLT_WORKSPACE_BYTES ((size_t)32 * 1024 * 1024)
 
 extern "C" void cf_tensor_destroy_gpu(cf_tensor *tensor);
 extern "C" void cf_tensor_destroy_many_gpu(cf_tensor **tensors, cf_usize count);
 
+typedef struct cf_tensor_cuda_cache
+{
+  cf_tensor_type elem_type;
+  cf_bool elem_type_ready;
+  cudaDataType_t data_type;
+  cudaDataType_t scale_type;
+  cf_bool cublaslt_supported;
+  cublasLtMatrixLayout_t matrix_layout;
+  cf_usize matrix_rows;
+  cf_usize matrix_cols;
+  cf_bool matmul_plan_ready;
+  cublasComputeType_t matmul_compute_type;
+  cf_usize matmul_m;
+  cf_usize matmul_k;
+  cf_usize matmul_n;
+  cublasLtMatmulHeuristicResult_t matmul_heuristic;
+} cf_tensor_cuda_cache;
+
 #define DEFINE_ADD_KERNEL(name, type) \
-__global__ void name(type *a, const type *b, cf_usize len) \
+__global__ void name(type *__restrict__ a, const type *__restrict__ b, cf_usize len) \
 { \
-  cf_usize i = blockIdx.x * blockDim.x + threadIdx.x; \
-  if(i < len) a[i] = (type)(a[i] + b[i]); \
+  cf_usize step = (cf_usize)gridDim.x * (cf_usize)blockDim.x; \
+  for(cf_usize i = (cf_usize)blockIdx.x * (cf_usize)blockDim.x + (cf_usize)threadIdx.x; i < len; i += step) \
+    a[i] = (type)(a[i] + b[i]); \
 }
 
 #define DEFINE_MUL_KERNEL(name, type) \
-__global__ void name(type *a, const type *b, cf_usize len) \
+__global__ void name(type *__restrict__ a, const type *__restrict__ b, cf_usize len) \
 { \
-  cf_usize i = blockIdx.x * blockDim.x + threadIdx.x; \
-  if(i < len) a[i] = (type)(a[i] * b[i]); \
+  cf_usize step = (cf_usize)gridDim.x * (cf_usize)blockDim.x; \
+  for(cf_usize i = (cf_usize)blockIdx.x * (cf_usize)blockDim.x + (cf_usize)threadIdx.x; i < len; i += step) \
+    a[i] = (type)(a[i] * b[i]); \
 }
 
 #define DEFINE_SCALAR_KERNEL(name, type) \
-__global__ void name(type *a, type scalar, cf_usize len) \
+__global__ void name(type *__restrict__ a, type scalar, cf_usize len) \
 { \
-  cf_usize i = blockIdx.x * blockDim.x + threadIdx.x; \
-  if(i < len) a[i] = (type)(a[i] * scalar); \
+  cf_usize step = (cf_usize)gridDim.x * (cf_usize)blockDim.x; \
+  for(cf_usize i = (cf_usize)blockIdx.x * (cf_usize)blockDim.x + (cf_usize)threadIdx.x; i < len; i += step) \
+    a[i] = (type)(a[i] * scalar); \
 }
 
 DEFINE_ADD_KERNEL(cf_tensor_add_char_kernel, char)
@@ -278,6 +302,35 @@ static cf_status cf_tensor_cublaslt_handle(cublasLtHandle_t *out_handle)
   return CF_OK;
 }
 
+static cf_status cf_tensor_cublas_handle(cublasHandle_t *out_handle)
+{
+  static cublasHandle_t handle = NULL;
+
+  if(out_handle == NULL) return CF_ERR_NULL;
+  if(handle == NULL)
+  {
+    cublasStatus_t status = cublasCreate(&handle);
+    if(status != CUBLAS_STATUS_SUCCESS) return cf_tensor_cublas_status(status);
+
+#if defined(CUBLAS_TF32_TENSOR_OP_MATH)
+    status = cublasSetMathMode(handle, CUBLAS_TF32_TENSOR_OP_MATH);
+    if(status != CUBLAS_STATUS_SUCCESS) return cf_tensor_cublas_status(status);
+#endif
+  }
+
+  *out_handle = handle;
+  return CF_OK;
+}
+
+static int cf_tensor_cuda_blocks(cf_usize len)
+{
+  cf_usize blocks = (len + CF_TENSOR_CUDA_THREADS - 1) / CF_TENSOR_CUDA_THREADS;
+
+  if(blocks == 0) return 1;
+  if(blocks > CF_TENSOR_CUDA_MAX_BLOCKS) return CF_TENSOR_CUDA_MAX_BLOCKS;
+  return (int)blocks;
+}
+
 static void cf_tensor_cublaslt_workspace(void **out_workspace, size_t *out_workspace_bytes)
 {
   static void *workspace = NULL;
@@ -294,6 +347,31 @@ static void cf_tensor_cublaslt_workspace(void **out_workspace, size_t *out_works
 
   *out_workspace = workspace;
   *out_workspace_bytes = workspace_bytes;
+}
+
+static cf_status cf_tensor_cuda_scratch(void **out_scratch, cf_usize bytes)
+{
+  static void *scratch = NULL;
+  static cf_usize scratch_bytes = 0;
+  cudaError_t cuda_status;
+
+  if(out_scratch == NULL) return CF_ERR_NULL;
+  if(bytes == 0) return CF_ERR_INVALID;
+
+  if(bytes > scratch_bytes)
+  {
+    void *new_scratch = NULL;
+
+    cuda_status = cudaMalloc(&new_scratch, bytes);
+    if(cuda_status != cudaSuccess) return CF_ERR_CUDA_MEMORY;
+
+    if(scratch != NULL) cudaFree(scratch);
+    scratch = new_scratch;
+    scratch_bytes = bytes;
+  }
+
+  *out_scratch = scratch;
+  return CF_OK;
 }
 
 static cf_status cf_tensor_cublaslt_type(cf_tensor_type elem_type, cudaDataType_t *data_type, cudaDataType_t *scale_type)
@@ -323,6 +401,98 @@ static cf_status cf_tensor_cublaslt_set_row_major(cublasLtMatrixLayout_t layout)
   return cf_tensor_cublas_status(status);
 }
 
+static void cf_tensor_cuda_cache_destroy(cf_tensor *tensor)
+{
+  cf_tensor_cuda_cache *cache;
+
+  if(tensor == NULL || tensor->backend_cache == NULL) return;
+
+  cache = (cf_tensor_cuda_cache *)tensor->backend_cache;
+  if(cache->matrix_layout != NULL) cublasLtMatrixLayoutDestroy(cache->matrix_layout);
+  free(cache);
+  tensor->backend_cache = NULL;
+}
+
+static cf_status cf_tensor_cuda_cache_prepare(cf_tensor *tensor)
+{
+  cf_tensor_cuda_cache *cache;
+  cf_status status;
+
+  if(tensor == NULL) return CF_ERR_NULL;
+
+  cache = (cf_tensor_cuda_cache *)tensor->backend_cache;
+  if(cache == NULL)
+  {
+    cache = (cf_tensor_cuda_cache *)calloc(1, sizeof(*cache));
+    if(cache == NULL) return CF_ERR_OOM;
+    tensor->backend_cache = cache;
+  }
+
+  if(cache->elem_type_ready == CF_FALSE || cache->elem_type != tensor->metadata.elem_type)
+  {
+    status = cf_tensor_cublaslt_type(tensor->metadata.elem_type, &cache->data_type, &cache->scale_type);
+    if(status != CF_OK && status != CF_ERR_UNSUPPORTED) return status;
+    cache->cublaslt_supported = status == CF_OK ? CF_TRUE : CF_FALSE;
+    cache->elem_type = tensor->metadata.elem_type;
+    cache->elem_type_ready = CF_TRUE;
+    cache->matmul_plan_ready = CF_FALSE;
+  }
+
+  return CF_OK;
+}
+
+static cf_status cf_tensor_cuda_cache_shape(cf_tensor *tensor)
+{
+  cf_tensor_cuda_cache *cache;
+  cf_usize rows;
+  cf_usize cols;
+  cf_status status;
+  cublasStatus_t cublas_status;
+
+  if(tensor == NULL) return CF_ERR_NULL;
+
+  status = cf_tensor_cuda_cache_prepare(tensor);
+  if(status != CF_OK) return status;
+
+  cache = (cf_tensor_cuda_cache *)tensor->backend_cache;
+  if(tensor->rank < 2 || cache->cublaslt_supported == CF_FALSE)
+  {
+    if(cache->matrix_layout != NULL) cublasLtMatrixLayoutDestroy(cache->matrix_layout);
+    cache->matrix_layout = NULL;
+    cache->matrix_rows = 0;
+    cache->matrix_cols = 0;
+    cache->matmul_plan_ready = CF_FALSE;
+    return CF_OK;
+  }
+
+  rows = tensor->dim[tensor->rank - 2];
+  cols = tensor->dim[tensor->rank - 1];
+  if(cache->matrix_layout != NULL && cache->matrix_rows == rows && cache->matrix_cols == cols) return CF_OK;
+
+  if(cache->matrix_layout != NULL)
+  {
+    cublasLtMatrixLayoutDestroy(cache->matrix_layout);
+    cache->matrix_layout = NULL;
+    cache->matmul_plan_ready = CF_FALSE;
+  }
+
+  cublas_status = cublasLtMatrixLayoutCreate(&cache->matrix_layout, cache->data_type, (uint64_t)rows, (uint64_t)cols, (int64_t)cols);
+  if(cublas_status != CUBLAS_STATUS_SUCCESS) return cf_tensor_cublas_status(cublas_status);
+
+  status = cf_tensor_cublaslt_set_row_major(cache->matrix_layout);
+  if(status != CF_OK)
+  {
+    cublasLtMatrixLayoutDestroy(cache->matrix_layout);
+    cache->matrix_layout = NULL;
+    return status;
+  }
+
+  cache->matrix_rows = rows;
+  cache->matrix_cols = cols;
+  cache->matmul_plan_ready = CF_FALSE;
+  return CF_OK;
+}
+
 extern "C" cf_status cf_tensor_init_gpu(cf_tensor *tensor, const cf_usize dim[CF_TENSOR_HIGHEST_RANK], cf_usize rank, cf_tensor_type elem_type)
 {
   cf_usize elem_size;
@@ -347,10 +517,18 @@ extern "C" cf_status cf_tensor_init_gpu(cf_tensor *tensor, const cf_usize dim[CF
   tensor->metadata.elem_size = elem_size;
   tensor->metadata.elem_type = elem_type;
   cf_tensor_cuda_apply_shape(tensor, dim, rank, len);
+  status = cf_tensor_cuda_cache_shape(tensor);
+  if(status != CF_OK)
+  {
+    cf_tensor_cuda_cache_destroy(tensor);
+    *tensor = (cf_tensor){0};
+    return status;
+  }
 
   cuda_status = cudaMalloc(&tensor->device_data, bytes);
   if(cuda_status != cudaSuccess)
   {
+    cf_tensor_cuda_cache_destroy(tensor);
     *tensor = (cf_tensor){0};
     return CF_ERR_CUDA_MEMORY;
   }
@@ -359,6 +537,7 @@ extern "C" cf_status cf_tensor_init_gpu(cf_tensor *tensor, const cf_usize dim[CF
   if(cuda_status != cudaSuccess)
   {
     cudaFree(tensor->device_data);
+    cf_tensor_cuda_cache_destroy(tensor);
     *tensor = (cf_tensor){0};
     return CF_ERR_CUDA_MEMORY;
   }
@@ -397,6 +576,7 @@ extern "C" void cf_tensor_destroy_gpu(cf_tensor *tensor)
 
   if(tensor->device_data != NULL) cudaFree(tensor->device_data);
   if(tensor->data != NULL) free(tensor->data);
+  cf_tensor_cuda_cache_destroy(tensor);
   *tensor = (cf_tensor){0};
 }
 
@@ -483,6 +663,8 @@ extern "C" cf_status cf_tensor_reshape_gpu(cf_tensor *tensor, const cf_usize dim
   if(len > tensor->metadata.capacity) return CF_ERR_BOUNDS;
 
   cf_tensor_cuda_apply_shape(tensor, dim, rank, len);
+  status = cf_tensor_cuda_cache_shape(tensor);
+  if(status != CF_OK) return status;
   tensor->device = CF_TENSOR_DEVICE_CUDA;
   return CF_OK;
 }
@@ -524,6 +706,8 @@ extern "C" cf_status cf_tensor_resize_gpu(cf_tensor *tensor, const cf_usize dim[
   }
 
   cf_tensor_cuda_apply_shape(tensor, dim, rank, len);
+  status = cf_tensor_cuda_cache_shape(tensor);
+  if(status != CF_OK) return status;
   tensor->device = CF_TENSOR_DEVICE_CUDA;
   return CF_OK;
 }
@@ -564,6 +748,8 @@ extern "C" cf_status cf_tensor_copy_gpu(cf_tensor *dst, const cf_tensor *src)
   }
 
   dst->device = CF_TENSOR_DEVICE_CUDA;
+  status = cf_tensor_cuda_cache_shape(dst);
+  if(status != CF_OK) return status;
   return CF_OK;
 }
 
@@ -586,6 +772,8 @@ extern "C" cf_status cf_tensor_copy_from_array_gpu(cf_tensor *tensor, const void
 
   dim[0] = count;
   cf_tensor_cuda_apply_shape(tensor, dim, 1, count);
+  status = cf_tensor_cuda_cache_shape(tensor);
+  if(status != CF_OK) return status;
 
   status = cf_tensor_cuda_checked_bytes(count, tensor->metadata.elem_size, &bytes);
   if(status != CF_OK) return status;
@@ -600,6 +788,8 @@ extern "C" cf_status cf_tensor_copy_from_array_gpu(cf_tensor *tensor, const void
   }
 
   tensor->device = CF_TENSOR_DEVICE_CUDA;
+  status = cf_tensor_cuda_cache_shape(tensor);
+  if(status != CF_OK) return status;
   return CF_OK;
 }
 
@@ -729,10 +919,15 @@ extern "C" cf_status cf_tensor_free_gpu(cf_tensor *tensor)
   cudaError_t cuda_status;
 
   if(tensor == NULL) return CF_ERR_NULL;
-  if(tensor->device_data == NULL) return CF_OK;
+  if(tensor->device_data == NULL)
+  {
+    cf_tensor_cuda_cache_destroy(tensor);
+    return CF_OK;
+  }
 
   cuda_status = cudaFree(tensor->device_data);
   tensor->device_data = NULL;
+  cf_tensor_cuda_cache_destroy(tensor);
 
   if(tensor->data == NULL)
     *tensor = (cf_tensor){0};
@@ -742,10 +937,16 @@ extern "C" cf_status cf_tensor_free_gpu(cf_tensor *tensor)
   return cuda_status == cudaSuccess ? CF_OK : CF_ERR_CUDA_MEMORY;
 }
 
+extern "C" cf_status cf_tensor_sync_gpu(void)
+{
+  cudaError_t cuda_status = cudaDeviceSynchronize();
+  return cuda_status == cudaSuccess ? CF_OK : CF_ERR_CUDA_SYNC;
+}
+
 extern "C" cf_status cf_tensor_add_gpu(cf_tensor *op1, const cf_tensor *op2)
 {
   cf_usize len = op1->metadata.len;
-  int blocks = (int)((len + CF_TENSOR_CUDA_THREADS - 1) / CF_TENSOR_CUDA_THREADS);
+  int blocks = cf_tensor_cuda_blocks(len);
   void *d_a = op1->device_data;
   const void *d_b = op2->device_data;
   cudaError_t cuda_status;
@@ -782,7 +983,7 @@ extern "C" cf_status cf_tensor_add_gpu(cf_tensor *op1, const cf_tensor *op2)
 extern "C" cf_status cf_tensor_mul_gpu(cf_tensor *op1, const cf_tensor *op2)
 {
   cf_usize len = op1->metadata.len;
-  int blocks = (int)((len + CF_TENSOR_CUDA_THREADS - 1) / CF_TENSOR_CUDA_THREADS);
+  int blocks = cf_tensor_cuda_blocks(len);
   void *d_a = op1->device_data;
   const void *d_b = op2->device_data;
   cudaError_t cuda_status;
@@ -826,7 +1027,7 @@ extern "C" cf_status cf_tensor_scalar_mul_gpu(cf_tensor *op1, const void *scalar
   if(scalar == NULL) return CF_ERR_NULL;
 
   len = op1->metadata.len;
-  blocks = (int)((len + CF_TENSOR_CUDA_THREADS - 1) / CF_TENSOR_CUDA_THREADS);
+  blocks = cf_tensor_cuda_blocks(len);
   d_a = op1->device_data;
 
   switch(op1->metadata.elem_type)
@@ -858,17 +1059,15 @@ extern "C" cf_status cf_tensor_scalar_mul_gpu(cf_tensor *op1, const void *scalar
   return CF_OK;
 }
 
-static cf_status cf_tensor_matrix_mul_cublaslt_2d(const void *a_device, const void *b_device, void *out, cf_tensor_type elem_type, cf_usize m, cf_usize k, cf_usize n, cublasComputeType_t compute_type)
+static cf_status cf_tensor_matrix_mul_cublaslt_2d(cf_tensor *op1, const cf_tensor *op2, const void *a_device, const void *b_device, void *out, cf_usize m, cf_usize k, cf_usize n, cublasComputeType_t compute_type)
 {
-  cudaDataType_t data_type;
-  cudaDataType_t scale_type;
+  cf_tensor *mutable_op2 = (cf_tensor *)op2;
+  cf_tensor_cuda_cache *a_cache;
+  cf_tensor_cuda_cache *b_cache;
   cublasLtHandle_t handle;
   cublasLtMatmulDesc_t operation = NULL;
-  cublasLtMatrixLayout_t a_layout = NULL;
-  cublasLtMatrixLayout_t b_layout = NULL;
   cublasLtMatrixLayout_t c_layout = NULL;
   cublasLtMatmulPreference_t preference = NULL;
-  cublasLtMatmulHeuristicResult_t heuristic = {0};
   int returned_results = 0;
   void *workspace = NULL;
   size_t workspace_bytes = 0;
@@ -876,44 +1075,38 @@ static cf_status cf_tensor_matrix_mul_cublaslt_2d(const void *a_device, const vo
   cf_status status;
   cublasStatus_t cublas_status;
 
-  status = cf_tensor_cublaslt_type(elem_type, &data_type, &scale_type);
+  if(op1 == NULL || op2 == NULL || a_device == NULL || b_device == NULL || out == NULL) return CF_ERR_NULL;
+
+  status = cf_tensor_cuda_cache_shape(op1);
   if(status != CF_OK) return status;
+  status = cf_tensor_cuda_cache_shape(mutable_op2);
+  if(status != CF_OK) return status;
+
+  a_cache = (cf_tensor_cuda_cache *)op1->backend_cache;
+  b_cache = (cf_tensor_cuda_cache *)mutable_op2->backend_cache;
+  if(a_cache == NULL || b_cache == NULL) return CF_ERR_STATE;
+  if(a_cache->cublaslt_supported == CF_FALSE || b_cache->cublaslt_supported == CF_FALSE) return CF_ERR_UNSUPPORTED;
+  if(a_cache->matrix_layout == NULL || b_cache->matrix_layout == NULL) return CF_ERR_STATE;
+  if(a_cache->matrix_rows != m || a_cache->matrix_cols != k) return CF_ERR_INVALID;
+  if(b_cache->matrix_rows != k || b_cache->matrix_cols != n) return CF_ERR_INVALID;
 
   status = cf_tensor_cublaslt_handle(&handle);
   if(status != CF_OK) return status;
 
-  cublas_status = cublasLtMatmulDescCreate(&operation, compute_type, scale_type);
+  cublas_status = cublasLtMatmulDescCreate(&operation, compute_type, a_cache->scale_type);
   if(cublas_status != CUBLAS_STATUS_SUCCESS)
   {
     status = cf_tensor_cublas_status(cublas_status);
     goto cleanup;
   }
 
-  cublas_status = cublasLtMatrixLayoutCreate(&a_layout, data_type, (uint64_t)m, (uint64_t)k, (int64_t)k);
+  cublas_status = cublasLtMatrixLayoutCreate(&c_layout, a_cache->data_type, (uint64_t)m, (uint64_t)n, (int64_t)n);
   if(cublas_status != CUBLAS_STATUS_SUCCESS)
   {
     status = cf_tensor_cublas_status(cublas_status);
     goto cleanup;
   }
 
-  cublas_status = cublasLtMatrixLayoutCreate(&b_layout, data_type, (uint64_t)k, (uint64_t)n, (int64_t)n);
-  if(cublas_status != CUBLAS_STATUS_SUCCESS)
-  {
-    status = cf_tensor_cublas_status(cublas_status);
-    goto cleanup;
-  }
-
-  cublas_status = cublasLtMatrixLayoutCreate(&c_layout, data_type, (uint64_t)m, (uint64_t)n, (int64_t)n);
-  if(cublas_status != CUBLAS_STATUS_SUCCESS)
-  {
-    status = cf_tensor_cublas_status(cublas_status);
-    goto cleanup;
-  }
-
-  status = cf_tensor_cublaslt_set_row_major(a_layout);
-  if(status != CF_OK) goto cleanup;
-  status = cf_tensor_cublaslt_set_row_major(b_layout);
-  if(status != CF_OK) goto cleanup;
   status = cf_tensor_cublaslt_set_row_major(c_layout);
   if(status != CF_OK) goto cleanup;
 
@@ -933,24 +1126,36 @@ static cf_status cf_tensor_matrix_mul_cublaslt_2d(const void *a_device, const vo
     goto cleanup;
   }
 
-  cublas_status = cublasLtMatmulAlgoGetHeuristic(handle, operation, a_layout, b_layout, c_layout, c_layout, preference, 1, &heuristic, &returned_results);
-  if(cublas_status != CUBLAS_STATUS_SUCCESS || returned_results == 0)
+  if(a_cache->matmul_plan_ready == CF_FALSE || a_cache->matmul_compute_type != compute_type || a_cache->matmul_m != m || a_cache->matmul_k != k || a_cache->matmul_n != n)
   {
-    status = cublas_status == CUBLAS_STATUS_SUCCESS ? CF_ERR_UNSUPPORTED : cf_tensor_cublas_status(cublas_status);
-    goto cleanup;
+    cublasLtMatmulHeuristicResult_t heuristic = {0};
+
+    cublas_status = cublasLtMatmulAlgoGetHeuristic(handle, operation, a_cache->matrix_layout, b_cache->matrix_layout, c_layout, c_layout, preference, 1, &heuristic, &returned_results);
+    if(cublas_status != CUBLAS_STATUS_SUCCESS || returned_results == 0)
+    {
+      status = cublas_status == CUBLAS_STATUS_SUCCESS ? CF_ERR_UNSUPPORTED : cf_tensor_cublas_status(cublas_status);
+      goto cleanup;
+    }
+
+    a_cache->matmul_compute_type = compute_type;
+    a_cache->matmul_m = m;
+    a_cache->matmul_k = k;
+    a_cache->matmul_n = n;
+    a_cache->matmul_heuristic = heuristic;
+    a_cache->matmul_plan_ready = CF_TRUE;
   }
 
-  if(elem_type == CF_TENSOR_FLOAT)
+  if(op1->metadata.elem_type == CF_TENSOR_FLOAT)
   {
     float alpha = 1.0f;
     float beta = 0.0f;
-    cublas_status = cublasLtMatmul(handle, operation, &alpha, a_device, a_layout, b_device, b_layout, &beta, out, c_layout, out, c_layout, &heuristic.algo, workspace, heuristic.workspaceSize, 0);
+    cublas_status = cublasLtMatmul(handle, operation, &alpha, a_device, a_cache->matrix_layout, b_device, b_cache->matrix_layout, &beta, out, c_layout, out, c_layout, &a_cache->matmul_heuristic.algo, workspace, a_cache->matmul_heuristic.workspaceSize, 0);
   }
   else
   {
     double alpha = 1.0;
     double beta = 0.0;
-    cublas_status = cublasLtMatmul(handle, operation, &alpha, a_device, a_layout, b_device, b_layout, &beta, out, c_layout, out, c_layout, &heuristic.algo, workspace, heuristic.workspaceSize, 0);
+    cublas_status = cublasLtMatmul(handle, operation, &alpha, a_device, a_cache->matrix_layout, b_device, b_cache->matrix_layout, &beta, out, c_layout, out, c_layout, &a_cache->matmul_heuristic.algo, workspace, a_cache->matmul_heuristic.workspaceSize, 0);
   }
 
   status = cf_tensor_cublas_status(cublas_status);
@@ -958,10 +1163,114 @@ static cf_status cf_tensor_matrix_mul_cublaslt_2d(const void *a_device, const vo
 cleanup:
   if(preference != NULL) cublasLtMatmulPreferenceDestroy(preference);
   if(c_layout != NULL) cublasLtMatrixLayoutDestroy(c_layout);
-  if(b_layout != NULL) cublasLtMatrixLayoutDestroy(b_layout);
-  if(a_layout != NULL) cublasLtMatrixLayoutDestroy(a_layout);
   if(operation != NULL) cublasLtMatmulDescDestroy(operation);
   return status;
+}
+
+static cf_bool cf_tensor_cuda_can_strided_batched_gemm(const cf_tensor *op1, const cf_tensor *op2, cf_usize out_rank, cf_usize batch_rank, const cf_usize out_dim[CF_TENSOR_HIGHEST_RANK])
+{
+  if(op1 == NULL || op2 == NULL || out_dim == NULL) return CF_FALSE;
+  if(op1->rank != out_rank || op2->rank != out_rank) return CF_FALSE;
+
+  for(cf_usize axis = 0; axis < batch_rank; axis++)
+  {
+    if(op1->dim[axis] != out_dim[axis]) return CF_FALSE;
+    if(op2->dim[axis] != out_dim[axis]) return CF_FALSE;
+  }
+
+  return CF_TRUE;
+}
+
+static cf_status cf_tensor_matrix_mul_cublas_strided_batched(const cf_tensor *op1, const cf_tensor *op2, void *out, cf_usize rows, cf_usize inner, cf_usize cols, cf_usize batch_count)
+{
+  cublasHandle_t handle;
+  cublasStatus_t cublas_status;
+  long long int stride_a;
+  long long int stride_b;
+  long long int stride_c;
+  int m;
+  int n;
+  int k;
+  int batches;
+  cf_status status;
+
+  if(op1 == NULL || op2 == NULL || out == NULL) return CF_ERR_NULL;
+  if(rows > INT_MAX || inner > INT_MAX || cols > INT_MAX || batch_count > INT_MAX) return CF_ERR_BOUNDS;
+  if(rows != 0 && inner > (cf_usize)LLONG_MAX / rows) return CF_ERR_OVERFLOW;
+  if(inner != 0 && cols > (cf_usize)LLONG_MAX / inner) return CF_ERR_OVERFLOW;
+  if(rows != 0 && cols > (cf_usize)LLONG_MAX / rows) return CF_ERR_OVERFLOW;
+
+  status = cf_tensor_cublas_handle(&handle);
+  if(status != CF_OK) return status;
+
+  stride_a = (long long int)(rows * inner);
+  stride_b = (long long int)(inner * cols);
+  stride_c = (long long int)(rows * cols);
+
+  /*
+   * Row-major C = A * B is equivalent to column-major C^T = B^T * A^T
+   * over the same flat memory. cuBLAS sees B as n x k and A as k x m.
+   */
+  m = (int)cols;
+  n = (int)rows;
+  k = (int)inner;
+  batches = (int)batch_count;
+
+  switch(op1->metadata.elem_type)
+  {
+    case CF_TENSOR_FLOAT:
+    {
+      float alpha = 1.0f;
+      float beta = 0.0f;
+      cublas_status = cublasSgemmStridedBatched(
+        handle,
+        CUBLAS_OP_N,
+        CUBLAS_OP_N,
+        m,
+        n,
+        k,
+        &alpha,
+        (const float *)op2->device_data,
+        m,
+        stride_b,
+        (const float *)op1->device_data,
+        k,
+        stride_a,
+        &beta,
+        (float *)out,
+        m,
+        stride_c,
+        batches);
+      return cf_tensor_cublas_status(cublas_status);
+    }
+    case CF_TENSOR_DOUBLE:
+    {
+      double alpha = 1.0;
+      double beta = 0.0;
+      cublas_status = cublasDgemmStridedBatched(
+        handle,
+        CUBLAS_OP_N,
+        CUBLAS_OP_N,
+        m,
+        n,
+        k,
+        &alpha,
+        (const double *)op2->device_data,
+        m,
+        stride_b,
+        (const double *)op1->device_data,
+        k,
+        stride_a,
+        &beta,
+        (double *)out,
+        m,
+        stride_c,
+        batches);
+      return cf_tensor_cublas_status(cublas_status);
+    }
+    default:
+      return CF_ERR_UNSUPPORTED;
+  }
 }
 
 extern "C" cf_status cf_tensor_batch_mul_gpu(cf_tensor *op1, const cf_tensor *op2)
@@ -992,70 +1301,90 @@ extern "C" cf_status cf_tensor_batch_mul_gpu(cf_tensor *op1, const cf_tensor *op
   status = cf_tensor_cuda_checked_bytes(out_len, op1->metadata.elem_size, &out_bytes);
   if(status != CF_OK) return status;
 
-  cuda_status = cudaMalloc(&result, out_bytes);
-  if(cuda_status != cudaSuccess) return CF_ERR_CUDA_MEMORY;
+  status = cf_tensor_cuda_scratch(&result, out_bytes);
+  if(status != CF_OK) return status;
 
-  for(cf_usize batch = 0; batch < batch_count; batch++)
+  if(batch_count > 1 && cf_tensor_cuda_can_strided_batched_gemm(op1, op2, out_rank, batch_rank, out_dim) == CF_TRUE)
   {
-    cf_usize a_base = 0;
-    cf_usize b_base = 0;
-    cf_usize out_base = 0;
-    cf_usize rest = batch;
-    const char *a_device;
-    const char *b_device;
-    char *out_device;
-
-    for(cf_usize batch_axis_i = batch_rank; batch_axis_i > 0; batch_axis_i--)
-    {
-      cf_usize axis = batch_axis_i - 1;
-      cf_usize coord = rest % out_dim[axis];
-      cf_isize a_axis = (cf_isize)axis - (cf_isize)(out_rank - op1->rank);
-      cf_isize b_axis = (cf_isize)axis - (cf_isize)(out_rank - op2->rank);
-
-      rest /= out_dim[axis];
-      out_base += coord * out_stride[axis];
-      if(a_axis >= 0 && op1->dim[(cf_usize)a_axis] != 1)
-        a_base += coord * op1->metadata.stride[(cf_usize)a_axis];
-      if(b_axis >= 0 && op2->dim[(cf_usize)b_axis] != 1)
-        b_base += coord * op2->metadata.stride[(cf_usize)b_axis];
-    }
-
-    a_device = (const char *)op1->device_data + a_base * op1->metadata.elem_size;
-    b_device = (const char *)op2->device_data + b_base * op2->metadata.elem_size;
-    out_device = (char *)result + out_base * op1->metadata.elem_size;
-
-    switch(op1->metadata.elem_type)
-    {
-      case CF_TENSOR_FLOAT:
-        status = cf_tensor_matrix_mul_cublaslt_2d(a_device, b_device, out_device, op1->metadata.elem_type, rows, inner, cols, CUBLAS_COMPUTE_32F_FAST_TF32);
-        if(status == CF_ERR_UNSUPPORTED)
-          status = cf_tensor_matrix_mul_cublaslt_2d(a_device, b_device, out_device, op1->metadata.elem_type, rows, inner, cols, CUBLAS_COMPUTE_32F);
-        break;
-      case CF_TENSOR_DOUBLE:
-        status = cf_tensor_matrix_mul_cublaslt_2d(a_device, b_device, out_device, op1->metadata.elem_type, rows, inner, cols, CUBLAS_COMPUTE_64F);
-        break;
-      default:
-        cudaFree(result);
-        return CF_ERR_UNSUPPORTED;
-    }
-
+    status = cf_tensor_matrix_mul_cublas_strided_batched(op1, op2, result, rows, inner, cols, batch_count);
     if(status != CF_OK)
     {
-      cudaFree(result);
       return status;
+    }
+  }
+  else
+  {
+    for(cf_usize batch = 0; batch < batch_count; batch++)
+    {
+      cf_usize a_base = 0;
+      cf_usize b_base = 0;
+      cf_usize out_base = 0;
+      cf_usize rest = batch;
+      const char *a_device;
+      const char *b_device;
+      char *out_device;
+
+      for(cf_usize batch_axis_i = batch_rank; batch_axis_i > 0; batch_axis_i--)
+      {
+        cf_usize axis = batch_axis_i - 1;
+        cf_usize coord = rest % out_dim[axis];
+        cf_isize a_axis = (cf_isize)axis - (cf_isize)(out_rank - op1->rank);
+        cf_isize b_axis = (cf_isize)axis - (cf_isize)(out_rank - op2->rank);
+
+        rest /= out_dim[axis];
+        out_base += coord * out_stride[axis];
+        if(a_axis >= 0 && op1->dim[(cf_usize)a_axis] != 1)
+          a_base += coord * op1->metadata.stride[(cf_usize)a_axis];
+        if(b_axis >= 0 && op2->dim[(cf_usize)b_axis] != 1)
+          b_base += coord * op2->metadata.stride[(cf_usize)b_axis];
+      }
+
+      a_device = (const char *)op1->device_data + a_base * op1->metadata.elem_size;
+      b_device = (const char *)op2->device_data + b_base * op2->metadata.elem_size;
+      out_device = (char *)result + out_base * op1->metadata.elem_size;
+
+      switch(op1->metadata.elem_type)
+      {
+        case CF_TENSOR_FLOAT:
+          status = cf_tensor_matrix_mul_cublaslt_2d(op1, op2, a_device, b_device, out_device, rows, inner, cols, CUBLAS_COMPUTE_32F_FAST_TF32);
+          if(status == CF_ERR_UNSUPPORTED)
+            status = cf_tensor_matrix_mul_cublaslt_2d(op1, op2, a_device, b_device, out_device, rows, inner, cols, CUBLAS_COMPUTE_32F);
+          break;
+        case CF_TENSOR_DOUBLE:
+          status = cf_tensor_matrix_mul_cublaslt_2d(op1, op2, a_device, b_device, out_device, rows, inner, cols, CUBLAS_COMPUTE_64F);
+          break;
+        default:
+          return CF_ERR_UNSUPPORTED;
+      }
+
+      if(status != CF_OK)
+      {
+        return status;
+      }
     }
   }
 
   if(op1->device_data != NULL && out_len <= op1->metadata.capacity)
   {
     cuda_status = cudaMemcpy(op1->device_data, result, out_bytes, cudaMemcpyDeviceToDevice);
-    cudaFree(result);
     if(cuda_status != cudaSuccess) return CF_ERR_CUDA_COPY;
   }
   else
   {
+    void *new_device_data = NULL;
+
+    cuda_status = cudaMalloc(&new_device_data, out_bytes);
+    if(cuda_status != cudaSuccess) return CF_ERR_CUDA_MEMORY;
+
+    cuda_status = cudaMemcpy(new_device_data, result, out_bytes, cudaMemcpyDeviceToDevice);
+    if(cuda_status != cudaSuccess)
+    {
+      cudaFree(new_device_data);
+      return CF_ERR_CUDA_COPY;
+    }
+
     if(op1->device_data != NULL) cudaFree(op1->device_data);
-    op1->device_data = result;
+    op1->device_data = new_device_data;
     op1->metadata.capacity = out_len;
   }
 
@@ -1066,6 +1395,8 @@ extern "C" cf_status cf_tensor_batch_mul_gpu(cf_tensor *op1, const cf_tensor *op
   }
 
   cf_tensor_cuda_apply_shape(op1, out_dim, out_rank, out_len);
+  status = cf_tensor_cuda_cache_shape(op1);
+  if(status != CF_OK) return status;
   op1->device = CF_TENSOR_DEVICE_CUDA;
 
   return CF_OK;

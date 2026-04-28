@@ -80,6 +80,7 @@ typedef struct cf_tensor
 {
   void *data;
   void *device_data;
+  void *backend_cache;
   cf_usize dim[CF_TENSOR_HIGHEST_RANK];
   cf_usize rank;
   cf_tensor_device device;
@@ -384,6 +385,12 @@ cf_status cf_tensor_to_cpu(cf_tensor *tensor);
  * @return CF_OK on success, otherwise a cf_status error.
  */
 cf_status cf_tensor_free_gpu(cf_tensor *tensor);
+
+/**
+ * @brief Synchronize the current CUDA device.
+ * @return CF_OK when all queued CUDA work completed, otherwise CF_ERR_CUDA_SYNC.
+ */
+cf_status cf_tensor_sync_gpu(void);
 
 /**
  * @brief In-place CUDA elementwise addition.
