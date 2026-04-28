@@ -23,6 +23,7 @@ typedef struct cf_tensor
 {
   void *data;
   void *device_data;
+  void *backend_cache;
   cf_usize dim[CF_TENSOR_HIGHEST_RANK];
   cf_usize rank;
   cf_tensor_device device;
@@ -39,6 +40,11 @@ Fields:
 - `device_data`
   - CUDA device memory.
   - Used by CUDA operations.
+
+- `backend_cache`
+  - Opaque backend-owned cache.
+  - CUDA uses it for shape/type-specific setup such as cuBLASLt matrix layouts.
+  - User code should not read or write it directly.
 
 - `dim`
   - Active tensor dimensions.
@@ -464,6 +470,20 @@ Critical points:
 - If CPU data exists, the tensor remains CPU-backed.
 - If the tensor was GPU-only, it is reset.
 
+### `cf_tensor_sync_gpu`
+
+```c
+cf_status cf_tensor_sync_gpu(void);
+```
+
+Synchronizes the current CUDA device.
+
+Critical points:
+
+- Useful for benchmarking GPU-resident operations without including download
+  time.
+- Returns `CF_ERR_CUDA_SYNC` when CUDA reports a synchronization failure.
+
 ### `cf_tensor_add_gpu`
 
 ```c
@@ -520,7 +540,7 @@ cf_status cf_tensor_batch_mul_gpu(cf_tensor *op1, const cf_tensor *op2);
 cf_status cf_tensor_matrix_mul_gpu(cf_tensor *op1, const cf_tensor *op2);
 ```
 
-CUDA batched matrix multiplication through cuBLASLt.
+CUDA matrix multiplication through cuBLAS/cuBLASLt.
 
 Critical points:
 
@@ -531,6 +551,11 @@ Critical points:
 - Result is stored back into `op1`.
 - `op1` shape becomes the broadcasted output shape.
 - Storage is row-major, matching the framework tensor layout.
+- Tensor initialization, reshape, resize, and upload prepare an opaque CUDA
+  backend cache for shape/type-specific metadata.
+- Single matrix multiplication uses cached cuBLASLt layouts and reuses the last
+  matching cuBLASLt algorithm heuristic stored in the backend cache. Dense
+  non-broadcast batches use cuBLAS strided-batched GEMM.
 - The float path tries TF32-enabled cuBLASLt compute first for throughput, then
   falls back to normal FP32 compute if the device/path does not support it.
 - Non-float/non-double tensor types return `CF_ERR_UNSUPPORTED` for matrix

@@ -353,7 +353,7 @@ void cf_tensor_destroy_cpu(cf_tensor *tensor)
   if(tensor == CF_NULL) return;
 
 #ifdef CF_CUDA_AVAILABLE
-  if(tensor->device_data != CF_NULL) (void)cf_tensor_free_gpu(tensor);
+  if(tensor->device_data != CF_NULL || tensor->backend_cache != CF_NULL) (void)cf_tensor_free_gpu(tensor);
 #endif
 
   if(tensor->data != CF_NULL) free(tensor->data);
@@ -400,7 +400,7 @@ cf_status cf_tensor_reserve_cpu(cf_tensor *tensor, cf_usize capacity)
   tensor->device = CF_TENSOR_DEVICE_CPU;
 
 #ifdef CF_CUDA_AVAILABLE
-  if(tensor->device_data != CF_NULL) (void)cf_tensor_free_gpu(tensor);
+  if(tensor->device_data != CF_NULL || tensor->backend_cache != CF_NULL) (void)cf_tensor_free_gpu(tensor);
 #endif
 
   return CF_OK;
@@ -721,7 +721,7 @@ cf_status cf_tensor_batch_mul_cpu(cf_tensor *op1, const cf_tensor *op2)
   }
 
 #ifdef CF_CUDA_AVAILABLE
-  if(op1->device_data != CF_NULL) (void)cf_tensor_free_gpu(op1);
+  if(op1->device_data != CF_NULL || op1->backend_cache != CF_NULL) (void)cf_tensor_free_gpu(op1);
 #endif
 
   if(op1->data != CF_NULL && out_len <= op1->metadata.capacity)
