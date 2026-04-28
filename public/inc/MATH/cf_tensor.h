@@ -19,19 +19,13 @@
 #if !defined(CF_TENSOR_H)
 #define CF_TENSOR_H
 
-#include "MEMORY/cf_memory.h"
-#include "MEMORY/cf_array.h"
-
 #include "RUNTIME/cf_status.h"
 #include "RUNTIME/cf_types.h"
 
 #define CF_TENSOR_HIGHEST_RANK 8
 
 /**
- * Device where tensor storage is currently owned.
- *
- * CUDA support is scaffolded here so operation dispatch can be extended without
- * changing the public tensor layout again.
+ * Storage backend that owns the newest tensor values.
  */
 typedef enum cf_tensor_device
 {
@@ -41,47 +35,46 @@ typedef enum cf_tensor_device
 
 /**
  * Element type stored by a tensor.
- *
- * The type controls allocation size and how generic tensor operations cast the
- * raw `data` pointer.
  */
 typedef enum cf_tensor_type
 {
   CF_TENSOR_CHAR = 0,
   CF_TENSOR_SHORT,
   CF_TENSOR_INT,
-  CF_TENSOR_LONG,  
-  CF_TENSOR_LL,  
-  CF_TENSOR_FLOAT,  
-  CF_TENSOR_DOUBLE,  
+  CF_TENSOR_LONG,
+  CF_TENSOR_LL,
+  CF_TENSOR_FLOAT,
+  CF_TENSOR_DOUBLE,
   CF_TENSOR_LD,
   CF_TENSOR_U8,
   CF_TENSOR_U16,
   CF_TENSOR_U32,
   CF_TENSOR_U64,
   CF_TENSOR_U128,
-}cf_tensor_type;
+} cf_tensor_type;
 
 /**
- * Runtime tensor layout information.
+ * Dense tensor metadata.
  *
- * `len` is the number of elements, not bytes. `stride` is expressed in elements
- * and follows row-major layout for tensors created by `cf_tensor_init`.
+ * `len` is the active element count. `capacity` is the allocated element count
+ * available for future reshapes/resizes. `stride` is row-major and expressed in
+ * elements, not bytes.
  */
 typedef struct cf_tensor_metadata
 {
   cf_usize len;
+  cf_usize capacity;
   cf_usize stride[CF_TENSOR_HIGHEST_RANK];
   cf_usize elem_size;
   cf_tensor_type elem_type;
 } cf_tensor_metadata;
 
 /**
- * Dense tensor object with rank up to `CF_TENSOR_HIGHEST_RANK`.
+ * Dense tensor with optional CPU and CUDA storage mirrors.
  *
- * `dim[0..rank-1]` stores the active shape. `data` is owned by the tensor after
- * successful initialization and must be released with `cf_tensor_destroy`.
- * `device` identifies where that storage is currently owned.
+ * Math operations mutate `op1` directly. The caller owns shape/type/device
+ * compatibility for hot operations; helper functions validate slower setup and
+ * data movement paths.
  */
 typedef struct cf_tensor
 {
@@ -91,172 +84,384 @@ typedef struct cf_tensor
   cf_usize rank;
   cf_tensor_device device;
   cf_tensor_metadata metadata;
-}cf_tensor;
+} cf_tensor;
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 /**
- * Check whether a tensor has a consistent shape, data pointer, element type,
- * byte size, length, and row-major stride metadata.
+ * @brief Return the byte size of one tensor element.
+ * @param elem_type Tensor element type.
+ * @return Element byte size, or 0 when elem_type is unknown.
  */
-cf_bool cf_tensor_is_valid(cf_tensor *tensor);
+cf_usize cf_tensor_element_size(cf_tensor_type elem_type);
 
 /**
- * Initialize a dense tensor.
- *
- * The caller supplies `rank` active dimensions in `dim`. The output tensor owns
- * a zeroed allocation on success and must later be destroyed.
- *
- * @return `CF_OK` on success, `CF_ERR_NULL`, `CF_ERR_INVALID`,
- * `CF_ERR_OVERFLOW`, or `CF_ERR_OOM`.
+ * @brief Validate tensor metadata and active storage.
+ * @param tensor Tensor to inspect.
+ * @return CF_TRUE when valid, otherwise CF_FALSE.
  */
-cf_status cf_tensor_init_cpu(cf_tensor *tensor, cf_usize dim[CF_TENSOR_HIGHEST_RANK], cf_usize rank, cf_tensor_type elem_type);
+cf_bool cf_tensor_is_valid(const cf_tensor *tensor);
 
 /**
- * Release tensor storage and reset the tensor to zero.
+ * @brief Initialize one zeroed CPU tensor.
+ * @param tensor Tensor object to initialize.
+ * @param dim Shape dimensions.
+ * @param rank Number of active dimensions.
+ * @param elem_type Element type.
+ * @return CF_OK on success, otherwise a cf_status error.
+ */
+cf_status cf_tensor_init_cpu(cf_tensor *tensor, const cf_usize dim[CF_TENSOR_HIGHEST_RANK], cf_usize rank, cf_tensor_type elem_type);
+
+/**
+ * @brief Initialize many CPU tensors with the same shape and element type.
+ * @param tensors Array of tensor pointers.
+ * @param count Number of tensors in the array.
+ * @param dim Shape dimensions.
+ * @param rank Number of active dimensions.
+ * @param elem_type Element type.
+ * @return CF_OK on success, otherwise a cf_status error.
+ */
+cf_status cf_tensor_init_many_cpu(cf_tensor **tensors, cf_usize count, const cf_usize dim[CF_TENSOR_HIGHEST_RANK], cf_usize rank, cf_tensor_type elem_type);
+
+/**
+ * @brief Release CPU storage and reset the tensor object.
+ * @param tensor Tensor to destroy.
  */
 void cf_tensor_destroy_cpu(cf_tensor *tensor);
 
 /**
- * Read one element from `tensor` into `out_value`.
- *
- * `indexs` must contain one coordinate for every active rank dimension.
+ * @brief Destroy many CPU tensors from an array of tensor pointers.
+ * @param tensors Array of tensor pointers.
+ * @param count Number of tensors in the array.
  */
-cf_status cf_tensor_get_cpu(void *out_value, cf_tensor *tensor, cf_usize indexs[CF_TENSOR_HIGHEST_RANK]);
+void cf_tensor_destroy_many_cpu(cf_tensor **tensors, cf_usize count);
 
 /**
- * Write one element into `tensor`.
- *
- * `indexs` must contain one coordinate for every active rank dimension.
+ * @brief Reserve CPU capacity without changing the active shape.
+ * @param tensor Tensor whose capacity should grow.
+ * @param capacity Minimum element capacity.
+ * @return CF_OK on success, otherwise a cf_status error.
  */
-cf_status cf_tensor_set_cpu(cf_tensor *tensor, cf_usize indexs[CF_TENSOR_HIGHEST_RANK], void *value);
+cf_status cf_tensor_reserve_cpu(cf_tensor *tensor, cf_usize capacity);
 
 /**
- * Print a tensor to stdout in a readable nested matrix form.
+ * @brief Change CPU tensor shape without allocation.
+ * @param tensor Tensor to reshape.
+ * @param dim New shape dimensions.
+ * @param rank New rank.
+ * @return CF_OK on success, otherwise a cf_status error.
  */
-void cf_tensor_print(cf_tensor *tensor);
+cf_status cf_tensor_reshape_cpu(cf_tensor *tensor, const cf_usize dim[CF_TENSOR_HIGHEST_RANK], cf_usize rank);
 
 /**
- * CPU elementwise tensor addition.
- *
- * All tensors must have matching rank and dimensions. `t_out` must already be
- * initialized with the same shape.
+ * @brief Change CPU tensor shape, growing storage when needed.
+ * @param tensor Tensor to resize.
+ * @param dim New shape dimensions.
+ * @param rank New rank.
+ * @return CF_OK on success, otherwise a cf_status error.
  */
-cf_status cf_tensor_add_cpu(cf_tensor *t1, cf_tensor *t2, cf_tensor *t_out);
+cf_status cf_tensor_resize_cpu(cf_tensor *tensor, const cf_usize dim[CF_TENSOR_HIGHEST_RANK], cf_usize rank);
 
-cf_status cf_tensor_mul_cpu(cf_tensor *t1, cf_tensor *t2, cf_tensor *t_out);
+/**
+ * @brief Copy data and shape from one CPU tensor to another.
+ * @param dst Destination tensor.
+ * @param src Source tensor.
+ * @return CF_OK on success, otherwise a cf_status error.
+ */
+cf_status cf_tensor_copy_cpu(cf_tensor *dst, const cf_tensor *src);
 
-cf_status cf_tensor_scalar_mul_cpu(cf_tensor *t1, void *scalar, cf_tensor *t_out);
+/**
+ * @brief Copy a plain array into a CPU tensor as a rank-1 vector.
+ * @param tensor Destination tensor.
+ * @param array Source array.
+ * @param count Number of elements to copy.
+ * @return CF_OK on success, otherwise a cf_status error.
+ */
+cf_status cf_tensor_copy_from_array_cpu(cf_tensor *tensor, const void *array, cf_usize count);
 
-cf_status cf_tensor_matrix_mul_cpu(cf_tensor *t1, cf_tensor *t2, cf_tensor *t_out);
+/**
+ * @brief Copy CPU tensor data into a plain array.
+ * @param array Destination array.
+ * @param tensor Source tensor.
+ * @param count Destination capacity in elements.
+ * @return CF_OK on success, otherwise a cf_status error.
+ */
+cf_status cf_tensor_copy_to_array_cpu(void *array, const cf_tensor *tensor, cf_usize count);
+
+/**
+ * @brief Read one CPU tensor element by logical indices.
+ * @param out_value Destination value pointer.
+ * @param tensor Source tensor.
+ * @param indexs Logical coordinates.
+ * @return CF_OK on success, otherwise a cf_status error.
+ */
+cf_status cf_tensor_get_cpu(void *out_value, const cf_tensor *tensor, const cf_usize indexs[CF_TENSOR_HIGHEST_RANK]);
+
+/**
+ * @brief Write one CPU tensor element by logical indices.
+ * @param tensor Destination tensor.
+ * @param indexs Logical coordinates.
+ * @param value Source value pointer.
+ * @return CF_OK on success, otherwise a cf_status error.
+ */
+cf_status cf_tensor_set_cpu(cf_tensor *tensor, const cf_usize indexs[CF_TENSOR_HIGHEST_RANK], const void *value);
+
+/**
+ * @brief Print a CPU-visible tensor in nested row-major form.
+ * @param tensor Tensor to print.
+ */
+void cf_tensor_print(const cf_tensor *tensor);
+
+/**
+ * @brief In-place CPU elementwise addition.
+ * @param op1 Left operand and destination tensor.
+ * @param op2 Right operand tensor.
+ * @note Hot-path preconditions are caller-owned.
+ * @return CF_OK on success, otherwise a cf_status error.
+ */
+cf_status cf_tensor_add_cpu(cf_tensor *op1, const cf_tensor *op2);
+
+/**
+ * @brief In-place CPU elementwise multiplication.
+ * @param op1 Left operand and destination tensor.
+ * @param op2 Right operand tensor.
+ * @note Hot-path preconditions are caller-owned.
+ * @return CF_OK on success, otherwise a cf_status error.
+ */
+cf_status cf_tensor_mul_cpu(cf_tensor *op1, const cf_tensor *op2);
+
+/**
+ * @brief In-place CPU scalar multiplication.
+ * @param op1 Operand and destination tensor.
+ * @param scalar Pointer to one value of the same element type as op1.
+ * @return CF_OK on success, otherwise a cf_status error.
+ */
+cf_status cf_tensor_scalar_mul_cpu(cf_tensor *op1, const void *scalar);
+
+/**
+ * @brief In-place CPU batched matrix multiplication.
+ * @param op1 Left operand and destination tensor.
+ * @param op2 Right operand tensor.
+ * @details Supports `[..., M, K] @ [..., K, N] -> [..., M, N]`.
+ * @return CF_OK on success, otherwise a cf_status error.
+ */
+cf_status cf_tensor_batch_mul_cpu(cf_tensor *op1, const cf_tensor *op2);
+
+/**
+ * @brief In-place CPU matrix multiplication.
+ * @param op1 Left operand and destination tensor.
+ * @param op2 Right operand tensor.
+ * @details This calls cf_tensor_batch_mul_cpu.
+ * @return CF_OK on success, otherwise a cf_status error.
+ */
+cf_status cf_tensor_matrix_mul_cpu(cf_tensor *op1, const cf_tensor *op2);
 
 #ifdef CF_CUDA_AVAILABLE
 
 /**
- * CUDA elementwise tensor addition.
- *
- * `t_out` must already be initialized with the expected output shape.
+ * @brief Initialize one zeroed CUDA tensor.
+ * @param tensor Tensor object to initialize.
+ * @param dim Shape dimensions.
+ * @param rank Number of active dimensions.
+ * @param elem_type Element type.
+ * @return CF_OK on success, otherwise a cf_status error.
  */
-cf_status cf_tensor_add_gpu(cf_tensor *t1, cf_tensor *t2, cf_tensor *t_out);
+cf_status cf_tensor_init_gpu(cf_tensor *tensor, const cf_usize dim[CF_TENSOR_HIGHEST_RANK], cf_usize rank, cf_tensor_type elem_type);
 
-cf_status cf_tensor_init_gpu(cf_tensor *tensor, cf_usize dim[CF_TENSOR_HIGHEST_RANK], cf_usize rank, cf_tensor_type elem_type);
+/**
+ * @brief Initialize many CUDA tensors with the same shape and element type.
+ * @param tensors Array of tensor pointers.
+ * @param count Number of tensors in the array.
+ * @param dim Shape dimensions.
+ * @param rank Number of active dimensions.
+ * @param elem_type Element type.
+ * @return CF_OK on success, otherwise a cf_status error.
+ */
+cf_status cf_tensor_init_many_gpu(cf_tensor **tensors, cf_usize count, const cf_usize dim[CF_TENSOR_HIGHEST_RANK], cf_usize rank, cf_tensor_type elem_type);
 
+/**
+ * @brief Release CUDA and CPU mirror storage, then reset the tensor object.
+ * @param tensor Tensor to destroy.
+ */
 void cf_tensor_destroy_gpu(cf_tensor *tensor);
 
-cf_status cf_tensor_get_gpu(void *out_value, cf_tensor *tensor, cf_usize indexs[CF_TENSOR_HIGHEST_RANK]);
+/**
+ * @brief Destroy many CUDA tensors from an array of tensor pointers.
+ * @param tensors Array of tensor pointers.
+ * @param count Number of tensors in the array.
+ */
+void cf_tensor_destroy_many_gpu(cf_tensor **tensors, cf_usize count);
 
-cf_status cf_tensor_set_gpu(cf_tensor *tensor, cf_usize indexs[CF_TENSOR_HIGHEST_RANK], void *value);
+/**
+ * @brief Reserve CUDA capacity without changing the active shape.
+ * @param tensor Tensor whose capacity should grow.
+ * @param capacity Minimum element capacity.
+ * @return CF_OK on success, otherwise a cf_status error.
+ */
+cf_status cf_tensor_reserve_gpu(cf_tensor *tensor, cf_usize capacity);
 
+/**
+ * @brief Change CUDA tensor shape without allocation.
+ * @param tensor Tensor to reshape.
+ * @param dim New shape dimensions.
+ * @param rank New rank.
+ * @return CF_OK on success, otherwise a cf_status error.
+ */
+cf_status cf_tensor_reshape_gpu(cf_tensor *tensor, const cf_usize dim[CF_TENSOR_HIGHEST_RANK], cf_usize rank);
+
+/**
+ * @brief Change CUDA tensor shape, growing storage when needed.
+ * @param tensor Tensor to resize.
+ * @param dim New shape dimensions.
+ * @param rank New rank.
+ * @return CF_OK on success, otherwise a cf_status error.
+ */
+cf_status cf_tensor_resize_gpu(cf_tensor *tensor, const cf_usize dim[CF_TENSOR_HIGHEST_RANK], cf_usize rank);
+
+/**
+ * @brief Copy data and shape between CUDA tensors.
+ * @param dst Destination tensor.
+ * @param src Source tensor.
+ * @return CF_OK on success, otherwise a cf_status error.
+ */
+cf_status cf_tensor_copy_gpu(cf_tensor *dst, const cf_tensor *src);
+
+/**
+ * @brief Copy a host array into a CUDA tensor as a rank-1 vector.
+ * @param tensor Destination tensor.
+ * @param array Source array.
+ * @param count Number of elements to copy.
+ * @return CF_OK on success, otherwise a cf_status error.
+ */
+cf_status cf_tensor_copy_from_array_gpu(cf_tensor *tensor, const void *array, cf_usize count);
+
+/**
+ * @brief Copy CUDA tensor data into a host array.
+ * @param array Destination host array.
+ * @param tensor Source CUDA tensor.
+ * @param count Destination capacity in elements.
+ * @return CF_OK on success, otherwise a cf_status error.
+ */
+cf_status cf_tensor_copy_to_array_gpu(void *array, const cf_tensor *tensor, cf_usize count);
+
+/**
+ * @brief Read one CUDA tensor element into host memory.
+ * @param out_value Destination host value pointer.
+ * @param tensor Source CUDA tensor.
+ * @param indexs Logical coordinates.
+ * @return CF_OK on success, otherwise a cf_status error.
+ */
+cf_status cf_tensor_get_gpu(void *out_value, const cf_tensor *tensor, const cf_usize indexs[CF_TENSOR_HIGHEST_RANK]);
+
+/**
+ * @brief Write one CUDA tensor element from host memory.
+ * @param tensor Destination CUDA tensor.
+ * @param indexs Logical coordinates.
+ * @param value Source host value pointer.
+ * @return CF_OK on success, otherwise a cf_status error.
+ */
+cf_status cf_tensor_set_gpu(cf_tensor *tensor, const cf_usize indexs[CF_TENSOR_HIGHEST_RANK], const void *value);
+
+/**
+ * @brief Upload CPU storage into CUDA storage and make CUDA the active backend.
+ * @param tensor Tensor to upload.
+ * @return CF_OK on success, otherwise a cf_status error.
+ */
 cf_status cf_tensor_to_gpu(cf_tensor *tensor);
 
+/**
+ * @brief Download CUDA storage into CPU storage and make CPU the active backend.
+ * @param tensor Tensor to download.
+ * @return CF_OK on success, otherwise a cf_status error.
+ */
 cf_status cf_tensor_to_cpu(cf_tensor *tensor);
 
+/**
+ * @brief Free only CUDA storage, preserving CPU storage when it exists.
+ * @param tensor Tensor whose CUDA storage should be released.
+ * @return CF_OK on success, otherwise a cf_status error.
+ */
 cf_status cf_tensor_free_gpu(cf_tensor *tensor);
 
 /**
- * CUDA scalar multiplication entry point.
- *
- * Placeholder API for CUDA builds; implementation can be filled with a kernel
- * later while keeping `cf_tensor_scalar_mul` stable.
+ * @brief In-place CUDA elementwise addition.
+ * @param op1 Left operand and destination tensor.
+ * @param op2 Right operand tensor.
+ * @return CF_OK on success, otherwise a cf_status error.
  */
-cf_status cf_tensor_scalar_mul_gpu(cf_tensor *t1, void *scalar, cf_tensor *t_out);
+cf_status cf_tensor_add_gpu(cf_tensor *op1, const cf_tensor *op2);
 
 /**
- * CUDA tensor multiplication entry point.
- *
- * This API is selected by `cf_tensor_mul` when CUDA is available.
+ * @brief In-place CUDA elementwise multiplication.
+ * @param op1 Left operand and destination tensor.
+ * @param op2 Right operand tensor.
+ * @return CF_OK on success, otherwise a cf_status error.
  */
-cf_status cf_tensor_mul_gpu(cf_tensor *t1, cf_tensor *t2, cf_tensor *t_out);
+cf_status cf_tensor_mul_gpu(cf_tensor *op1, const cf_tensor *op2);
 
 /**
- * CUDA matrix multiplication entry point.
- *
- * Placeholder API for CUDA builds; shape validation should stay compatible with
- * the CPU implementation before launching future kernels.
+ * @brief In-place CUDA scalar multiplication.
+ * @param op1 Operand and destination tensor.
+ * @param scalar Pointer to one host value of the same element type as op1.
+ * @return CF_OK on success, otherwise a cf_status error.
  */
-cf_status cf_tensor_matrix_mul_gpu(cf_tensor *t1, cf_tensor *t2, cf_tensor *t_out);
+cf_status cf_tensor_scalar_mul_gpu(cf_tensor *op1, const void *scalar);
 
-#define cf_tensor_add(t1, t2, t_out) cf_tensor_add_gpu(t1, t2, t_out)
+/**
+ * @brief In-place CUDA batched matrix multiplication through cuBLASLt.
+ * @param op1 Left operand and destination tensor.
+ * @param op2 Right operand tensor.
+ * @return CF_OK on success, otherwise a cf_status error.
+ */
+cf_status cf_tensor_batch_mul_gpu(cf_tensor *op1, const cf_tensor *op2);
 
-#define cf_tensor_init(tensor, dim, rank, elem_type) cf_tensor_init_gpu(tensor, dim, rank, elem_type)
+/**
+ * @brief In-place CUDA matrix multiplication through cuBLASLt.
+ * @param op1 Left operand and destination tensor.
+ * @param op2 Right operand tensor.
+ * @return CF_OK on success, otherwise a cf_status error.
+ */
+cf_status cf_tensor_matrix_mul_gpu(cf_tensor *op1, const cf_tensor *op2);
 
-#define cf_tensor_destroy(tensor) cf_tensor_destroy_gpu(tensor)
-
-#define cf_tensor_get(out_value, tensor, indexs) cf_tensor_get_gpu(out_value, tensor, indexs)
-
-#define cf_tensor_set(tensor, indexs, value) cf_tensor_set_gpu(tensor, indexs, value)
-
-#define cf_tensor_mul(t1, t2, t_out) cf_tensor_mul_gpu(t1, t2, t_out)
-
-#define cf_tensor_scalar_mul(t1, scalar, t_out) cf_tensor_scalar_mul_gpu(t1, scalar, t_out)
-
-#define cf_tensor_matrice_mul(t1, t2, t_out) cf_tensor_matrix_mul_gpu(t1, t2, t_out)
+#define cf_tensor_init(tensor, dim, rank, elem_type) cf_tensor_init_gpu((tensor), (dim), (rank), (elem_type))
+#define cf_tensor_init_many(tensors, count, dim, rank, elem_type) cf_tensor_init_many_gpu((tensors), (count), (dim), (rank), (elem_type))
+#define cf_tensor_destroy(tensor) cf_tensor_destroy_gpu((tensor))
+#define cf_tensor_destroy_many(tensors, count) cf_tensor_destroy_many_gpu((tensors), (count))
+#define cf_tensor_reserve(tensor, capacity) cf_tensor_reserve_gpu((tensor), (capacity))
+#define cf_tensor_reshape(tensor, dim, rank) cf_tensor_reshape_gpu((tensor), (dim), (rank))
+#define cf_tensor_resize(tensor, dim, rank) cf_tensor_resize_gpu((tensor), (dim), (rank))
+#define cf_tensor_copy(dst, src) cf_tensor_copy_gpu((dst), (src))
+#define cf_tensor_copy_from_array(tensor, array, count) cf_tensor_copy_from_array_gpu((tensor), (array), (count))
+#define cf_tensor_copy_to_array(array, tensor, count) cf_tensor_copy_to_array_gpu((array), (tensor), (count))
+#define cf_tensor_get(out_value, tensor, indexs) cf_tensor_get_gpu((out_value), (tensor), (indexs))
+#define cf_tensor_set(tensor, indexs, value) cf_tensor_set_gpu((tensor), (indexs), (value))
+#define cf_tensor_add(op1, op2) cf_tensor_add_gpu((op1), (op2))
+#define cf_tensor_mul(op1, op2) cf_tensor_mul_gpu((op1), (op2))
+#define cf_tensor_scalar_mul(op1, scalar) cf_tensor_scalar_mul_gpu((op1), (scalar))
+#define cf_tensor_matrix_mul(op1, op2) cf_tensor_matrix_mul_gpu((op1), (op2))
+#define cf_tensor_batch_mul(op1, op2) cf_tensor_batch_mul_gpu((op1), (op2))
 
 #else
 
-/**
- * CPU elementwise tensor addition.
- *
- * All tensors must have matching rank and dimensions. `t_out` must already be
- * initialized with the same shape.
- */
-cf_status cf_tensor_add_cpu(cf_tensor *t1, cf_tensor *t2, cf_tensor *t_out);
-
-/**
- * CPU scalar multiplication.
- *
- * Multiplies every element in `t1` by `scalar` and writes the result to
- * initialized `t_out`.
- */
-cf_status cf_tensor_scalar_mul_cpu(cf_tensor *t1, void *scalar, cf_tensor *t_out);
-
-/**
- * CPU matrix multiplication.
- *
- * Supports scalar fallback for rank 0 inputs, vector/matrix normalization for
- * rank 1 inputs, and batched matrix multiplication with broadcast-compatible
- * leading dimensions. `t_out` must already be initialized with the expected
- * result shape.
- */
-cf_status cf_tensor_matrix_mul_cpu(cf_tensor *t1, cf_tensor *t2, cf_tensor *t_out);
-
-#define cf_tensor_add(t1, t2, t_out) cf_tensor_add_cpu(t1, t2, t_out)
-
-#define cf_tensor_init(tensor, dim, rank, elem_type) cf_tensor_init_cpu(tensor, dim, rank, elem_type)
-
-#define cf_tensor_destroy(tensor) cf_tensor_destroy_cpu(tensor)
-
-#define cf_tensor_get(out_value, tensor, indexs) cf_tensor_get_cpu(out_value, tensor, indexs)
-
-#define cf_tensor_set(tensor, indexs, value) cf_tensor_set_cpu(tensor, indexs, value)
-
-#define cf_tensor_mul(t1, t2, t_out) cf_tensor_mul_cpu(t1, t2, t_out)
-
-#define cf_tensor_scalar_mul(t1, scalar, t_out) cf_tensor_scalar_mul_cpu(t1, scalar, t_out)
-
-#define cf_tensor_matrice_mul(t1, t2, t_out) cf_tensor_matrix_mul_cpu(t1, t2, t_out)
+#define cf_tensor_init(tensor, dim, rank, elem_type) cf_tensor_init_cpu((tensor), (dim), (rank), (elem_type))
+#define cf_tensor_init_many(tensors, count, dim, rank, elem_type) cf_tensor_init_many_cpu((tensors), (count), (dim), (rank), (elem_type))
+#define cf_tensor_destroy(tensor) cf_tensor_destroy_cpu((tensor))
+#define cf_tensor_destroy_many(tensors, count) cf_tensor_destroy_many_cpu((tensors), (count))
+#define cf_tensor_reserve(tensor, capacity) cf_tensor_reserve_cpu((tensor), (capacity))
+#define cf_tensor_reshape(tensor, dim, rank) cf_tensor_reshape_cpu((tensor), (dim), (rank))
+#define cf_tensor_resize(tensor, dim, rank) cf_tensor_resize_cpu((tensor), (dim), (rank))
+#define cf_tensor_copy(dst, src) cf_tensor_copy_cpu((dst), (src))
+#define cf_tensor_copy_from_array(tensor, array, count) cf_tensor_copy_from_array_cpu((tensor), (array), (count))
+#define cf_tensor_copy_to_array(array, tensor, count) cf_tensor_copy_to_array_cpu((array), (tensor), (count))
+#define cf_tensor_get(out_value, tensor, indexs) cf_tensor_get_cpu((out_value), (tensor), (indexs))
+#define cf_tensor_set(tensor, indexs, value) cf_tensor_set_cpu((tensor), (indexs), (value))
+#define cf_tensor_add(op1, op2) cf_tensor_add_cpu((op1), (op2))
+#define cf_tensor_mul(op1, op2) cf_tensor_mul_cpu((op1), (op2))
+#define cf_tensor_scalar_mul(op1, scalar) cf_tensor_scalar_mul_cpu((op1), (scalar))
+#define cf_tensor_matrix_mul(op1, op2) cf_tensor_matrix_mul_cpu((op1), (op2))
+#define cf_tensor_batch_mul(op1, op2) cf_tensor_batch_mul_cpu((op1), (op2))
 
 #endif
 

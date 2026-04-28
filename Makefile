@@ -49,6 +49,7 @@ OBJS_ASM :=
 NVCC ?= $(shell command -v nvcc 2>&1)
 CUDA_AVAILABLE := $(if $(NVCC),1,0)
 FLAG_CUDA := -O3
+LIBS_CUDA :=
 SRCS_CUDA :=
 OBJS_CUDA :=
 
@@ -74,6 +75,7 @@ endif
 
 ifeq ($(CUDA_AVAILABLE),1)
 FLAG_C += -DCF_CUDA_AVAILABLE=1
+LIBS_CUDA := -lcublasLt -lcublas
 SRCS_CUDA := $(shell find lib/src -name '*.cu')
 OBJS_CUDA := $(patsubst lib/src/%.cu, lib/bin/%.o, $(SRCS_CUDA))
 LINK := $(NVCC)
@@ -94,7 +96,7 @@ runApp: app/build/app
 
 app/build/app: app/bin/app.o $(OBJS_C) $(OBJS_ASM) $(OBJS_CUDA)
 	@mkdir -p $(dir $@)
-	@$(LINK) $^ -o $@
+	@$(LINK) $^ $(LIBS_CUDA) -o $@
 
 app/bin/app.o: app/src/app.c
 	@mkdir -p $(dir $@)
@@ -130,7 +132,7 @@ runTests: tests/build/test
 
 tests/build/test: tests/bin/test.o $(OBJS_C) $(OBJS_ASM) $(OBJS_CUDA)
 	@mkdir -p $(dir $@)
-	@$(LINK) $^ -o $@
+	@$(LINK) $^ $(LIBS_CUDA) -o $@
 
 tests/bin/test.o: tests/src/test.c
 	@mkdir -p $(dir $@)

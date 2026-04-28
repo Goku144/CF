@@ -22,612 +22,736 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define CF_TENSOR_TYPE_CASE(tensor_type, type) \
+#define CF_TENSOR_TYPE_SIZE_CASE(tensor_type, type) \
 case tensor_type: \
-    return sizeof (type) \
+  return sizeof(type)
 
-#define CF_TENSOR_GET_CASE(tensor_type , to, from, index, type) \
+#define CF_TENSOR_GET_CASE(tensor_type, type) \
 case tensor_type: \
-      *((type *) to) = ((type *) from)[index]; \
-      break \
+  *((type *)out_value) = ((const type *)tensor->data)[index]; \
+  break
 
-#define CF_TENSOR_SET_CASE(tensor_type , to, from, index, type) \
+#define CF_TENSOR_SET_CASE(tensor_type, type) \
 case tensor_type: \
-      ((type *) to)[index] = *((type *) from); \
-      break \
+  ((type *)tensor->data)[index] = *((const type *)value); \
+  break
 
-#define CF_TENSOR_ADD_CASE(tensor_type, a, b, c, len, type) \
+#define CF_TENSOR_ADD_CASE(tensor_type, type) \
 case tensor_type: \
-  for (cf_usize index = 0; index < len; index++) \
+{ \
+  type *a = (type *)op1->data; \
+  const type *b = (const type *)op2->data; \
+  for(cf_usize i = 0; i < len; i++) a[i] = (type)(a[i] + b[i]); \
+  break; \
+}
+
+#define CF_TENSOR_MUL_CASE(tensor_type, type) \
+case tensor_type: \
+{ \
+  type *a = (type *)op1->data; \
+  const type *b = (const type *)op2->data; \
+  for(cf_usize i = 0; i < len; i++) a[i] = (type)(a[i] * b[i]); \
+  break; \
+}
+
+#define CF_TENSOR_SCALAR_CASE(tensor_type, type) \
+case tensor_type: \
+{ \
+  type *a = (type *)op1->data; \
+  type value = *((const type *)scalar); \
+  for(cf_usize i = 0; i < len; i++) a[i] = (type)(a[i] * value); \
+  break; \
+}
+
+#define CF_TENSOR_BATCH_MUL_CASE(tensor_type, type) \
+case tensor_type: \
+{ \
+  const type *a = (const type *)op1->data; \
+  const type *b = (const type *)op2->data; \
+  type *out = (type *)result; \
+  for(cf_usize batch = 0; batch < batch_count; batch++) \
   { \
-    ((type *) c)[index] = ((type *) a)[index] + ((type *) b)[index]; \
-  } \
-  break \
-
-#define CF_TENSOR_MUL_CASE(tensor_type, a, b, c, len, type) \
-case tensor_type: \
-  for (cf_usize index = 0; index < len; index++) \
-  { \
-    ((type *) c)[index] = ((type *) a)[index] * ((type *) b)[index]; \
-  } \
-  break \
-
-#define CF_TENSOR_SCALAR_CASE(tensor_type, a, scalar, c, len, type) \
-case tensor_type: \
-  for (cf_usize index = 0; index < len; index++) \
-  { \
-    ((type *) c)[index] = ((type *) a)[index] * *((type *) scalar); \
-  } \
-  break \
-
-#define CF_TENSOR_MATRIX_MUL_CASE(tensor_type, A, B, C, type) \
-case tensor_type :\
-{\
-  cf_usize M = A->dim[max_rank - 2];\
-  cf_usize K = A->dim[max_rank - 1];\
-  cf_usize N = B->dim[max_rank - 1];\
-  for (size_t batch = 0; batch < count; batch++) \
-	  { \
-	    cf_usize base_A = 0; \
-	    cf_usize base_B = 0; \
-    cf_usize base_C = 0; \
+    cf_usize a_base = 0; \
+    cf_usize b_base = 0; \
+    cf_usize out_base = 0; \
     cf_usize rest = batch; \
- \
-    for (cf_isize i = (cf_isize) max_rank - 3; i >= 0; i--) \
+    for(cf_usize batch_axis_i = batch_rank; batch_axis_i > 0; batch_axis_i--) \
     { \
-      cf_usize coord = rest % C->dim[i]; \
-      rest /= C->dim[i]; \
- \
-      cf_usize coord_A = A->dim[i] == 1 ? 0 : coord; \
-      cf_usize coord_B = B->dim[i] == 1 ? 0 : coord; \
- \
-      base_A += coord_A * A->metadata.stride[i]; \
-      base_B += coord_B * B->metadata.stride[i]; \
-      base_C += coord * C->metadata.stride[i]; \
+      cf_usize axis = batch_axis_i - 1; \
+      cf_usize coord = rest % out_dim[axis]; \
+      cf_isize a_axis = (cf_isize)axis - (cf_isize)(out_rank - op1->rank); \
+      cf_isize b_axis = (cf_isize)axis - (cf_isize)(out_rank - op2->rank); \
+      rest /= out_dim[axis]; \
+      out_base += coord * out_stride[axis]; \
+      if(a_axis >= 0 && op1->dim[(cf_usize)a_axis] != 1) \
+        a_base += coord * op1->metadata.stride[(cf_usize)a_axis]; \
+      if(b_axis >= 0 && op2->dim[(cf_usize)b_axis] != 1) \
+        b_base += coord * op2->metadata.stride[(cf_usize)b_axis]; \
     } \
-     \
-	    for (cf_usize m = 0; m < M; m++) \
-	    { \
-	      for (cf_usize n = 0; n < N; n++) \
-	      { \
-	        type sum = 0; \
-	        for (cf_usize k = 0; k < K; k++) \
-	        { \
-          sum += ((type *)A->data)[base_A + m * A->metadata.stride[max_rank - 2] + k * A->metadata.stride[max_rank - 1]]*  \
-                 ((type *)B->data)[base_B + k * B->metadata.stride[max_rank - 2] + n * B->metadata.stride[max_rank - 1]]; \
+    for(cf_usize row = 0; row < rows; row++) \
+    { \
+      for(cf_usize col = 0; col < cols; col++) \
+      { \
+        type sum = (type)0; \
+        for(cf_usize inner_index = 0; inner_index < inner; inner_index++) \
+        { \
+          sum = (type)(sum + \
+            a[a_base + row * op1->metadata.stride[op1->rank - 2] + inner_index * op1->metadata.stride[op1->rank - 1]] * \
+            b[b_base + inner_index * op2->metadata.stride[op2->rank - 2] + col * op2->metadata.stride[op2->rank - 1]]); \
         } \
-        ((type *)C->data)[base_C + m * C->metadata.stride[max_rank - 2] + n * C->metadata.stride[max_rank - 1]] = sum; \
+        out[out_base + row * out_stride[batch_rank] + col * out_stride[batch_rank + 1]] = sum; \
       } \
-	    } \
-	  } \
-} \
-	  break \
+    } \
+  } \
+  break; \
+}
 
-
-/*
- * Map the framework tensor enum to the native storage width used by the CPU
- * backend. This is the root type table for allocation, validation, and typed
- * dispatch in this file.
- */
-static cf_usize cf_tensor_type_size(cf_tensor_type elem_type)
+cf_usize cf_tensor_element_size(cf_tensor_type elem_type)
 {
-  switch (elem_type)
+  switch(elem_type)
   {
-    CF_TENSOR_TYPE_CASE(CF_TENSOR_CHAR, char);
-    CF_TENSOR_TYPE_CASE(CF_TENSOR_SHORT, short);
-    CF_TENSOR_TYPE_CASE(CF_TENSOR_INT, int);
-    CF_TENSOR_TYPE_CASE(CF_TENSOR_LONG, long);
-    CF_TENSOR_TYPE_CASE(CF_TENSOR_LL, long long);
-    CF_TENSOR_TYPE_CASE(CF_TENSOR_FLOAT, float);
-    CF_TENSOR_TYPE_CASE(CF_TENSOR_DOUBLE, double);
-    CF_TENSOR_TYPE_CASE(CF_TENSOR_LD, long double);
-    CF_TENSOR_TYPE_CASE(CF_TENSOR_U8, cf_u8);
-    CF_TENSOR_TYPE_CASE(CF_TENSOR_U16, cf_u16);
-    CF_TENSOR_TYPE_CASE(CF_TENSOR_U32, cf_u32);
-    CF_TENSOR_TYPE_CASE(CF_TENSOR_U64, cf_u64);
-    CF_TENSOR_TYPE_CASE(CF_TENSOR_U128, cf_u128);
+    CF_TENSOR_TYPE_SIZE_CASE(CF_TENSOR_CHAR, char);
+    CF_TENSOR_TYPE_SIZE_CASE(CF_TENSOR_SHORT, short);
+    CF_TENSOR_TYPE_SIZE_CASE(CF_TENSOR_INT, int);
+    CF_TENSOR_TYPE_SIZE_CASE(CF_TENSOR_LONG, long);
+    CF_TENSOR_TYPE_SIZE_CASE(CF_TENSOR_LL, long long);
+    CF_TENSOR_TYPE_SIZE_CASE(CF_TENSOR_FLOAT, float);
+    CF_TENSOR_TYPE_SIZE_CASE(CF_TENSOR_DOUBLE, double);
+    CF_TENSOR_TYPE_SIZE_CASE(CF_TENSOR_LD, long double);
+    CF_TENSOR_TYPE_SIZE_CASE(CF_TENSOR_U8, cf_u8);
+    CF_TENSOR_TYPE_SIZE_CASE(CF_TENSOR_U16, cf_u16);
+    CF_TENSOR_TYPE_SIZE_CASE(CF_TENSOR_U32, cf_u32);
+    CF_TENSOR_TYPE_SIZE_CASE(CF_TENSOR_U64, cf_u64);
+    CF_TENSOR_TYPE_SIZE_CASE(CF_TENSOR_U128, cf_u128);
     default: return 0;
   }
 }
 
-/*
- * Decide whether the CPU backend can store and operate on a tensor element
- * type. CPU currently supports every framework tensor type that has a native
- * size entry.
- */
-static cf_bool cf_tensor_cpu_type_supported(cf_tensor_type elem_type)
+static cf_status cf_tensor_checked_bytes(cf_usize count, cf_usize elem_size, cf_usize *out_bytes)
 {
-  return cf_tensor_type_size(elem_type) != 0;
+  if(out_bytes == CF_NULL) return CF_ERR_NULL;
+  if(elem_size != 0 && count > SIZE_MAX / elem_size) return CF_ERR_OVERFLOW;
+
+  *out_bytes = count * elem_size;
+  return CF_OK;
 }
 
-/*
- * Build the common dense tensor metadata used by CPU and mirrored by the CUDA
- * backend: shape, row-major strides, element count, element size, and type.
- * Storage allocation is intentionally left to the caller.
- */
-static cf_status cf_tensor_setup_metadata(cf_tensor *tensor, cf_usize dim[CF_TENSOR_HIGHEST_RANK], cf_usize rank, cf_tensor_type elem_type)
+static cf_status cf_tensor_shape_len(const cf_usize dim[CF_TENSOR_HIGHEST_RANK], cf_usize rank, cf_usize *out_len)
 {
-  if(tensor == CF_NULL || dim == CF_NULL) return CF_ERR_NULL;
-  if(rank > CF_TENSOR_HIGHEST_RANK) return CF_ERR_INVALID;
-  if(!cf_tensor_cpu_type_supported(elem_type)) return CF_ERR_INVALID;
+  cf_usize len = 1;
 
-  *tensor = (cf_tensor) {0};
-  tensor->metadata.elem_size = cf_tensor_type_size(elem_type);
-  tensor->metadata.elem_type = elem_type;
+  if(out_len == CF_NULL) return CF_ERR_NULL;
+  if(rank > CF_TENSOR_HIGHEST_RANK) return CF_ERR_INVALID;
+  if(rank != 0 && dim == CF_NULL) return CF_ERR_NULL;
 
   for(cf_usize i = 0; i < rank; i++)
   {
     if(dim[i] == 0) return CF_ERR_INVALID;
-    tensor->dim[i] = dim[i];
+    if(len > SIZE_MAX / dim[i]) return CF_ERR_OVERFLOW;
+    len *= dim[i];
   }
+
+  *out_len = len;
+  return CF_OK;
+}
+
+static void cf_tensor_apply_shape(cf_tensor *tensor, const cf_usize dim[CF_TENSOR_HIGHEST_RANK], cf_usize rank, cf_usize len)
+{
+  memset(tensor->dim, 0, sizeof(tensor->dim));
+  memset(tensor->metadata.stride, 0, sizeof(tensor->metadata.stride));
+
   tensor->rank = rank;
+  tensor->metadata.len = len;
 
-  tensor->metadata.len = 1;
-  cf_usize end = rank > 0 ? rank - 1 : 0;
-  for (cf_usize i = 0; i < rank; i++)
+  for(cf_usize i = 0; i < rank; i++) tensor->dim[i] = dim[i];
+
+  cf_usize stride = 1;
+  for(cf_usize i = rank; i > 0; i--)
   {
-    tensor->metadata.stride[end - i] = tensor->metadata.len;
-    if(tensor->metadata.len > CF_USIZE_MAX / dim[end - i]) return CF_ERR_OVERFLOW;
-    tensor->metadata.len *= dim[end - i];
+    cf_usize index = i - 1;
+    tensor->metadata.stride[index] = stride;
+    stride *= tensor->dim[index];
   }
+}
+
+static void cf_tensor_dense_stride(const cf_usize dim[CF_TENSOR_HIGHEST_RANK], cf_usize rank, cf_usize stride[CF_TENSOR_HIGHEST_RANK])
+{
+  memset(stride, 0, sizeof(cf_usize) * CF_TENSOR_HIGHEST_RANK);
+
+  cf_usize value = 1;
+  for(cf_usize i = rank; i > 0; i--)
+  {
+    cf_usize index = i - 1;
+    stride[index] = value;
+    value *= dim[index];
+  }
+}
+
+static cf_status cf_tensor_batch_mul_shape(const cf_tensor *op1, const cf_tensor *op2, cf_usize out_dim[CF_TENSOR_HIGHEST_RANK], cf_usize *out_rank, cf_usize *out_len, cf_usize *batch_count)
+{
+  cf_usize rank;
+  cf_usize batch_rank;
+  cf_usize batches = 1;
+  cf_usize rows;
+  cf_usize cols;
+
+  if(op1 == CF_NULL || op2 == CF_NULL || out_dim == CF_NULL || out_rank == CF_NULL || out_len == CF_NULL || batch_count == CF_NULL)
+    return CF_ERR_NULL;
+  if(op1->rank < 2 || op2->rank < 2) return CF_ERR_INVALID;
+  if(op1->metadata.elem_type != op2->metadata.elem_type) return CF_ERR_INVALID;
+  if(op1->metadata.elem_size != op2->metadata.elem_size) return CF_ERR_INVALID;
+  if(op1->data == CF_NULL || op2->data == CF_NULL) return CF_ERR_STATE;
+  if(op1->dim[op1->rank - 1] != op2->dim[op2->rank - 2]) return CF_ERR_INVALID;
+
+  rank = op1->rank > op2->rank ? op1->rank : op2->rank;
+  batch_rank = rank - 2;
+  memset(out_dim, 0, sizeof(cf_usize) * CF_TENSOR_HIGHEST_RANK);
+
+  for(cf_usize axis = 0; axis < batch_rank; axis++)
+  {
+    cf_isize a_axis = (cf_isize)axis - (cf_isize)(rank - op1->rank);
+    cf_isize b_axis = (cf_isize)axis - (cf_isize)(rank - op2->rank);
+    cf_usize a_dim = a_axis < 0 ? 1 : op1->dim[(cf_usize)a_axis];
+    cf_usize b_dim = b_axis < 0 ? 1 : op2->dim[(cf_usize)b_axis];
+    cf_usize dim;
+
+    if(a_dim != b_dim && a_dim != 1 && b_dim != 1) return CF_ERR_INVALID;
+
+    dim = a_dim > b_dim ? a_dim : b_dim;
+    if(batches > SIZE_MAX / dim) return CF_ERR_OVERFLOW;
+    batches *= dim;
+    out_dim[axis] = dim;
+  }
+
+  rows = op1->dim[op1->rank - 2];
+  cols = op2->dim[op2->rank - 1];
+  out_dim[batch_rank] = rows;
+  out_dim[batch_rank + 1] = cols;
+
+  if(rows != 0 && batches > SIZE_MAX / rows) return CF_ERR_OVERFLOW;
+  if(cols != 0 && batches * rows > SIZE_MAX / cols) return CF_ERR_OVERFLOW;
+
+  *out_rank = rank;
+  *out_len = batches * rows * cols;
+  *batch_count = batches;
 
   return CF_OK;
 }
 
-/*
- * Fast CPU precondition for operations that directly dereference tensor->data.
- * CUDA-owned tensors are rejected here because CPU loops cannot read
- * device_data without an explicit transfer.
- */
-static cf_status cf_tensor_require_data(cf_tensor *tensor)
+static cf_status cf_tensor_flat_index(const cf_tensor *tensor, const cf_usize indexs[CF_TENSOR_HIGHEST_RANK], cf_usize *out_index)
 {
-  if(tensor == CF_NULL) return CF_ERR_NULL;
+  cf_usize index = 0;
+
+  if(tensor == CF_NULL || indexs == CF_NULL || out_index == CF_NULL) return CF_ERR_NULL;
   if(!cf_tensor_is_valid(tensor)) return CF_ERR_INVALID;
-  if(tensor->data == CF_NULL || tensor->device != CF_TENSOR_DEVICE_CPU) return CF_ERR_STATE;
-  return CF_OK;
-}
 
-/*
- * Shared arithmetic precondition: binary tensor operations need all operands
- * and the output buffer to agree on element type and byte width.
- */
-static cf_status cf_tensor_require_same_type(cf_tensor *t1, cf_tensor *t2, cf_tensor *t_out)
-{
-  if(t1->metadata.elem_type != t2->metadata.elem_type || t1->metadata.elem_type != t_out->metadata.elem_type)
-    return CF_ERR_INVALID;
-
-  if(t1->metadata.elem_size != t2->metadata.elem_size || t1->metadata.elem_size != t_out->metadata.elem_size)
-    return CF_ERR_INVALID;
-
-  return CF_OK;
-}
-
-/*
- * Validate the structural tensor contract used across the framework: supported
- * device tag, live storage for the active device, consistent element metadata,
- * shape product, and row-major stride table.
- */
-cf_bool cf_tensor_is_valid(cf_tensor *tensor)
-{
-  if(tensor == CF_NULL) return CF_FALSE;
-  CF_ASSERT_TYPE_SIZE(*tensor, cf_tensor);
-  if(tensor->rank > CF_TENSOR_HIGHEST_RANK) return CF_FALSE;
-  if(tensor->device != CF_TENSOR_DEVICE_CPU && tensor->device != CF_TENSOR_DEVICE_CUDA) return CF_FALSE;
-
-  if(tensor->metadata.len == 0) return CF_FALSE;
-  if(tensor->metadata.elem_size == 0) return CF_FALSE;
-  if(cf_tensor_type_size(tensor->metadata.elem_type) != tensor->metadata.elem_size) return CF_FALSE;
-
-  if(tensor->device == CF_TENSOR_DEVICE_CPU && tensor->data == CF_NULL) return CF_FALSE;
-  if(tensor->device == CF_TENSOR_DEVICE_CUDA && tensor->device_data == CF_NULL) return CF_FALSE;
-
-  if(tensor->data == CF_NULL && tensor->device_data == CF_NULL)
-  {
-    return CF_FALSE;
-  }
-
-  if(tensor->rank == 0) return tensor->metadata.len == 1;
-
-  cf_usize elements = 1;
   for(cf_usize i = 0; i < tensor->rank; i++)
   {
-    if(tensor->dim[i] == 0) return CF_FALSE;
-    if(elements > CF_USIZE_MAX / tensor->dim[i]) return CF_FALSE;
-    elements *= tensor->dim[i];
+    if(indexs[i] >= tensor->dim[i]) return CF_ERR_BOUNDS;
+    index += tensor->metadata.stride[i] * indexs[i];
   }
 
-  if(elements > CF_USIZE_MAX / tensor->metadata.elem_size) return CF_FALSE;
-  if(elements != tensor->metadata.len) return CF_FALSE;
+  *out_index = index;
+  return CF_OK;
+}
+
+cf_bool cf_tensor_is_valid(const cf_tensor *tensor)
+{
+  cf_usize elem_size;
+  cf_usize len;
+
+  if(tensor == CF_NULL) return CF_FALSE;
+  if(tensor->rank > CF_TENSOR_HIGHEST_RANK) return CF_FALSE;
+  if(tensor->device != CF_TENSOR_DEVICE_CPU && tensor->device != CF_TENSOR_DEVICE_CUDA)
+    return CF_FALSE;
+
+  elem_size = cf_tensor_element_size(tensor->metadata.elem_type);
+  if(elem_size == 0 || elem_size != tensor->metadata.elem_size) return CF_FALSE;
+  if(tensor->metadata.len == 0 || tensor->metadata.capacity < tensor->metadata.len)
+    return CF_FALSE;
+
+  if(cf_tensor_shape_len(tensor->dim, tensor->rank, &len) != CF_OK) return CF_FALSE;
+  if(len != tensor->metadata.len) return CF_FALSE;
 
   cf_usize stride = 1;
   for(cf_usize i = tensor->rank; i > 0; i--)
   {
     cf_usize index = i - 1;
     if(tensor->metadata.stride[index] != stride) return CF_FALSE;
-    if(stride > CF_USIZE_MAX / tensor->dim[index]) return CF_FALSE;
+    if(stride > SIZE_MAX / tensor->dim[index]) return CF_FALSE;
     stride *= tensor->dim[index];
   }
+
+  if(tensor->device == CF_TENSOR_DEVICE_CPU && tensor->data == CF_NULL) return CF_FALSE;
+  if(tensor->device == CF_TENSOR_DEVICE_CUDA && tensor->device_data == CF_NULL) return CF_FALSE;
+  if(tensor->data == CF_NULL && tensor->device_data == CF_NULL) return CF_FALSE;
 
   return CF_TRUE;
 }
 
-/*
- * Create a CPU-resident dense tensor. The public macro cf_tensor_init maps here
- * in CPU builds; CUDA builds can still call this explicitly when host-side data
- * access is required.
- */
-cf_status cf_tensor_init_cpu(cf_tensor *tensor, cf_usize dim[CF_TENSOR_HIGHEST_RANK], cf_usize rank, cf_tensor_type elem_type)
+cf_status cf_tensor_init_cpu(cf_tensor *tensor, const cf_usize dim[CF_TENSOR_HIGHEST_RANK], cf_usize rank, cf_tensor_type elem_type)
 {
-  cf_status status = cf_tensor_setup_metadata(tensor, dim, rank, elem_type);
+  cf_usize elem_size;
+  cf_usize len;
+  cf_usize bytes;
+  cf_status status;
+  void *data;
+
+  if(tensor == CF_NULL) return CF_ERR_NULL;
+
+  elem_size = cf_tensor_element_size(elem_type);
+  if(elem_size == 0) return CF_ERR_INVALID;
+
+  status = cf_tensor_shape_len(dim, rank, &len);
   if(status != CF_OK) return status;
+
+  status = cf_tensor_checked_bytes(len, elem_size, &bytes);
+  if(status != CF_OK) return status;
+
+  data = malloc(bytes);
+  if(data == CF_NULL) return CF_ERR_OOM;
+  memset(data, 0, bytes);
+
+  *tensor = (cf_tensor){0};
+  tensor->data = data;
   tensor->device = CF_TENSOR_DEVICE_CPU;
-
-  tensor->data = malloc(tensor->metadata.len * tensor->metadata.elem_size);
-  if(tensor->data == CF_NULL) return CF_ERR_OOM;
-
-  memset(tensor->data, 0, tensor->metadata.len * tensor->metadata.elem_size);
+  tensor->metadata.capacity = len;
+  tensor->metadata.elem_size = elem_size;
+  tensor->metadata.elem_type = elem_type;
+  cf_tensor_apply_shape(tensor, dim, rank, len);
 
   return CF_OK;
 }
 
-/*
- * Release CPU-owned storage and reset the object. This function is intentionally
- * small so callers can use it freely in cleanup paths.
- */
+cf_status cf_tensor_init_many_cpu(cf_tensor **tensors, cf_usize count, const cf_usize dim[CF_TENSOR_HIGHEST_RANK], cf_usize rank, cf_tensor_type elem_type)
+{
+  if(tensors == CF_NULL) return CF_ERR_NULL;
+
+  for(cf_usize i = 0; i < count; i++)
+  {
+    cf_status status;
+
+    if(tensors[i] == CF_NULL)
+    {
+      cf_tensor_destroy_many_cpu(tensors, i);
+      return CF_ERR_NULL;
+    }
+
+    status = cf_tensor_init_cpu(tensors[i], dim, rank, elem_type);
+    if(status != CF_OK)
+    {
+      cf_tensor_destroy_many_cpu(tensors, i);
+      return status;
+    }
+  }
+
+  return CF_OK;
+}
+
 void cf_tensor_destroy_cpu(cf_tensor *tensor)
 {
   if(tensor == CF_NULL) return;
+
+#ifdef CF_CUDA_AVAILABLE
+  if(tensor->device_data != CF_NULL) (void)cf_tensor_free_gpu(tensor);
+#endif
+
   if(tensor->data != CF_NULL) free(tensor->data);
-  *tensor = (cf_tensor) {0};
+  *tensor = (cf_tensor){0};
 }
 
-/*
- * Read one logical tensor element from CPU storage. Multi-dimensional indices
- * are translated through row-major strides into a single flat data offset.
- */
-cf_status cf_tensor_get_cpu(void *out_value, cf_tensor *tensor, cf_usize indexs[CF_TENSOR_HIGHEST_RANK])
+void cf_tensor_destroy_many_cpu(cf_tensor **tensors, cf_usize count)
 {
-  if(out_value == CF_NULL || indexs == CF_NULL) return CF_ERR_NULL;
-  cf_status status = cf_tensor_require_data(tensor);
+  if(tensors == CF_NULL) return;
+  for(cf_usize i = 0; i < count; i++) cf_tensor_destroy_cpu(tensors[i]);
+}
+
+cf_status cf_tensor_reserve_cpu(cf_tensor *tensor, cf_usize capacity)
+{
+  cf_usize bytes;
+  cf_usize old_bytes;
+  cf_status status;
+  void *data;
+
+  if(tensor == CF_NULL) return CF_ERR_NULL;
+  if(tensor->metadata.elem_size == 0) return CF_ERR_INVALID;
+  if(capacity <= tensor->metadata.capacity) return CF_OK;
+
+  status = cf_tensor_checked_bytes(capacity, tensor->metadata.elem_size, &bytes);
+  if(status != CF_OK) return status;
+  status = cf_tensor_checked_bytes(tensor->metadata.capacity, tensor->metadata.elem_size, &old_bytes);
   if(status != CF_OK) return status;
 
-  cf_usize index = 0;
-  for (cf_usize i = 0; i < tensor->rank; i++)
+  if(tensor->data == CF_NULL)
   {
-    if(indexs[i] >= tensor->dim[i]) return CF_ERR_BOUNDS;
-    index += tensor->metadata.stride[i] * indexs[i];
+    old_bytes = 0;
+    data = malloc(bytes);
+  }
+  else
+  {
+    data = realloc(tensor->data, bytes);
   }
 
-  switch (tensor->metadata.elem_type)
-  {
-    CF_TENSOR_GET_CASE(CF_TENSOR_CHAR, out_value, tensor->data, index, char);
-    CF_TENSOR_GET_CASE(CF_TENSOR_SHORT, out_value, tensor->data, index, short);
-    CF_TENSOR_GET_CASE(CF_TENSOR_INT, out_value, tensor->data, index, int);
-    CF_TENSOR_GET_CASE(CF_TENSOR_LONG, out_value, tensor->data, index, long);
-    CF_TENSOR_GET_CASE(CF_TENSOR_LL, out_value, tensor->data, index, long long);
-    CF_TENSOR_GET_CASE(CF_TENSOR_FLOAT, out_value, tensor->data, index, float);
-    CF_TENSOR_GET_CASE(CF_TENSOR_DOUBLE, out_value, tensor->data, index, double);
-    CF_TENSOR_GET_CASE(CF_TENSOR_LD, out_value, tensor->data, index, long double);
-    CF_TENSOR_GET_CASE(CF_TENSOR_U8, out_value, tensor->data, index, cf_u8);
-    CF_TENSOR_GET_CASE(CF_TENSOR_U16, out_value, tensor->data, index, cf_u16);
-    CF_TENSOR_GET_CASE(CF_TENSOR_U32, out_value, tensor->data, index, cf_u32);
-    CF_TENSOR_GET_CASE(CF_TENSOR_U64, out_value, tensor->data, index, cf_u64);
-    CF_TENSOR_GET_CASE(CF_TENSOR_U128, out_value, tensor->data, index, cf_u128);
-    default: return CF_ERR_INVALID;
-  }
+  if(data == CF_NULL) return CF_ERR_OOM;
+
+  tensor->data = data;
+  memset((char *)tensor->data + old_bytes, 0, bytes - old_bytes);
+  tensor->metadata.capacity = capacity;
+  tensor->device = CF_TENSOR_DEVICE_CPU;
+
+#ifdef CF_CUDA_AVAILABLE
+  if(tensor->device_data != CF_NULL) (void)cf_tensor_free_gpu(tensor);
+#endif
+
   return CF_OK;
 }
 
-/*
- * Write one logical tensor element into CPU storage using the same stride-based
- * index translation as cf_tensor_get_cpu.
- */
-cf_status cf_tensor_set_cpu(cf_tensor *tensor, cf_usize indexs[CF_TENSOR_HIGHEST_RANK], void *value)
+cf_status cf_tensor_reshape_cpu(cf_tensor *tensor, const cf_usize dim[CF_TENSOR_HIGHEST_RANK], cf_usize rank)
 {
-  if(indexs == CF_NULL || value == CF_NULL) return CF_ERR_NULL;
-  cf_status status = cf_tensor_require_data(tensor);
+  cf_usize len;
+  cf_status status;
+
+  if(tensor == CF_NULL) return CF_ERR_NULL;
+  status = cf_tensor_shape_len(dim, rank, &len);
   if(status != CF_OK) return status;
+  if(len > tensor->metadata.capacity) return CF_ERR_BOUNDS;
 
-  cf_usize index = 0; 
-  for (cf_usize i = 0; i < tensor->rank; i++)
-  {
-    if(indexs[i] >= tensor->dim[i]) return CF_ERR_BOUNDS;
-    index += tensor->metadata.stride[i] * indexs[i];
-  }
-
-  switch (tensor->metadata.elem_type)
-  {
-    CF_TENSOR_SET_CASE(CF_TENSOR_CHAR, tensor->data, value, index, char);
-    CF_TENSOR_SET_CASE(CF_TENSOR_SHORT, tensor->data, value, index, short);
-    CF_TENSOR_SET_CASE(CF_TENSOR_INT, tensor->data, value, index, int);
-    CF_TENSOR_SET_CASE(CF_TENSOR_LONG, tensor->data, value, index, long);
-    CF_TENSOR_SET_CASE(CF_TENSOR_LL, tensor->data, value, index, long long);
-    CF_TENSOR_SET_CASE(CF_TENSOR_FLOAT, tensor->data, value, index, float);
-    CF_TENSOR_SET_CASE(CF_TENSOR_DOUBLE, tensor->data, value, index, double);
-    CF_TENSOR_SET_CASE(CF_TENSOR_LD, tensor->data, value, index, long double);
-    CF_TENSOR_SET_CASE(CF_TENSOR_U8, tensor->data, value, index, cf_u8);
-    CF_TENSOR_SET_CASE(CF_TENSOR_U16, tensor->data, value, index, cf_u16);
-    CF_TENSOR_SET_CASE(CF_TENSOR_U32, tensor->data, value, index, cf_u32);
-    CF_TENSOR_SET_CASE(CF_TENSOR_U64, tensor->data, value, index, cf_u64);
-    CF_TENSOR_SET_CASE(CF_TENSOR_U128, tensor->data, value, index, cf_u128);
-    default: return CF_ERR_INVALID;
-  }
+  cf_tensor_apply_shape(tensor, dim, rank, len);
   return CF_OK;
 }
 
-/*
- * CPU elementwise addition. This is the scalar host fallback for the framework
- * tensor add API when CUDA is unavailable or when callers choose CPU storage.
- */
-cf_status cf_tensor_add_cpu(cf_tensor *t1, cf_tensor *t2, cf_tensor *t_out)
+cf_status cf_tensor_resize_cpu(cf_tensor *tensor, const cf_usize dim[CF_TENSOR_HIGHEST_RANK], cf_usize rank)
 {
-  cf_status status = cf_tensor_require_data(t1);
-  if(status != CF_OK) return status;
-  status = cf_tensor_require_data(t2);
-  if(status != CF_OK) return status;
-  status = cf_tensor_require_data(t_out);
-  if(status != CF_OK) return status;
-  status = cf_tensor_require_same_type(t1, t2, t_out);
+  cf_usize len;
+  cf_usize old_len;
+  cf_usize old_bytes;
+  cf_usize new_bytes;
+  cf_status status;
+
+  if(tensor == CF_NULL) return CF_ERR_NULL;
+
+  status = cf_tensor_shape_len(dim, rank, &len);
   if(status != CF_OK) return status;
 
-  if(t1->rank != t2->rank || t1->rank != t_out->rank) return CF_ERR_INVALID;
-
-  for (cf_usize i = 0; i < t_out->rank; i++)
-    if(t1->dim[i] != t2->dim[i] || t1->dim[i] != t_out->dim[i]) return CF_ERR_INVALID;
-
-  switch (t_out->metadata.elem_type)
+  old_len = tensor->metadata.len;
+  if(len > tensor->metadata.capacity)
   {
-    CF_TENSOR_ADD_CASE(CF_TENSOR_CHAR, t1->data, t2->data, t_out->data, t1->metadata.len, char);
-    CF_TENSOR_ADD_CASE(CF_TENSOR_SHORT, t1->data, t2->data, t_out->data, t1->metadata.len, short);
-    CF_TENSOR_ADD_CASE(CF_TENSOR_INT, t1->data, t2->data, t_out->data, t1->metadata.len, int);
-    CF_TENSOR_ADD_CASE(CF_TENSOR_LONG, t1->data, t2->data, t_out->data, t1->metadata.len, long);
-    CF_TENSOR_ADD_CASE(CF_TENSOR_LL, t1->data, t2->data, t_out->data, t1->metadata.len, long long);
-    CF_TENSOR_ADD_CASE(CF_TENSOR_FLOAT, t1->data, t2->data, t_out->data, t1->metadata.len, float);
-    CF_TENSOR_ADD_CASE(CF_TENSOR_DOUBLE, t1->data, t2->data, t_out->data, t1->metadata.len, double);
-    CF_TENSOR_ADD_CASE(CF_TENSOR_LD, t1->data, t2->data, t_out->data, t1->metadata.len, long double);
-    CF_TENSOR_ADD_CASE(CF_TENSOR_U8, t1->data, t2->data, t_out->data, t1->metadata.len, cf_u8);
-    CF_TENSOR_ADD_CASE(CF_TENSOR_U16, t1->data, t2->data, t_out->data, t1->metadata.len, cf_u16);
-    CF_TENSOR_ADD_CASE(CF_TENSOR_U32, t1->data, t2->data, t_out->data, t1->metadata.len, cf_u32);
-    CF_TENSOR_ADD_CASE(CF_TENSOR_U64, t1->data, t2->data, t_out->data, t1->metadata.len, cf_u64);
-    CF_TENSOR_ADD_CASE(CF_TENSOR_U128, t1->data, t2->data, t_out->data, t1->metadata.len, cf_u128);
-    default: return CF_ERR_INVALID;
+    status = cf_tensor_reserve_cpu(tensor, len);
+    if(status != CF_OK) return status;
   }
+  else if(len > old_len && tensor->data != CF_NULL)
+  {
+    status = cf_tensor_checked_bytes(old_len, tensor->metadata.elem_size, &old_bytes);
+    if(status != CF_OK) return status;
+    status = cf_tensor_checked_bytes(len, tensor->metadata.elem_size, &new_bytes);
+    if(status != CF_OK) return status;
+    memset((char *)tensor->data + old_bytes, 0, new_bytes - old_bytes);
+  }
+
+  cf_tensor_apply_shape(tensor, dim, rank, len);
+  tensor->device = CF_TENSOR_DEVICE_CPU;
   return CF_OK;
 }
 
-/*
- * CPU elementwise multiplication for tensors with identical shape and type.
- * Matrix-style multiplication is handled separately by cf_tensor_matrix_mul_cpu.
- */
-cf_status cf_tensor_mul_cpu(cf_tensor *t1, cf_tensor *t2, cf_tensor *t_out)
+cf_status cf_tensor_copy_cpu(cf_tensor *dst, const cf_tensor *src)
 {
-  cf_status status = cf_tensor_require_data(t1);
-  if(status != CF_OK) return status;
-  status = cf_tensor_require_data(t2);
-  if(status != CF_OK) return status;
-  status = cf_tensor_require_data(t_out);
-  if(status != CF_OK) return status;
-  status = cf_tensor_require_same_type(t1, t2, t_out);
-  if(status != CF_OK) return status;
+  cf_status status;
+  cf_usize bytes;
 
-  if(t1->rank != t2->rank || t1->rank != t_out->rank) return CF_ERR_INVALID;
+  if(dst == CF_NULL || src == CF_NULL) return CF_ERR_NULL;
+  if(src->data == CF_NULL) return CF_ERR_STATE;
+  if(dst == src) return CF_OK;
 
-  for (cf_usize i = 0; i < t_out->rank; i++)
-    if(t1->dim[i] != t2->dim[i] || t1->dim[i] != t_out->dim[i]) return CF_ERR_INVALID;
-
-  switch (t_out->metadata.elem_type)
+  if(dst->metadata.elem_size == 0 && dst->data == CF_NULL && dst->device_data == CF_NULL)
   {
-    CF_TENSOR_MUL_CASE(CF_TENSOR_CHAR, t1->data, t2->data, t_out->data, t1->metadata.len, char);
-    CF_TENSOR_MUL_CASE(CF_TENSOR_SHORT, t1->data, t2->data, t_out->data, t1->metadata.len, short);
-    CF_TENSOR_MUL_CASE(CF_TENSOR_INT, t1->data, t2->data, t_out->data, t1->metadata.len, int);
-    CF_TENSOR_MUL_CASE(CF_TENSOR_LONG, t1->data, t2->data, t_out->data, t1->metadata.len, long);
-    CF_TENSOR_MUL_CASE(CF_TENSOR_LL, t1->data, t2->data, t_out->data, t1->metadata.len, long long);
-    CF_TENSOR_MUL_CASE(CF_TENSOR_FLOAT, t1->data, t2->data, t_out->data, t1->metadata.len, float);
-    CF_TENSOR_MUL_CASE(CF_TENSOR_DOUBLE, t1->data, t2->data, t_out->data, t1->metadata.len, double);
-    CF_TENSOR_MUL_CASE(CF_TENSOR_LD, t1->data, t2->data, t_out->data, t1->metadata.len, long double);
-    CF_TENSOR_MUL_CASE(CF_TENSOR_U8, t1->data, t2->data, t_out->data, t1->metadata.len, cf_u8);
-    CF_TENSOR_MUL_CASE(CF_TENSOR_U16, t1->data, t2->data, t_out->data, t1->metadata.len, cf_u16);
-    CF_TENSOR_MUL_CASE(CF_TENSOR_U32, t1->data, t2->data, t_out->data, t1->metadata.len, cf_u32);
-    CF_TENSOR_MUL_CASE(CF_TENSOR_U64, t1->data, t2->data, t_out->data, t1->metadata.len, cf_u64);
-    CF_TENSOR_MUL_CASE(CF_TENSOR_U128, t1->data, t2->data, t_out->data, t1->metadata.len, cf_u128);
-    default: return CF_ERR_INVALID;
+    status = cf_tensor_init_cpu(dst, src->dim, src->rank, src->metadata.elem_type);
+    if(status != CF_OK) return status;
   }
+  else
+  {
+    if(dst->metadata.elem_type != src->metadata.elem_type) return CF_ERR_INVALID;
+    if(dst->metadata.elem_size != src->metadata.elem_size) return CF_ERR_INVALID;
+    status = cf_tensor_resize_cpu(dst, src->dim, src->rank);
+    if(status != CF_OK) return status;
+  }
+
+  status = cf_tensor_checked_bytes(src->metadata.len, src->metadata.elem_size, &bytes);
+  if(status != CF_OK) return status;
+  memcpy(dst->data, src->data, bytes);
+  dst->device = CF_TENSOR_DEVICE_CPU;
+
   return CF_OK;
 }
 
-/*
- * CPU scalar multiplication. The scalar pointer is interpreted as the same
- * element type as the tensor and applied to every flat element.
- */
-cf_status cf_tensor_scalar_mul_cpu(cf_tensor *t1, void *scalar, cf_tensor *t_out)
+cf_status cf_tensor_copy_from_array_cpu(cf_tensor *tensor, const void *array, cf_usize count)
 {
+  cf_usize dim[CF_TENSOR_HIGHEST_RANK] = {0};
+  cf_usize bytes;
+  cf_status status;
+
+  if(tensor == CF_NULL || array == CF_NULL) return CF_ERR_NULL;
+  if(count == 0) return CF_ERR_INVALID;
+  if(tensor->metadata.elem_size == 0) return CF_ERR_INVALID;
+
+  if(count > tensor->metadata.capacity)
+  {
+    status = cf_tensor_reserve_cpu(tensor, count);
+    if(status != CF_OK) return status;
+  }
+
+  dim[0] = count;
+  cf_tensor_apply_shape(tensor, dim, 1, count);
+
+  status = cf_tensor_checked_bytes(count, tensor->metadata.elem_size, &bytes);
+  if(status != CF_OK) return status;
+
+  memcpy(tensor->data, array, bytes);
+  tensor->device = CF_TENSOR_DEVICE_CPU;
+  return CF_OK;
+}
+
+cf_status cf_tensor_copy_to_array_cpu(void *array, const cf_tensor *tensor, cf_usize count)
+{
+  cf_usize bytes;
+  cf_status status;
+
+  if(array == CF_NULL || tensor == CF_NULL) return CF_ERR_NULL;
+  if(tensor->data == CF_NULL) return CF_ERR_STATE;
+  if(count < tensor->metadata.len) return CF_ERR_BOUNDS;
+
+  status = cf_tensor_checked_bytes(tensor->metadata.len, tensor->metadata.elem_size, &bytes);
+  if(status != CF_OK) return status;
+
+  memcpy(array, tensor->data, bytes);
+  return CF_OK;
+}
+
+cf_status cf_tensor_get_cpu(void *out_value, const cf_tensor *tensor, const cf_usize indexs[CF_TENSOR_HIGHEST_RANK])
+{
+  cf_usize index;
+  cf_status status;
+
+  if(out_value == CF_NULL) return CF_ERR_NULL;
+
+  status = cf_tensor_flat_index(tensor, indexs, &index);
+  if(status != CF_OK) return status;
+
+  switch(tensor->metadata.elem_type)
+  {
+    CF_TENSOR_GET_CASE(CF_TENSOR_CHAR, char);
+    CF_TENSOR_GET_CASE(CF_TENSOR_SHORT, short);
+    CF_TENSOR_GET_CASE(CF_TENSOR_INT, int);
+    CF_TENSOR_GET_CASE(CF_TENSOR_LONG, long);
+    CF_TENSOR_GET_CASE(CF_TENSOR_LL, long long);
+    CF_TENSOR_GET_CASE(CF_TENSOR_FLOAT, float);
+    CF_TENSOR_GET_CASE(CF_TENSOR_DOUBLE, double);
+    CF_TENSOR_GET_CASE(CF_TENSOR_LD, long double);
+    CF_TENSOR_GET_CASE(CF_TENSOR_U8, cf_u8);
+    CF_TENSOR_GET_CASE(CF_TENSOR_U16, cf_u16);
+    CF_TENSOR_GET_CASE(CF_TENSOR_U32, cf_u32);
+    CF_TENSOR_GET_CASE(CF_TENSOR_U64, cf_u64);
+    CF_TENSOR_GET_CASE(CF_TENSOR_U128, cf_u128);
+    default: return CF_ERR_INVALID;
+  }
+
+  return CF_OK;
+}
+
+cf_status cf_tensor_set_cpu(cf_tensor *tensor, const cf_usize indexs[CF_TENSOR_HIGHEST_RANK], const void *value)
+{
+  cf_usize index;
+  cf_status status;
+
+  if(value == CF_NULL) return CF_ERR_NULL;
+
+  status = cf_tensor_flat_index(tensor, indexs, &index);
+  if(status != CF_OK) return status;
+
+  switch(tensor->metadata.elem_type)
+  {
+    CF_TENSOR_SET_CASE(CF_TENSOR_CHAR, char);
+    CF_TENSOR_SET_CASE(CF_TENSOR_SHORT, short);
+    CF_TENSOR_SET_CASE(CF_TENSOR_INT, int);
+    CF_TENSOR_SET_CASE(CF_TENSOR_LONG, long);
+    CF_TENSOR_SET_CASE(CF_TENSOR_LL, long long);
+    CF_TENSOR_SET_CASE(CF_TENSOR_FLOAT, float);
+    CF_TENSOR_SET_CASE(CF_TENSOR_DOUBLE, double);
+    CF_TENSOR_SET_CASE(CF_TENSOR_LD, long double);
+    CF_TENSOR_SET_CASE(CF_TENSOR_U8, cf_u8);
+    CF_TENSOR_SET_CASE(CF_TENSOR_U16, cf_u16);
+    CF_TENSOR_SET_CASE(CF_TENSOR_U32, cf_u32);
+    CF_TENSOR_SET_CASE(CF_TENSOR_U64, cf_u64);
+    CF_TENSOR_SET_CASE(CF_TENSOR_U128, cf_u128);
+    default: return CF_ERR_INVALID;
+  }
+
+  tensor->device = CF_TENSOR_DEVICE_CPU;
+  return CF_OK;
+}
+
+cf_status cf_tensor_add_cpu(cf_tensor *op1, const cf_tensor *op2)
+{
+  cf_usize len = op1->metadata.len;
+
+  switch(op1->metadata.elem_type)
+  {
+    CF_TENSOR_ADD_CASE(CF_TENSOR_CHAR, char);
+    CF_TENSOR_ADD_CASE(CF_TENSOR_SHORT, short);
+    CF_TENSOR_ADD_CASE(CF_TENSOR_INT, int);
+    CF_TENSOR_ADD_CASE(CF_TENSOR_LONG, long);
+    CF_TENSOR_ADD_CASE(CF_TENSOR_LL, long long);
+    CF_TENSOR_ADD_CASE(CF_TENSOR_FLOAT, float);
+    CF_TENSOR_ADD_CASE(CF_TENSOR_DOUBLE, double);
+    CF_TENSOR_ADD_CASE(CF_TENSOR_LD, long double);
+    CF_TENSOR_ADD_CASE(CF_TENSOR_U8, cf_u8);
+    CF_TENSOR_ADD_CASE(CF_TENSOR_U16, cf_u16);
+    CF_TENSOR_ADD_CASE(CF_TENSOR_U32, cf_u32);
+    CF_TENSOR_ADD_CASE(CF_TENSOR_U64, cf_u64);
+    CF_TENSOR_ADD_CASE(CF_TENSOR_U128, cf_u128);
+    default: return CF_ERR_UNSUPPORTED;
+  }
+
+  op1->device = CF_TENSOR_DEVICE_CPU;
+  return CF_OK;
+}
+
+cf_status cf_tensor_mul_cpu(cf_tensor *op1, const cf_tensor *op2)
+{
+  cf_usize len = op1->metadata.len;
+
+  switch(op1->metadata.elem_type)
+  {
+    CF_TENSOR_MUL_CASE(CF_TENSOR_CHAR, char);
+    CF_TENSOR_MUL_CASE(CF_TENSOR_SHORT, short);
+    CF_TENSOR_MUL_CASE(CF_TENSOR_INT, int);
+    CF_TENSOR_MUL_CASE(CF_TENSOR_LONG, long);
+    CF_TENSOR_MUL_CASE(CF_TENSOR_LL, long long);
+    CF_TENSOR_MUL_CASE(CF_TENSOR_FLOAT, float);
+    CF_TENSOR_MUL_CASE(CF_TENSOR_DOUBLE, double);
+    CF_TENSOR_MUL_CASE(CF_TENSOR_LD, long double);
+    CF_TENSOR_MUL_CASE(CF_TENSOR_U8, cf_u8);
+    CF_TENSOR_MUL_CASE(CF_TENSOR_U16, cf_u16);
+    CF_TENSOR_MUL_CASE(CF_TENSOR_U32, cf_u32);
+    CF_TENSOR_MUL_CASE(CF_TENSOR_U64, cf_u64);
+    CF_TENSOR_MUL_CASE(CF_TENSOR_U128, cf_u128);
+    default: return CF_ERR_UNSUPPORTED;
+  }
+
+  op1->device = CF_TENSOR_DEVICE_CPU;
+  return CF_OK;
+}
+
+cf_status cf_tensor_scalar_mul_cpu(cf_tensor *op1, const void *scalar)
+{
+  cf_usize len;
+
   if(scalar == CF_NULL) return CF_ERR_NULL;
-  cf_status status = cf_tensor_require_data(t1);
-  if(status != CF_OK) return status;
-  status = cf_tensor_require_data(t_out);
-  if(status != CF_OK) return status;
-  if(t1->metadata.elem_type != t_out->metadata.elem_type || t1->metadata.elem_size != t_out->metadata.elem_size)
-    return CF_ERR_INVALID;
+  len = op1->metadata.len;
 
-  if(t1->rank != t_out->rank) return CF_ERR_INVALID;
-  for (cf_usize i = 0; i < t_out->rank; i++)
-    if(t1->dim[i] != t_out->dim[i]) return CF_ERR_INVALID;
-
-  switch (t_out->metadata.elem_type)
+  switch(op1->metadata.elem_type)
   {
-    CF_TENSOR_SCALAR_CASE(CF_TENSOR_CHAR, t1->data, scalar, t_out->data, t1->metadata.len, char);
-    CF_TENSOR_SCALAR_CASE(CF_TENSOR_SHORT, t1->data, scalar, t_out->data, t1->metadata.len, short);
-    CF_TENSOR_SCALAR_CASE(CF_TENSOR_INT, t1->data, scalar, t_out->data, t1->metadata.len, int);
-    CF_TENSOR_SCALAR_CASE(CF_TENSOR_LONG, t1->data, scalar, t_out->data, t1->metadata.len, long);
-    CF_TENSOR_SCALAR_CASE(CF_TENSOR_LL, t1->data, scalar, t_out->data, t1->metadata.len, long long);
-    CF_TENSOR_SCALAR_CASE(CF_TENSOR_FLOAT, t1->data, scalar, t_out->data, t1->metadata.len, float);
-    CF_TENSOR_SCALAR_CASE(CF_TENSOR_DOUBLE, t1->data, scalar, t_out->data, t1->metadata.len, double);
-    CF_TENSOR_SCALAR_CASE(CF_TENSOR_LD, t1->data, scalar, t_out->data, t1->metadata.len, long double);
-    CF_TENSOR_SCALAR_CASE(CF_TENSOR_U8, t1->data, scalar, t_out->data, t1->metadata.len, cf_u8);
-    CF_TENSOR_SCALAR_CASE(CF_TENSOR_U16, t1->data, scalar, t_out->data, t1->metadata.len, cf_u16);
-    CF_TENSOR_SCALAR_CASE(CF_TENSOR_U32, t1->data, scalar, t_out->data, t1->metadata.len, cf_u32);
-    CF_TENSOR_SCALAR_CASE(CF_TENSOR_U64, t1->data, scalar, t_out->data, t1->metadata.len, cf_u64);
-    CF_TENSOR_SCALAR_CASE(CF_TENSOR_U128, t1->data, scalar, t_out->data, t1->metadata.len, cf_u128);
-    default: return CF_ERR_INVALID;
+    CF_TENSOR_SCALAR_CASE(CF_TENSOR_CHAR, char);
+    CF_TENSOR_SCALAR_CASE(CF_TENSOR_SHORT, short);
+    CF_TENSOR_SCALAR_CASE(CF_TENSOR_INT, int);
+    CF_TENSOR_SCALAR_CASE(CF_TENSOR_LONG, long);
+    CF_TENSOR_SCALAR_CASE(CF_TENSOR_LL, long long);
+    CF_TENSOR_SCALAR_CASE(CF_TENSOR_FLOAT, float);
+    CF_TENSOR_SCALAR_CASE(CF_TENSOR_DOUBLE, double);
+    CF_TENSOR_SCALAR_CASE(CF_TENSOR_LD, long double);
+    CF_TENSOR_SCALAR_CASE(CF_TENSOR_U8, cf_u8);
+    CF_TENSOR_SCALAR_CASE(CF_TENSOR_U16, cf_u16);
+    CF_TENSOR_SCALAR_CASE(CF_TENSOR_U32, cf_u32);
+    CF_TENSOR_SCALAR_CASE(CF_TENSOR_U64, cf_u64);
+    CF_TENSOR_SCALAR_CASE(CF_TENSOR_U128, cf_u128);
+    default: return CF_ERR_UNSUPPORTED;
   }
+
+  op1->device = CF_TENSOR_DEVICE_CPU;
   return CF_OK;
 }
 
-/*
- * Check the core matrix multiplication rule before rank normalization:
- * the left inner dimension must match the right inner dimension.
- */
-static cf_bool cf_tensor_matrix_mul_inner_dim_match(cf_tensor *t1, cf_tensor *t2)
+cf_status cf_tensor_batch_mul_cpu(cf_tensor *op1, const cf_tensor *op2)
 {
-  return t1->dim[t1->rank - 1] == t2->dim[t2->rank == 1 ? 0 : t2->rank - 2];
-}
+  cf_usize rows;
+  cf_usize inner;
+  cf_usize cols;
+  cf_usize out_len;
+  cf_usize out_bytes;
+  cf_usize out_dim[CF_TENSOR_HIGHEST_RANK] = {0};
+  cf_usize out_stride[CF_TENSOR_HIGHEST_RANK] = {0};
+  cf_usize out_rank;
+  cf_usize batch_rank;
+  cf_usize batch_count;
+  cf_status status;
+  void *result;
 
-/*
- * Normalize vector and matrix operands into a shared matrix/batch rank. This
- * lets the implementation use one batched matmul loop for rank-1, rank-2, and
- * higher-rank broadcast-style inputs.
- */
-static void cf_tensor_matrix_mul_normalize_rank(cf_tensor *t1, cf_tensor *t2, cf_usize *out_max_rank)
-{
-  cf_usize max_rank = t1->rank > 2 ? t1->rank : 2;
-  max_rank = t2->rank > max_rank ? t2->rank : max_rank;
-  cf_usize len1 = t1->rank - 1, len2 = t2->rank - 1, len_max = max_rank - 1;
-  cf_usize tmp1 = 1, tmp2 = 1;
-  for (cf_usize i = 0; i < max_rank; i++)
+  status = cf_tensor_batch_mul_shape(op1, op2, out_dim, &out_rank, &out_len, &batch_count);
+  if(status != CF_OK) return status;
+
+  batch_rank = out_rank - 2;
+  rows = op1->dim[op1->rank - 2];
+  inner = op1->dim[op1->rank - 1];
+  cols = op2->dim[op2->rank - 1];
+  cf_tensor_dense_stride(out_dim, out_rank, out_stride);
+
+  status = cf_tensor_checked_bytes(out_len, op1->metadata.elem_size, &out_bytes);
+  if(status != CF_OK) return status;
+
+  result = malloc(out_bytes);
+  if(result == CF_NULL) return CF_ERR_OOM;
+
+  switch(op1->metadata.elem_type)
   {
-    t1->metadata.stride[len_max - i] =  len1 >= i ? tmp1 : 0;
-    t2->metadata.stride[len_max - i] = len2 >= i ? tmp2: 0;
-    t1->dim[len_max - i] = len1 >= i ? t1->dim[len1 - i] : 1;
-    t2->dim[len_max - i] = len2 >= i ? t2->dim[len2 - i] : 1;
-    tmp1 *= t1->dim[len_max - i];
-    tmp2 *= t2->dim[len_max - i];
+    CF_TENSOR_BATCH_MUL_CASE(CF_TENSOR_CHAR, char);
+    CF_TENSOR_BATCH_MUL_CASE(CF_TENSOR_SHORT, short);
+    CF_TENSOR_BATCH_MUL_CASE(CF_TENSOR_INT, int);
+    CF_TENSOR_BATCH_MUL_CASE(CF_TENSOR_LONG, long);
+    CF_TENSOR_BATCH_MUL_CASE(CF_TENSOR_LL, long long);
+    CF_TENSOR_BATCH_MUL_CASE(CF_TENSOR_FLOAT, float);
+    CF_TENSOR_BATCH_MUL_CASE(CF_TENSOR_DOUBLE, double);
+    CF_TENSOR_BATCH_MUL_CASE(CF_TENSOR_LD, long double);
+    CF_TENSOR_BATCH_MUL_CASE(CF_TENSOR_U8, cf_u8);
+    CF_TENSOR_BATCH_MUL_CASE(CF_TENSOR_U16, cf_u16);
+    CF_TENSOR_BATCH_MUL_CASE(CF_TENSOR_U32, cf_u32);
+    CF_TENSOR_BATCH_MUL_CASE(CF_TENSOR_U64, cf_u64);
+    CF_TENSOR_BATCH_MUL_CASE(CF_TENSOR_U128, cf_u128);
+    default:
+      free(result);
+      return CF_ERR_UNSUPPORTED;
   }
 
-  if(t2->rank == 1)
-  {
-    cf_usize tmp = t2->dim[len_max - 1];
-    t2->dim[len_max - 1] = t2->dim[len_max];
-    t2->dim[len_max] = tmp;
+#ifdef CF_CUDA_AVAILABLE
+  if(op1->device_data != CF_NULL) (void)cf_tensor_free_gpu(op1);
+#endif
 
-    tmp = t2->metadata.stride[len_max - 1];
-    t2->metadata.stride[len_max - 1] = t2->metadata.stride[len_max];
-    t2->metadata.stride[len_max] = tmp;
+  if(op1->data != CF_NULL && out_len <= op1->metadata.capacity)
+  {
+    memcpy(op1->data, result, out_bytes);
+    free(result);
+  }
+  else
+  {
+    if(op1->data != CF_NULL) free(op1->data);
+    op1->data = result;
+    op1->metadata.capacity = out_len;
   }
 
-  t1->rank = t2->rank = max_rank;
-  *out_max_rank = max_rank;
-}
-
-/*
- * Validate leading batch dimensions after normalization and compute how many
- * matrix multiplications must be executed. Dimensions of size 1 are broadcast.
- */
-static cf_status cf_tensor_matrix_mul_batch_dims_match(cf_tensor *t1, cf_tensor *t2, cf_usize max_rank, cf_usize *out_count)
-{
-  cf_usize count = 1;
-
-  for (cf_usize i = 0; i < max_rank - 2; i++)
-  {
-    if(t1->dim[i] != t2->dim[i] && t1->dim[i] != 1 && t2->dim[i] != 1)
-      return CF_ERR_INVALID;
-
-    cf_usize dim = t1->dim[i] > t2->dim[i] ? t1->dim[i] : t2->dim[i];
-    if(count > CF_USIZE_MAX / dim) return CF_ERR_OVERFLOW;
-    count *= dim;
-  }
-
-  *out_count = count;
-  return CF_OK;
-}
-
-/*
- * Validate that the output tensor shape matches the normalized/broadcasted
- * matrix multiplication result shape.
- */
-static cf_status cf_tensor_matrix_mul_output_dims_match(cf_tensor *t1, cf_tensor *t2, cf_tensor *t_out, cf_usize max_rank)
-{
-  if(t_out->rank != max_rank) return CF_ERR_INVALID;
-
-  for (cf_usize i = 0; i < max_rank - 2; i++)
-  {
-    if(t_out->dim[i] != (t1->dim[i] > t2->dim[i] ? t1->dim[i] : t2->dim[i]))
-      return CF_ERR_INVALID;
-  }
-  
-  if(t_out->dim[max_rank - 2] != t1->dim[max_rank - 2] || t_out->dim[max_rank - 1] != t2->dim[max_rank - 1])
-    return CF_ERR_INVALID;
+  cf_tensor_apply_shape(op1, out_dim, out_rank, out_len);
+  op1->device = CF_TENSOR_DEVICE_CPU;
 
   return CF_OK;
 }
 
-/*
- * CPU matrix multiplication for scalars, vectors, matrices, and batched matrix
- * operands. The actual typed numeric loop is generated by
- * CF_TENSOR_MATRIX_MUL_CASE after shape normalization.
- */
-cf_status cf_tensor_matrix_mul_cpu(cf_tensor *t1, cf_tensor *t2, cf_tensor *t_out)
+cf_status cf_tensor_matrix_mul_cpu(cf_tensor *op1, const cf_tensor *op2)
 {
-  cf_status status = cf_tensor_require_data(t1);
-  if(status != CF_OK) return status;
-  status = cf_tensor_require_data(t2);
-  if(status != CF_OK) return status;
-  status = cf_tensor_require_data(t_out);
-  if(status != CF_OK) return status;
-  status = cf_tensor_require_same_type(t1, t2, t_out);
-  if(status != CF_OK) return status;
-
-  if(t1->rank == 0) return cf_tensor_scalar_mul_cpu(t2, t1->data, t_out);
-  if(t2->rank == 0) return cf_tensor_scalar_mul_cpu(t1, t2->data, t_out);
-
-  cf_tensor tmp1, tmp2;
-  memcpy(&tmp1, t1, sizeof(cf_tensor));
-  memcpy(&tmp2, t2, sizeof(cf_tensor));
-
-  if(!cf_tensor_matrix_mul_inner_dim_match(&tmp1, &tmp2)) return CF_ERR_INVALID;
-
-  cf_usize max_rank;
-  cf_tensor_matrix_mul_normalize_rank(&tmp1, &tmp2, &max_rank);
-
-  cf_usize count;
-  status = cf_tensor_matrix_mul_batch_dims_match(&tmp1, &tmp2, max_rank, &count);
-  if(status != CF_OK) return status;
-
-  status = cf_tensor_matrix_mul_output_dims_match(&tmp1, &tmp2, t_out, max_rank);
-  if(status != CF_OK) return status;
-
-  switch (t1->metadata.elem_type)
-  {
-    CF_TENSOR_MATRIX_MUL_CASE(CF_TENSOR_CHAR, (&tmp1), (&tmp2), t_out, char);
-    CF_TENSOR_MATRIX_MUL_CASE(CF_TENSOR_SHORT, (&tmp1), (&tmp2), t_out, short);
-    CF_TENSOR_MATRIX_MUL_CASE(CF_TENSOR_INT, (&tmp1), (&tmp2), t_out, int);
-    CF_TENSOR_MATRIX_MUL_CASE(CF_TENSOR_LONG, (&tmp1), (&tmp2), t_out, long);
-    CF_TENSOR_MATRIX_MUL_CASE(CF_TENSOR_LL, (&tmp1), (&tmp2), t_out, long long);
-    CF_TENSOR_MATRIX_MUL_CASE(CF_TENSOR_FLOAT, (&tmp1), (&tmp2), t_out, float);
-    CF_TENSOR_MATRIX_MUL_CASE(CF_TENSOR_DOUBLE, (&tmp1), (&tmp2), t_out, double);
-    CF_TENSOR_MATRIX_MUL_CASE(CF_TENSOR_LD, (&tmp1), (&tmp2), t_out, long double);
-    CF_TENSOR_MATRIX_MUL_CASE(CF_TENSOR_U8, (&tmp1), (&tmp2), t_out, cf_u8);
-    CF_TENSOR_MATRIX_MUL_CASE(CF_TENSOR_U16, (&tmp1), (&tmp2), t_out, cf_u16);
-    CF_TENSOR_MATRIX_MUL_CASE(CF_TENSOR_U32, (&tmp1), (&tmp2), t_out, cf_u32);
-    CF_TENSOR_MATRIX_MUL_CASE(CF_TENSOR_U64, (&tmp1), (&tmp2), t_out, cf_u64);
-    CF_TENSOR_MATRIX_MUL_CASE(CF_TENSOR_U128, (&tmp1), (&tmp2), t_out, cf_u128);
-    default: return CF_ERR_INVALID;
-  }
-
-  return CF_OK;
+  return cf_tensor_batch_mul_cpu(op1, op2);
 }
 
-/*
- * Formatting helper for nested tensor printing.
- */
 static void cf_tensor_print_indent(cf_usize indent)
 {
-  for (cf_usize i = 0; i < indent; i++) printf(" ");
+  for(cf_usize i = 0; i < indent; i++) printf(" ");
 }
 
-/*
- * Print the framework 128-bit unsigned integer type without depending on
- * non-portable printf length modifiers.
- */
 static void cf_tensor_print_u128(cf_u128 value)
 {
   char buffer[40];
@@ -649,78 +773,61 @@ static void cf_tensor_print_u128(cf_u128 value)
   printf("%10s", &buffer[i]);
 }
 
-/*
- * Print one flat tensor element using the format appropriate for its element
- * type. Nested shape traversal is handled by cf_tensor_print_axis.
- */
-static void cf_tensor_print_value(cf_tensor *tensor, cf_usize index)
+static void cf_tensor_print_value(const cf_tensor *tensor, cf_usize index)
 {
-  switch (tensor->metadata.elem_type)
+  switch(tensor->metadata.elem_type)
   {
     case CF_TENSOR_CHAR:
-      printf("%10c", ((char *)tensor->data)[index]);
+      printf("%10c", ((const char *)tensor->data)[index]);
       break;
-
     case CF_TENSOR_SHORT:
-      printf("%10hd", ((short *)tensor->data)[index]);
+      printf("%10hd", ((const short *)tensor->data)[index]);
       break;
-
     case CF_TENSOR_INT:
-      printf("%10d", ((int *)tensor->data)[index]);
+      printf("%10d", ((const int *)tensor->data)[index]);
       break;
-
     case CF_TENSOR_LONG:
-      printf("%10ld", ((long *)tensor->data)[index]);
+      printf("%10ld", ((const long *)tensor->data)[index]);
       break;
-
     case CF_TENSOR_LL:
-      printf("%10lld", ((long long *)tensor->data)[index]);
+      printf("%10lld", ((const long long *)tensor->data)[index]);
       break;
-
     case CF_TENSOR_FLOAT:
-      printf("%10g", (double)((float *)tensor->data)[index]);
+      printf("%10g", (double)((const float *)tensor->data)[index]);
       break;
-
     case CF_TENSOR_DOUBLE:
-      printf("%10g", ((double *)tensor->data)[index]);
+      printf("%10g", ((const double *)tensor->data)[index]);
       break;
-
     case CF_TENSOR_LD:
-      printf("%10Lg", ((long double *)tensor->data)[index]);
+      printf("%10Lg", ((const long double *)tensor->data)[index]);
       break;
-
     case CF_TENSOR_U8:
-      printf("%10u", (unsigned int)((cf_u8 *)tensor->data)[index]);
+      printf("%10u", (unsigned int)((const cf_u8 *)tensor->data)[index]);
       break;
-
     case CF_TENSOR_U16:
-      printf("%10u", (unsigned int)((cf_u16 *)tensor->data)[index]);
+      printf("%10u", (unsigned int)((const cf_u16 *)tensor->data)[index]);
       break;
-
     case CF_TENSOR_U32:
-      printf("%10u", ((cf_u32 *)tensor->data)[index]);
+      printf("%10u", ((const cf_u32 *)tensor->data)[index]);
       break;
-
     case CF_TENSOR_U64:
-      printf("%10llu", (unsigned long long)((cf_u64 *)tensor->data)[index]);
+      printf("%10llu", (unsigned long long)((const cf_u64 *)tensor->data)[index]);
       break;
-
     case CF_TENSOR_U128:
-      cf_tensor_print_u128(((cf_u128 *)tensor->data)[index]);
+      cf_tensor_print_u128(((const cf_u128 *)tensor->data)[index]);
+      break;
+    default:
+      printf("%10s", "?");
       break;
   }
 }
 
-/*
- * Recursively print one tensor axis. The base offset is carried through the
- * row-major stride table so printing follows the logical tensor shape.
- */
-static void cf_tensor_print_axis(cf_tensor *tensor, cf_usize axis, cf_usize base, cf_usize indent)
+static void cf_tensor_print_axis(const cf_tensor *tensor, cf_usize axis, cf_usize base, cf_usize indent)
 {
   if(axis == tensor->rank - 1)
   {
     printf("[");
-    for (cf_usize i = 0; i < tensor->dim[axis]; i++)
+    for(cf_usize i = 0; i < tensor->dim[axis]; i++)
     {
       if(i != 0) printf(", ");
       cf_tensor_print_value(tensor, base + i * tensor->metadata.stride[axis]);
@@ -730,15 +837,10 @@ static void cf_tensor_print_axis(cf_tensor *tensor, cf_usize axis, cf_usize base
   }
 
   printf("[\n");
-  for (cf_usize i = 0; i < tensor->dim[axis]; i++)
+  for(cf_usize i = 0; i < tensor->dim[axis]; i++)
   {
     cf_tensor_print_indent(indent + 2);
-    cf_tensor_print_axis(
-      tensor,
-      axis + 1,
-      base + i * tensor->metadata.stride[axis],
-      indent + 2
-    );
+    cf_tensor_print_axis(tensor, axis + 1, base + i * tensor->metadata.stride[axis], indent + 2);
 
     if(i + 1 != tensor->dim[axis]) printf(",");
     printf("\n");
@@ -747,11 +849,7 @@ static void cf_tensor_print_axis(cf_tensor *tensor, cf_usize axis, cf_usize base
   printf("]");
 }
 
-/*
- * Public debug printer for CPU-visible tensors. CUDA tensors should be copied
- * to CPU before printing so this function can read tensor->data.
- */
-void cf_tensor_print(cf_tensor *tensor)
+void cf_tensor_print(const cf_tensor *tensor)
 {
   if(tensor == CF_NULL)
   {

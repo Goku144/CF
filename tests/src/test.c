@@ -63,15 +63,7 @@ static void test_check(_Bool condition, const char *message)
 
 static void test_check_string_value(cf_string *str, const char *expected, const char *message)
 {
-  test_check(
-    str != CF_NULL &&
-    expected != CF_NULL &&
-    cf_string_is_valid(str) == CF_TRUE &&
-    str->data != CF_NULL &&
-    strcmp((char *)str->data, expected) == 0 &&
-    str->len == strlen(expected),
-    message
-  );
+  test_check(str != CF_NULL && expected != CF_NULL && cf_string_is_valid(str) == CF_TRUE && str->data != CF_NULL && strcmp((char *)str->data, expected) == 0 && str->len == strlen(expected), message);
 }
 
 /*******************************************************************************
@@ -261,13 +253,7 @@ static void test_cf_alloc_debug_callbacks(void)
   test_check(debug.head != CF_NULL && debug.head->ptr == ptr_c, "head points to newest pointer");
   test_check(debug.head != CF_NULL && debug.head->next != CF_NULL, "second node exists");
   test_check(debug.head != CF_NULL && debug.head->next != CF_NULL && debug.head->next->ptr == ptr_b, "second node tracks middle pointer");
-  test_check(
-    debug.head != CF_NULL &&
-    debug.head->next != CF_NULL &&
-    debug.head->next->next != CF_NULL &&
-    debug.head->next->next->ptr == ptr_a,
-    "third node tracks oldest pointer"
-  );
+  test_check(debug.head != CF_NULL && debug.head->next != CF_NULL && debug.head->next->next != CF_NULL && debug.head->next->next->ptr == ptr_a, "third node tracks oldest pointer");
 
   cf_alloc_debug_log(&debug, __LINE__);
 
@@ -1097,36 +1083,53 @@ static void test_cf_tensor_cpu_api(void)
 {
   cf_tensor a = {0};
   cf_tensor b = {0};
-  cf_tensor out = {0};
-  cf_tensor scalar_out = {0};
+  cf_tensor copy = {0};
   cf_tensor mat_a = {0};
   cf_tensor mat_b = {0};
-  cf_tensor mat_out = {0};
+  cf_tensor batch_a = {0};
+  cf_tensor batch_b = {0};
+  cf_tensor *pair[2] = {&a, &b};
+  cf_tensor *cleanup[7] = {&a, &b, &copy, &mat_a, &mat_b, &batch_a, &batch_b};
   cf_usize vec_dim[CF_TENSOR_HIGHEST_RANK] = {4, 0, 0, 0, 0, 0, 0, 0};
+  cf_usize square_dim[CF_TENSOR_HIGHEST_RANK] = {2, 2, 0, 0, 0, 0, 0, 0};
+  cf_usize grow_dim[CF_TENSOR_HIGHEST_RANK] = {8, 0, 0, 0, 0, 0, 0, 0};
   cf_usize mat_a_dim[CF_TENSOR_HIGHEST_RANK] = {2, 3, 0, 0, 0, 0, 0, 0};
   cf_usize mat_b_dim[CF_TENSOR_HIGHEST_RANK] = {3, 2, 0, 0, 0, 0, 0, 0};
-  cf_usize mat_out_dim[CF_TENSOR_HIGHEST_RANK] = {2, 2, 0, 0, 0, 0, 0, 0};
+  cf_usize batch_a_dim[CF_TENSOR_HIGHEST_RANK] = {2, 1, 2, 3, 0, 0, 0, 0};
+  cf_usize batch_b_dim[CF_TENSOR_HIGHEST_RANK] = {1, 4, 3, 2, 0, 0, 0, 0};
   cf_usize idx[CF_TENSOR_HIGHEST_RANK] = {0};
+  double a_values[4] = {1.0, 2.0, 3.0, 4.0};
+  double b_values[4] = {10.0, 20.0, 30.0, 40.0};
+  double batch_a_values[12] = {
+    1.0, 2.0, 3.0,
+    4.0, 5.0, 6.0,
+    7.0, 8.0, 9.0,
+    10.0, 11.0, 12.0
+  };
+  double batch_b_values[24] = {
+    1.0, 0.0, 0.0, 1.0, 1.0, 1.0,
+    2.0, 0.0, 0.0, 2.0, 1.0, 0.0,
+    0.0, 1.0, 1.0, 0.0, 0.0, 2.0,
+    1.0, 1.0, 2.0, 0.0, 0.0, 2.0
+  };
   double value = 0.0;
   double scalar = 2.0;
 
   test_section("cf_tensor cpu api");
 
-  test_check(cf_tensor_init_cpu(&a, vec_dim, 1, CF_TENSOR_DOUBLE) == CF_OK, "tensor cpu init a succeeds");
-  test_check(cf_tensor_init_cpu(&b, vec_dim, 1, CF_TENSOR_DOUBLE) == CF_OK, "tensor cpu init b succeeds");
-  test_check(cf_tensor_init_cpu(&out, vec_dim, 1, CF_TENSOR_DOUBLE) == CF_OK, "tensor cpu init output succeeds");
-  test_check(cf_tensor_init_cpu(&scalar_out, vec_dim, 1, CF_TENSOR_DOUBLE) == CF_OK, "tensor cpu init scalar output succeeds");
+  test_check(cf_tensor_init_many_cpu(pair, 2, vec_dim, 1, CF_TENSOR_DOUBLE) == CF_OK, "tensor cpu init many succeeds");
   test_check(cf_tensor_is_valid(&a) == CF_TRUE, "tensor cpu object is valid");
   test_check(a.device == CF_TENSOR_DEVICE_CPU, "tensor cpu init marks CPU device");
   test_check(a.metadata.len == 4, "tensor cpu len stores element count");
+  test_check(a.metadata.capacity == 4, "tensor cpu capacity starts at element count");
   test_check(a.metadata.stride[0] == 1, "tensor cpu vector stride is one");
 
   for(cf_usize i = 0; i < 4; i++)
   {
     idx[0] = i;
-    value = (double)(i + 1);
+    value = a_values[i];
     test_check(cf_tensor_set_cpu(&a, idx, &value) == CF_OK, "tensor set cpu writes a value");
-    value = (double)((i + 1) * 10);
+    value = b_values[i];
     test_check(cf_tensor_set_cpu(&b, idx, &value) == CF_OK, "tensor set cpu writes b value");
   }
 
@@ -1136,18 +1139,27 @@ static void test_cf_tensor_cpu_api(void)
   idx[0] = 4;
   test_check(cf_tensor_get_cpu(&value, &a, idx) == CF_ERR_BOUNDS, "tensor get cpu rejects out-of-bounds index");
 
-  test_check(cf_tensor_add_cpu(&a, &b, &out) == CF_OK, "tensor add cpu succeeds");
-  test_check(((double *)out.data)[0] == 11.0 && ((double *)out.data)[3] == 44.0, "tensor add cpu computes expected values");
+  test_check(cf_tensor_add_cpu(&a, &b) == CF_OK, "tensor add cpu succeeds in-place");
+  test_check(((double *)a.data)[0] == 11.0 && ((double *)a.data)[3] == 44.0, "tensor add cpu mutates op1");
 
-  test_check(cf_tensor_mul_cpu(&a, &b, &out) == CF_OK, "tensor elementwise mul cpu succeeds");
-  test_check(((double *)out.data)[0] == 10.0 && ((double *)out.data)[3] == 160.0, "tensor elementwise mul cpu computes expected values");
+  test_check(cf_tensor_copy_from_array_cpu(&a, a_values, 4) == CF_OK, "tensor cpu copies from array");
+  test_check(cf_tensor_mul_cpu(&a, &b) == CF_OK, "tensor elementwise mul cpu succeeds in-place");
+  test_check(((double *)a.data)[0] == 10.0 && ((double *)a.data)[3] == 160.0, "tensor elementwise mul cpu mutates op1");
 
-  test_check(cf_tensor_scalar_mul_cpu(&a, &scalar, &scalar_out) == CF_OK, "tensor scalar mul cpu succeeds");
-  test_check(((double *)scalar_out.data)[0] == 2.0 && ((double *)scalar_out.data)[3] == 8.0, "tensor scalar mul cpu computes expected values");
+  test_check(cf_tensor_copy_from_array_cpu(&a, a_values, 4) == CF_OK, "tensor cpu resets from array");
+  test_check(cf_tensor_scalar_mul_cpu(&a, &scalar) == CF_OK, "tensor scalar mul cpu succeeds in-place");
+  test_check(((double *)a.data)[0] == 2.0 && ((double *)a.data)[3] == 8.0, "tensor scalar mul cpu mutates op1");
+
+  test_check(cf_tensor_reshape_cpu(&a, square_dim, 2) == CF_OK, "tensor reshape cpu changes metadata only");
+  test_check(a.rank == 2 && a.dim[0] == 2 && a.dim[1] == 2 && a.metadata.capacity == 4, "tensor reshape keeps capacity");
+  test_check(cf_tensor_resize_cpu(&a, grow_dim, 1) == CF_OK, "tensor resize cpu grows storage");
+  test_check(a.rank == 1 && a.dim[0] == 8 && a.metadata.capacity >= 8, "tensor resize updates shape and capacity");
+
+  test_check(cf_tensor_copy_cpu(&copy, &b) == CF_OK, "tensor copy cpu initializes empty destination");
+  test_check(copy.rank == 1 && copy.dim[0] == 4 && ((double *)copy.data)[3] == 40.0, "tensor copy cpu copies shape and data");
 
   test_check(cf_tensor_init_cpu(&mat_a, mat_a_dim, 2, CF_TENSOR_DOUBLE) == CF_OK, "matrix tensor a init succeeds");
   test_check(cf_tensor_init_cpu(&mat_b, mat_b_dim, 2, CF_TENSOR_DOUBLE) == CF_OK, "matrix tensor b init succeeds");
-  test_check(cf_tensor_init_cpu(&mat_out, mat_out_dim, 2, CF_TENSOR_DOUBLE) == CF_OK, "matrix tensor output init succeeds");
 
   ((double *)mat_a.data)[0] = 1.0;
   ((double *)mat_a.data)[1] = 2.0;
@@ -1163,31 +1175,30 @@ static void test_cf_tensor_cpu_api(void)
   ((double *)mat_b.data)[4] = 11.0;
   ((double *)mat_b.data)[5] = 12.0;
 
-  test_check(cf_tensor_matrix_mul_cpu(&mat_a, &mat_b, &mat_out) == CF_OK, "matrix multiplication cpu succeeds");
-  test_check(
-    ((double *)mat_out.data)[0] == 58.0 &&
-    ((double *)mat_out.data)[1] == 64.0 &&
-    ((double *)mat_out.data)[2] == 139.0 &&
-    ((double *)mat_out.data)[3] == 154.0,
-    "matrix multiplication cpu computes expected values"
-  );
+  test_check(cf_tensor_matrix_mul_cpu(&mat_a, &mat_b) == CF_OK, "matrix multiplication cpu succeeds in-place");
+  test_check(mat_a.rank == 2 && mat_a.dim[0] == 2 && mat_a.dim[1] == 2, "matrix multiplication cpu reshapes op1");
+  test_check(((double *)mat_a.data)[0] == 58.0 && ((double *)mat_a.data)[1] == 64.0 && ((double *)mat_a.data)[2] == 139.0 && ((double *)mat_a.data)[3] == 154.0, "matrix multiplication cpu mutates op1 with expected values");
+
+  test_check(cf_tensor_init_cpu(&batch_a, batch_a_dim, 4, CF_TENSOR_DOUBLE) == CF_OK, "batch matrix tensor a init succeeds");
+  test_check(cf_tensor_init_cpu(&batch_b, batch_b_dim, 4, CF_TENSOR_DOUBLE) == CF_OK, "batch matrix tensor b init succeeds");
+  memcpy(batch_a.data, batch_a_values, sizeof(batch_a_values));
+  memcpy(batch_b.data, batch_b_values, sizeof(batch_b_values));
+
+  test_check(cf_tensor_batch_mul_cpu(&batch_a, &batch_b) == CF_OK, "rank-4 batch multiplication cpu succeeds");
+  test_check(batch_a.rank == 4 && batch_a.dim[0] == 2 && batch_a.dim[1] == 4 && batch_a.dim[2] == 2 && batch_a.dim[3] == 2, "rank-4 batch multiplication cpu broadcasts output shape");
+  test_check(((double *)batch_a.data)[0] == 4.0 && ((double *)batch_a.data)[1] == 5.0 && ((double *)batch_a.data)[15] == 16.0 && ((double *)batch_a.data)[31] == 34.0, "rank-4 batch multiplication cpu computes broadcasted values");
 
 #ifndef CF_CUDA_AVAILABLE
   {
     cf_tensor macro_tensor = {0};
     test_check(cf_tensor_init(&macro_tensor, vec_dim, 1, CF_TENSOR_DOUBLE) == CF_OK, "tensor macro init maps to cpu without CUDA");
     test_check(macro_tensor.device == CF_TENSOR_DEVICE_CPU && macro_tensor.data != CF_NULL, "tensor macro cpu init allocates host storage");
+    test_check(cf_tensor_add(&macro_tensor, &macro_tensor) == CF_OK, "tensor macro add maps to in-place cpu add without CUDA");
     cf_tensor_destroy(&macro_tensor);
   }
 #endif
 
-  cf_tensor_destroy_cpu(&mat_out);
-  cf_tensor_destroy_cpu(&mat_b);
-  cf_tensor_destroy_cpu(&mat_a);
-  cf_tensor_destroy_cpu(&scalar_out);
-  cf_tensor_destroy_cpu(&out);
-  cf_tensor_destroy_cpu(&b);
-  cf_tensor_destroy_cpu(&a);
+  cf_tensor_destroy_many_cpu(cleanup, 7);
 }
 
 #ifdef CF_CUDA_AVAILABLE
@@ -1195,42 +1206,72 @@ static void test_cf_tensor_cuda_api(void)
 {
   cf_tensor a = {0};
   cf_tensor b = {0};
-  cf_tensor out = {0};
+  cf_tensor mat_a = {0};
+  cf_tensor mat_b = {0};
   cf_tensor unsupported = {0};
+  cf_tensor *pair[2] = {&a, &b};
+  cf_tensor *cleanup[4] = {&a, &b, &mat_a, &mat_b};
   cf_usize dim[CF_TENSOR_HIGHEST_RANK] = {4, 0, 0, 0, 0, 0, 0, 0};
+  cf_usize mat_a_dim[CF_TENSOR_HIGHEST_RANK] = {2, 3, 0, 0, 0, 0, 0, 0};
+  cf_usize mat_b_dim[CF_TENSOR_HIGHEST_RANK] = {3, 2, 0, 0, 0, 0, 0, 0};
   cf_usize idx[CF_TENSOR_HIGHEST_RANK] = {0};
+  double a_values[4] = {1.0, 2.0, 3.0, 4.0};
+  double b_values[4] = {10.0, 20.0, 30.0, 40.0};
   double value = 0.0;
   double read = 0.0;
 
   test_section("cf_tensor cuda api");
 
-  test_check(cf_tensor_init_gpu(&a, dim, 1, CF_TENSOR_DOUBLE) == CF_OK, "tensor gpu init a succeeds");
-  test_check(cf_tensor_init_gpu(&b, dim, 1, CF_TENSOR_DOUBLE) == CF_OK, "tensor gpu init b succeeds");
-  test_check(cf_tensor_init_gpu(&out, dim, 1, CF_TENSOR_DOUBLE) == CF_OK, "tensor gpu init output succeeds");
+  test_check(cf_tensor_init_many_gpu(pair, 2, dim, 1, CF_TENSOR_DOUBLE) == CF_OK, "tensor gpu init many succeeds");
   test_check(a.device == CF_TENSOR_DEVICE_CUDA && a.device_data != CF_NULL && a.data == CF_NULL, "tensor gpu init creates device-only storage");
   test_check(cf_tensor_init_gpu(&unsupported, dim, 1, CF_TENSOR_LD) == CF_ERR_UNSUPPORTED, "tensor gpu init rejects unsupported long double");
 
   for(cf_usize i = 0; i < 4; i++)
   {
     idx[0] = i;
-    value = (double)(i + 1);
+    value = a_values[i];
     test_check(cf_tensor_set_gpu(&a, idx, &value) == CF_OK, "tensor set gpu writes a value");
-    value = (double)((i + 1) * 10);
+    value = b_values[i];
     test_check(cf_tensor_set_gpu(&b, idx, &value) == CF_OK, "tensor set gpu writes b value");
   }
 
   idx[0] = 2;
   test_check(cf_tensor_get_gpu(&read, &a, idx) == CF_OK && read == 3.0, "tensor get gpu reads a value");
-  test_check(cf_tensor_add_gpu(&a, &b, &out) == CF_OK, "tensor add gpu succeeds");
-  test_check(cf_tensor_to_cpu(&out) == CF_OK, "tensor gpu output copies to cpu");
-  test_check(((double *)out.data)[0] == 11.0 && ((double *)out.data)[3] == 44.0, "tensor add gpu computes expected values");
-  test_check(cf_tensor_mul_gpu(&a, &b, &out) == CF_ERR_UNSUPPORTED, "tensor mul gpu reports unsupported placeholder");
-  test_check(cf_tensor_scalar_mul_gpu(&a, &value, &out) == CF_ERR_UNSUPPORTED, "tensor scalar mul gpu reports unsupported placeholder");
-  test_check(cf_tensor_matrix_mul_gpu(&a, &b, &out) == CF_ERR_UNSUPPORTED, "tensor matrix mul gpu reports unsupported placeholder");
+  test_check(cf_tensor_add_gpu(&a, &b) == CF_OK, "tensor add gpu succeeds in-place");
+  test_check(cf_tensor_to_cpu(&a) == CF_OK, "tensor gpu op1 copies to cpu");
+  test_check(((double *)a.data)[0] == 11.0 && ((double *)a.data)[3] == 44.0, "tensor add gpu mutates op1");
+  test_check(cf_tensor_copy_from_array_gpu(&a, a_values, 4) == CF_OK, "tensor gpu resets from host array");
+  test_check(cf_tensor_mul_gpu(&a, &b) == CF_OK, "tensor mul gpu succeeds in-place");
+  test_check(cf_tensor_to_cpu(&a) == CF_OK, "tensor gpu mul op1 copies to cpu");
+  test_check(((double *)a.data)[0] == 10.0 && ((double *)a.data)[3] == 160.0, "tensor mul gpu mutates op1");
+  value = 2.0;
+  test_check(cf_tensor_copy_from_array_gpu(&a, a_values, 4) == CF_OK, "tensor gpu resets before scalar");
+  test_check(cf_tensor_scalar_mul_gpu(&a, &value) == CF_OK, "tensor scalar mul gpu succeeds in-place");
+  test_check(cf_tensor_to_cpu(&a) == CF_OK, "tensor scalar mul gpu op1 copies to cpu");
+  test_check(((double *)a.data)[0] == 2.0 && ((double *)a.data)[3] == 8.0, "tensor scalar mul gpu mutates op1");
 
-  cf_tensor_destroy_gpu(&out);
-  cf_tensor_destroy_gpu(&b);
-  cf_tensor_destroy_gpu(&a);
+  test_check(cf_tensor_init_gpu(&mat_a, mat_a_dim, 2, CF_TENSOR_DOUBLE) == CF_OK, "matrix tensor gpu a init succeeds");
+  test_check(cf_tensor_init_gpu(&mat_b, mat_b_dim, 2, CF_TENSOR_DOUBLE) == CF_OK, "matrix tensor gpu b init succeeds");
+
+  for(cf_usize i = 0; i < 6; i++)
+  {
+    idx[0] = i / 3;
+    idx[1] = i % 3;
+    value = (double)(i + 1);
+    test_check(cf_tensor_set_gpu(&mat_a, idx, &value) == CF_OK, "matrix tensor gpu set a value");
+
+    idx[0] = i / 2;
+    idx[1] = i % 2;
+    value = (double)(i + 7);
+    test_check(cf_tensor_set_gpu(&mat_b, idx, &value) == CF_OK, "matrix tensor gpu set b value");
+  }
+
+  test_check(cf_tensor_matrix_mul_gpu(&mat_a, &mat_b) == CF_OK, "matrix multiplication gpu succeeds in-place");
+  test_check(cf_tensor_to_cpu(&mat_a) == CF_OK, "matrix multiplication gpu op1 copies to cpu");
+  test_check(mat_a.rank == 2 && mat_a.dim[0] == 2 && mat_a.dim[1] == 2, "matrix multiplication gpu reshapes op1");
+  test_check(((double *)mat_a.data)[0] == 58.0 && ((double *)mat_a.data)[1] == 64.0 && ((double *)mat_a.data)[2] == 139.0 && ((double *)mat_a.data)[3] == 154.0, "matrix multiplication gpu mutates op1 with expected values");
+
+  cf_tensor_destroy_many_gpu(cleanup, 4);
 }
 #endif
 
@@ -1255,12 +1296,7 @@ static void test_cf_types_native_groups(void)
 /*******************************************************************************
  * Security AES Test Helpers
  ******************************************************************************/
-static void test_cf_aes_known_vector(
-  const char *label,
-  const cf_u8 *key,
-  cf_aes_key_size key_size,
-  const cf_u8 plaintext[CF_AES_BLOCK_SIZE],
-  const cf_u8 expected_ciphertext[CF_AES_BLOCK_SIZE])
+static void test_cf_aes_known_vector(const char *label, const cf_u8 *key, cf_aes_key_size key_size, const cf_u8 plaintext[CF_AES_BLOCK_SIZE], const cf_u8 expected_ciphertext[CF_AES_BLOCK_SIZE])
 {
   cf_aes aes = {0};
   cf_u8 ciphertext[CF_AES_BLOCK_SIZE] = {0};
@@ -1477,14 +1513,7 @@ int main(void)
   test_cf_aes_pkcs7_padding();
   test_cf_aes_pkcs7_file_roundtrip();
   test_cf_types_native_groups();
-  printf
-  (
-    "\n================ Test Summary ================\n"
-    "  Passed : %-6d    Failed : %-6d\n"
-    "==============================================\n",
-    g_test_passed,
-    g_test_failed
-  );
+  printf("\n================ Test Summary ================\n" "  Passed : %-6d    Failed : %-6d\n" "==============================================\n", g_test_passed, g_test_failed);
 
   return g_test_failed == 0 ? 0 : 1;
 }
