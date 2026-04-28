@@ -34,8 +34,8 @@ TEXT/
 The project uses `gcc`, `make`, and `nasm`. CUDA is optional.
 
 If `nvcc` is found on `PATH`, the build defines `CF_CUDA_AVAILABLE=1`, compiles
-`.cu` files with `nvcc`, and links with `nvcc`. Otherwise the framework builds
-and runs with CPU tensor paths only.
+`.cu` files with `nvcc`, and links with `nvcc`, `cuBLASLt`, and `cuBLAS`.
+Otherwise the framework builds and runs with CPU tensor paths only.
 
 If CUDA is installed but not on `PATH`, direct CUDA compilation can still work,
 for example:
@@ -55,6 +55,18 @@ Build and run the app:
 ```sh
 make app
 ```
+
+The app is a tensor backend smoke test. In CUDA builds it runs the same
+deterministic inputs through CPU and GPU paths, then prints status, result
+shape, values, and maximum absolute difference for:
+
+- elementwise add
+- elementwise multiply
+- scalar multiply
+- matrix multiply
+- batched matrix multiply
+
+CPU-only builds print that GPU comparison was skipped.
 
 Build and run the tests:
 
@@ -133,18 +145,23 @@ Implemented math module:
 - `cf_math_min_usize` and `cf_math_max_usize`: `cf_usize` min/max helpers.
 - `cf_tensor`: dense tensor validation, CPU lifecycle, CPU get/set, readable
   CPU printing, CPU elementwise addition, CPU elementwise multiplication, CPU
-  scalar multiplication, and CPU matrix multiplication.
+  scalar multiplication, and CPU batched matrix multiplication.
 - `cf_tensor_cuda`: CUDA tensor lifecycle, CUDA get/set, CPU/GPU transfer
-  helpers, CUDA elementwise addition, and unsupported placeholders for future
-  CUDA scalar multiply, elementwise multiply, and matrix multiplication.
+  helpers, CUDA elementwise addition, CUDA elementwise multiplication, CUDA
+  scalar multiplication, and cuBLASLt-backed batched float/double matrix
+  multiplication.
 
-Tensor outputs are caller-owned. Initialize the output tensor with the expected
-shape before calling tensor operations.
+Tensor operations are in-place: `op1` is both the left operand and destination.
+Elementwise hot paths do not validate shape/type compatibility, so callers keep
+that contract for performance. Shape flexibility is handled through
+`cf_tensor_reserve_*`, `cf_tensor_reshape_*`, and `cf_tensor_resize_*`.
 
 Tensor setup is now explicit:
 
 - `cf_tensor_init_cpu` creates CPU-backed tensors with `tensor.data`.
+- `cf_tensor_init_many_cpu` initializes many CPU tensors with the same shape.
 - `cf_tensor_init_gpu` creates GPU-backed tensors with `tensor.device_data`.
+- `cf_tensor_init_many_gpu` initializes many CUDA tensors with the same shape.
 - `cf_tensor_to_gpu` uploads an existing CPU tensor to CUDA storage.
 - `cf_tensor_to_cpu` downloads an existing CUDA tensor to CPU storage.
 - `cf_tensor_destroy_cpu` frees CPU storage.
@@ -162,21 +179,26 @@ should call `cf_tensor_init_cpu` explicitly.
 Example:
 
 ```c
-cf_tensor a, b, out;
+cf_tensor a = {0};
+cf_tensor b = {0};
+cf_tensor *batch[2] = {&a, &b};
 
-cf_tensor_init_cpu(&a, (cf_usize[]){1, 3, 0, 0, 0, 0, 0, 0}, 2, CF_TENSOR_DOUBLE);
-cf_tensor_init_cpu(&b, (cf_usize[]){3, 1, 0, 0, 0, 0, 0, 0}, 2, CF_TENSOR_DOUBLE);
-cf_tensor_init_cpu(&out, (cf_usize[]){1, 1, 0, 0, 0, 0, 0, 0}, 2, CF_TENSOR_DOUBLE);
+cf_tensor_init_many_cpu(
+  batch,
+  2,
+  (cf_usize[]){4, 0, 0, 0, 0, 0, 0, 0},
+  1,
+  CF_TENSOR_DOUBLE
+);
 
-cf_tensor_matrice_mul(&a, &b, &out);
-cf_tensor_print(&out);
+cf_tensor_add_cpu(&a, &b); /* a = a + b */
+cf_tensor_print(&a);
 
-cf_tensor_destroy_cpu(&a);
-cf_tensor_destroy_cpu(&b);
-cf_tensor_destroy_cpu(&out);
+cf_tensor_destroy_many_cpu(batch, 2);
 ```
 
-CUDA currently supports tensor add for:
+CUDA currently supports tensor add, elementwise multiply, and scalar multiply
+for:
 
 ```text
 char, short, int, long, long long,
@@ -186,10 +208,15 @@ cf_u8, cf_u16, cf_u32, cf_u64
 
 CUDA does not currently support `CF_TENSOR_LD` or `CF_TENSOR_U128`.
 
-CUDA scalar multiplication, elementwise multiplication, and matrix
-multiplication currently return `CF_ERR_UNSUPPORTED`. Future matrix
-multiplication should use cuBLAS for GEMM and cuTENSOR for general tensor
-contractions.
+CUDA math operations are strict GPU operations: tensors must already have
+`device_data`, results mutate `op1` on the GPU, and CPU reads should happen
+explicitly through `cf_tensor_to_cpu`.
+
+Matrix multiplication supports `[..., M, K] @ [..., K, N] -> [..., M, N]`
+through `cf_tensor_batch_mul_*`; `cf_tensor_matrix_mul_*` uses the
+same implementation. CUDA uses cuBLASLt for `CF_TENSOR_FLOAT` and
+`CF_TENSOR_DOUBLE`. Other CUDA element types currently return
+`CF_ERR_UNSUPPORTED` for matrix multiplication.
 
 ## Documentation
 
@@ -275,8 +302,9 @@ grow without changing layout later. These placeholders compile but do not expose
 real public APIs yet.
 
 Tensor GPU lifecycle, get/set, transfer helpers, and elementwise addition are
-implemented. More CUDA math kernels are intentionally still explicit
-`CF_ERR_UNSUPPORTED` placeholders.
+implemented, along with elementwise multiplication, scalar multiplication, and
+cuBLASLt-backed float/double matrix and batched matrix multiplication. CUDA
+paths that still lack a supported output contract return `CF_ERR_UNSUPPORTED`.
 
 ## Not Implemented Yet
 
@@ -308,9 +336,8 @@ Security work still needed:
 
 CUDA tensor work still needed:
 
-- CUDA scalar multiplication kernel.
-- CUDA elementwise multiplication kernel.
-- cuBLAS-backed matrix multiplication.
+- More efficient strided-batched cuBLASLt path for large batch counts.
+- Broader CUDA matrix multiplication types when their output contract is clear.
 - cuTENSOR-backed tensor contraction/reduction paths.
 - CUB-backed reductions such as sum/min/max.
 
@@ -318,7 +345,7 @@ Infrastructure work still needed:
 
 - Public API design for the placeholder modules.
 - Tests for every new module as it becomes real.
-- Better app examples beyond the current development/demo flow.
+- More focused app examples for non-tensor modules.
 - Keeping `public/doc/project/implemented-api.md` updated for each public API.
 
 ## License

@@ -765,38 +765,77 @@ has a complete function index.
 ### Tensor Validation And CPU Lifecycle
 
 ```c
-cf_bool cf_tensor_is_valid(cf_tensor *tensor);
+cf_usize cf_tensor_element_size(cf_tensor_type elem_type);
+cf_bool cf_tensor_is_valid(const cf_tensor *tensor);
 
 cf_status cf_tensor_init_cpu(
   cf_tensor *tensor,
-  cf_usize dim[CF_TENSOR_HIGHEST_RANK],
+  const cf_usize dim[CF_TENSOR_HIGHEST_RANK],
+  cf_usize rank,
+  cf_tensor_type elem_type
+);
+
+cf_status cf_tensor_init_many_cpu(
+  cf_tensor **tensors,
+  cf_usize count,
+  const cf_usize dim[CF_TENSOR_HIGHEST_RANK],
   cf_usize rank,
   cf_tensor_type elem_type
 );
 
 void cf_tensor_destroy_cpu(cf_tensor *tensor);
+void cf_tensor_destroy_many_cpu(cf_tensor **tensors, cf_usize count);
+
+cf_status cf_tensor_reserve_cpu(cf_tensor *tensor, cf_usize capacity);
+cf_status cf_tensor_reshape_cpu(
+  cf_tensor *tensor,
+  const cf_usize dim[CF_TENSOR_HIGHEST_RANK],
+  cf_usize rank
+);
+cf_status cf_tensor_resize_cpu(
+  cf_tensor *tensor,
+  const cf_usize dim[CF_TENSOR_HIGHEST_RANK],
+  cf_usize rank
+);
 ```
 
 Critical points:
 
+- `cf_tensor_element_size` maps tensor element types to byte widths.
 - `cf_tensor_is_valid` checks shape, stride, element metadata, active device,
-  and active storage.
+  active storage, and capacity.
 - `cf_tensor_init_cpu` allocates and zeroes CPU memory.
+- `cf_tensor_init_many_cpu` initializes a pointer array of tensors.
 - `cf_tensor_destroy_cpu` frees CPU memory and resets the object.
+- `cf_tensor_destroy_many_cpu` destroys a pointer array of tensors.
+- `cf_tensor_reshape_cpu` changes metadata only and requires enough capacity.
+- `cf_tensor_resize_cpu` grows storage when the new shape needs more capacity.
 
 ### Tensor CPU Accessors
 
 ```c
 cf_status cf_tensor_get_cpu(
   void *out_value,
-  cf_tensor *tensor,
-  cf_usize indexs[CF_TENSOR_HIGHEST_RANK]
+  const cf_tensor *tensor,
+  const cf_usize indexs[CF_TENSOR_HIGHEST_RANK]
 );
 
 cf_status cf_tensor_set_cpu(
   cf_tensor *tensor,
-  cf_usize indexs[CF_TENSOR_HIGHEST_RANK],
-  void *value
+  const cf_usize indexs[CF_TENSOR_HIGHEST_RANK],
+  const void *value
+);
+
+cf_status cf_tensor_copy_cpu(cf_tensor *dst, const cf_tensor *src);
+cf_status cf_tensor_copy_from_array_cpu(
+  cf_tensor *tensor,
+  const void *array,
+  cf_usize count
+);
+cf_status cf_tensor_copy_to_array_cpu(
+  void *array,
+  const cf_tensor *tensor,
+  cf_usize count
 );
 ```
 
@@ -805,28 +844,31 @@ Critical points:
 - These require CPU-active storage.
 - Logical coordinates are converted through row-major strides.
 - `value` and `out_value` must point to storage of the tensor element type.
+- Copy helpers can grow the destination and copy shape/data.
 
 ### Tensor CPU Math
 
 ```c
-cf_status cf_tensor_add_cpu(cf_tensor *t1, cf_tensor *t2, cf_tensor *t_out);
-cf_status cf_tensor_mul_cpu(cf_tensor *t1, cf_tensor *t2, cf_tensor *t_out);
-cf_status cf_tensor_scalar_mul_cpu(cf_tensor *t1, void *scalar, cf_tensor *t_out);
-cf_status cf_tensor_matrix_mul_cpu(cf_tensor *t1, cf_tensor *t2, cf_tensor *t_out);
+cf_status cf_tensor_add_cpu(cf_tensor *op1, const cf_tensor *op2);
+cf_status cf_tensor_mul_cpu(cf_tensor *op1, const cf_tensor *op2);
+cf_status cf_tensor_scalar_mul_cpu(cf_tensor *op1, const void *scalar);
+cf_status cf_tensor_batch_mul_cpu(cf_tensor *op1, const cf_tensor *op2);
+cf_status cf_tensor_matrix_mul_cpu(cf_tensor *op1, const cf_tensor *op2);
 ```
 
 Critical points:
 
-- Outputs are caller-owned and must already be initialized.
-- Elementwise add/mul require identical shape and type.
+- Math operations mutate `op1`.
+- Elementwise add/mul do not validate shape/type in the hot path.
 - Scalar multiplication expects `scalar` to match the tensor element type.
-- Matrix multiplication supports scalar fallback, vector normalization, matrix
-  multiplication, and broadcast-compatible leading batch dimensions.
+- Batched multiplication supports `[..., M, K] @ [..., K, N] -> [..., M, N]`
+  with broadcastable leading dimensions.
+- Matrix multiplication uses the same implementation as batched multiplication.
 
 ### Tensor Printing
 
 ```c
-void cf_tensor_print(cf_tensor *tensor);
+void cf_tensor_print(const cf_tensor *tensor);
 ```
 
 Prints a readable nested CPU tensor.
@@ -842,12 +884,33 @@ Available when `CF_CUDA_AVAILABLE` is enabled:
 ```c
 cf_status cf_tensor_init_gpu(
   cf_tensor *tensor,
-  cf_usize dim[CF_TENSOR_HIGHEST_RANK],
+  const cf_usize dim[CF_TENSOR_HIGHEST_RANK],
+  cf_usize rank,
+  cf_tensor_type elem_type
+);
+
+cf_status cf_tensor_init_many_gpu(
+  cf_tensor **tensors,
+  cf_usize count,
+  const cf_usize dim[CF_TENSOR_HIGHEST_RANK],
   cf_usize rank,
   cf_tensor_type elem_type
 );
 
 void cf_tensor_destroy_gpu(cf_tensor *tensor);
+void cf_tensor_destroy_many_gpu(cf_tensor **tensors, cf_usize count);
+
+cf_status cf_tensor_reserve_gpu(cf_tensor *tensor, cf_usize capacity);
+cf_status cf_tensor_reshape_gpu(
+  cf_tensor *tensor,
+  const cf_usize dim[CF_TENSOR_HIGHEST_RANK],
+  cf_usize rank
+);
+cf_status cf_tensor_resize_gpu(
+  cf_tensor *tensor,
+  const cf_usize dim[CF_TENSOR_HIGHEST_RANK],
+  cf_usize rank
+);
 
 cf_status cf_tensor_to_gpu(cf_tensor *tensor);
 cf_status cf_tensor_to_cpu(cf_tensor *tensor);
@@ -857,10 +920,12 @@ cf_status cf_tensor_free_gpu(cf_tensor *tensor);
 Critical points:
 
 - `cf_tensor_init_gpu` creates GPU-only device storage.
+- `cf_tensor_init_many_gpu` initializes a pointer array of CUDA tensors.
 - `cf_tensor_to_gpu` uploads an existing CPU mirror.
 - `cf_tensor_to_cpu` downloads and allocates CPU storage when needed.
 - `cf_tensor_free_gpu` frees only device storage and preserves CPU storage when
   available.
+- CUDA resize grows device storage and invalidates stale CPU mirrors.
 
 ### Tensor CUDA Accessors And Math
 
@@ -869,29 +934,48 @@ Available when `CF_CUDA_AVAILABLE` is enabled:
 ```c
 cf_status cf_tensor_get_gpu(
   void *out_value,
-  cf_tensor *tensor,
-  cf_usize indexs[CF_TENSOR_HIGHEST_RANK]
+  const cf_tensor *tensor,
+  const cf_usize indexs[CF_TENSOR_HIGHEST_RANK]
 );
 
 cf_status cf_tensor_set_gpu(
   cf_tensor *tensor,
-  cf_usize indexs[CF_TENSOR_HIGHEST_RANK],
-  void *value
+  const cf_usize indexs[CF_TENSOR_HIGHEST_RANK],
+  const void *value
 );
 
-cf_status cf_tensor_add_gpu(cf_tensor *t1, cf_tensor *t2, cf_tensor *t_out);
-cf_status cf_tensor_scalar_mul_gpu(cf_tensor *t1, void *scalar, cf_tensor *t_out);
-cf_status cf_tensor_mul_gpu(cf_tensor *t1, cf_tensor *t2, cf_tensor *t_out);
-cf_status cf_tensor_matrix_mul_gpu(cf_tensor *t1, cf_tensor *t2, cf_tensor *t_out);
+cf_status cf_tensor_copy_gpu(cf_tensor *dst, const cf_tensor *src);
+cf_status cf_tensor_copy_from_array_gpu(
+  cf_tensor *tensor,
+  const void *array,
+  cf_usize count
+);
+cf_status cf_tensor_copy_to_array_gpu(
+  void *array,
+  const cf_tensor *tensor,
+  cf_usize count
+);
+
+cf_status cf_tensor_add_gpu(cf_tensor *op1, const cf_tensor *op2);
+cf_status cf_tensor_scalar_mul_gpu(cf_tensor *op1, const void *scalar);
+cf_status cf_tensor_mul_gpu(cf_tensor *op1, const cf_tensor *op2);
+cf_status cf_tensor_batch_mul_gpu(cf_tensor *op1, const cf_tensor *op2);
+cf_status cf_tensor_matrix_mul_gpu(cf_tensor *op1, const cf_tensor *op2);
 ```
 
 Critical points:
 
 - GPU get/set copy one element between host and device.
-- `cf_tensor_add_gpu` is implemented.
-- GPU scalar multiplication, elementwise multiplication, and matrix
-  multiplication currently return `CF_ERR_UNSUPPORTED`.
-- Unsupported CUDA tensor element types return `CF_ERR_UNSUPPORTED`.
+- `cf_tensor_add_gpu`, `cf_tensor_mul_gpu`, and `cf_tensor_scalar_mul_gpu` are
+  implemented with custom CUDA kernels and mutate `op1`.
+- `cf_tensor_batch_mul_gpu` loops cuBLASLt GEMM over broadcasted
+  batches for `CF_TENSOR_FLOAT` and `CF_TENSOR_DOUBLE`.
+- `cf_tensor_matrix_mul_gpu` uses the same implementation.
+- CUDA math operations require existing CUDA storage and keep results on device.
+- Unsupported CUDA tensor element types return `CF_ERR_UNSUPPORTED`, including
+  matrix multiplication for non-float/non-double tensors.
+- The app smoke test in `app/src/app.c` compares these CUDA math functions
+  against the CPU implementations when CUDA is enabled.
 
 ## Security
 

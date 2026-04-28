@@ -127,47 +127,46 @@ This keeps strict ISO C builds happy without pretending the module is ready.
 
 CPU tensor operations should:
 
-1. Require CPU-readable storage.
-2. Check rank/shape/type compatibility at the public entry point.
+1. Use `op1` as both input and destination.
+2. Keep shape/type compatibility caller-owned for hot math paths.
 3. Dispatch by `cf_tensor_type`.
 4. Use flat loops when the operation is elementwise.
-5. Keep output caller-owned.
+5. Put slower setup checks in resize/copy/accessor helpers, not inner loops.
 
 Elementwise operation pattern:
 
 ```c
-cf_status cf_tensor_op_cpu(cf_tensor *t1, cf_tensor *t2, cf_tensor *t_out)
+cf_status cf_tensor_op_cpu(cf_tensor *op1, const cf_tensor *op2)
 {
-  /* validate once */
-  /* switch on t_out->metadata.elem_type */
-  /* flat loop over metadata.len */
+  cf_usize len = op1->metadata.len;
+  /* switch on op1->metadata.elem_type */
+  /* flat loop over len and write back to op1 */
 }
 ```
 
 Critical point:
 
-> Do not allocate output tensors inside math operations unless the API clearly
-> says it owns allocation. Current tensor operations expect pre-initialized
-> outputs.
+> Elementwise math operations are performance-critical. Keep compatibility
+> checks out of their hot path and document the caller contract clearly.
 
 ## Adding Tensor CUDA Operations
 
 CUDA tensor operations should:
 
 1. Reject unsupported types with `CF_ERR_UNSUPPORTED`.
-2. Prefer CUDA-resident inputs when available.
-3. Avoid unnecessary host/device copies.
-4. Keep CPU-backed compatibility path when useful.
+2. Require CUDA storage for performance-critical math paths.
+3. Avoid hidden host/device copies inside math operations.
+4. Keep CPU/GPU transfer explicit through `cf_tensor_to_gpu` and `cf_tensor_to_cpu`.
 5. Check `cudaGetLastError` after kernel launch.
 6. Synchronize only when the API requires completion before returning.
 
 Elementwise CUDA pattern:
 
 ```cuda
-__global__ void kernel(const T *a, const T *b, T *out, cf_usize len)
+__global__ void kernel(T *op1, const T *op2, cf_usize len)
 {
   cf_usize i = blockIdx.x * blockDim.x + threadIdx.x;
-  if(i < len) out[i] = a[i] + b[i];
+  if(i < len) op1[i] = op1[i] + op2[i];
 }
 ```
 
@@ -185,7 +184,8 @@ For production performance, prefer NVIDIA libraries:
 
 ```text
 CUB       reductions, scans, sort, low-level primitives
-cuBLAS    matrix multiply, vectors, GEMM, batched GEMM
+cuBLASLt  highest-control GEMM, row-major layouts, algorithm heuristics
+cuBLAS    simpler BLAS vectors and classic GEMM entry points
 cuTENSOR  tensor contractions, reductions, permutations
 cuDNN     neural-network layers and deep-learning primitives
 CUTLASS   custom high-performance GEMM kernels
@@ -195,7 +195,7 @@ Recommended mapping:
 
 ```text
 tensor sum/min/max        CUB or cuTENSOR
-matrix multiplication     cuBLAS
+matrix multiplication     cuBLASLt
 general tensor contraction cuTENSOR
 simple elementwise ops     custom CUDA kernel
 custom fused GEMM          CUTLASS
@@ -207,7 +207,7 @@ When adding a public function:
 
 1. Add header documentation near the declaration.
 2. Add implementation comment above the function in `.c` or `.cu`.
-3. Add the function to `public/doc/implemented-api.md`.
+3. Add the function to `public/doc/project/implemented-api.md`.
 4. Add critical ownership/performance notes.
 
 ## Testing Requirement
@@ -234,4 +234,3 @@ Before changing a public struct layout or macro dispatch behavior, check:
 - `public/doc`
 
 Public shape changes should be rare and documented.
-

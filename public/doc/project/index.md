@@ -23,6 +23,7 @@ hand-written public documentation lives in `public/doc`.
   - CPU tensor behavior.
   - CUDA tensor behavior.
   - Supported GPU types.
+  - CPU/GPU comparison app behavior.
   - Important ownership and performance notes.
 
 - [Extension Guide](extension-guide.md)
@@ -48,3 +49,7 @@ CUDA is optional. The Makefile uses CUDA only when `nvcc` is available on
 /usr/local/cuda-13.2/bin/nvcc -O3 -Ipublic/inc -c lib/src/MATH/cf_tensor_cuda.cu -o /tmp/cf_tensor_cuda.o
 ```
 
+`make app` runs the tensor smoke-test application. CUDA builds compare CPU and
+GPU results for add, elementwise multiply, scalar multiply, matrix multiply,
+and batched matrix multiply. CPU-only builds report that GPU comparison was
+skipped.
