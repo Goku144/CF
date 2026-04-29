@@ -99,6 +99,21 @@ static void bench_print_tensor(const char *name, const cf_math *x)
   bench_print_tensor((name), (result)); \
 } while(0)
 
+#define BENCH_STATUS_SYNC(name, iters, expr, result, sync_expr) do { \
+  cf_status bench_status__ = CF_OK; \
+  double bench_start__ = bench_now_ms(); \
+  for(cf_usize bench_i__ = 0; bench_i__ < (iters); bench_i__++) bench_status__ = (expr); \
+  if(bench_status__ == CF_OK) bench_status__ = (sync_expr); \
+  double bench_elapsed__ = bench_now_ms() - bench_start__; \
+  bench_print_status((name), bench_status__, (iters), bench_elapsed__); \
+  bench_print_tensor((name), (result)); \
+} while(0)
+
+#define BENCH_FRESH_STATUS(name, iters, scratch, expr, result) do { \
+  bench_free_tensor((scratch)); \
+  BENCH_STATUS((name), (iters), (expr), (result)); \
+} while(0)
+
 #define BENCH_VALUE(name, iters, type, expr) do { \
   type bench_value__ = 0; \
   double bench_start__ = bench_now_ms(); \
@@ -112,6 +127,14 @@ static void bench_free_tensor(cf_math *x)
   cf_status status = cf_math_free(x, CF_NULL);
   if(status != CF_OK) printf("  free status=%s\n", cf_status_as_char(status));
 }
+
+#if defined(CF_MATH_HAVE_CUDA_RUNTIME)
+static void bench_free_tensor_ctx(cf_math *x, cf_math_cuda_context *ctx)
+{
+  cf_status status = cf_math_free(x, ctx);
+  if(status != CF_OK) printf("  free status=%s\n", cf_status_as_char(status));
+}
+#endif
 
 static void bench_free_sparse(cf_math_sparse *x)
 {
@@ -135,7 +158,7 @@ static void bench_cpu_surface(void)
   cf_usize dim11133[CF_MATH_HIGHEST_RANK] = {1, 1, 1, 3, 3};
   cf_usize dim11122[CF_MATH_HIGHEST_RANK] = {1, 1, 1, 2, 2};
   cf_usize reshape_dim[CF_MATH_HIGHEST_RANK] = {3, 2};
-  cf_usize expand_dim[CF_MATH_HIGHEST_RANK] = {2, 4};
+  cf_usize expand_dim[CF_MATH_HIGHEST_RANK] = {2, 2};
   cf_usize axes[CF_MATH_HIGHEST_RANK] = {1, 0};
   cf_usize slice_start[CF_MATH_HIGHEST_RANK] = {0, 1};
   cf_usize slice_len[CF_MATH_HIGHEST_RANK] = {2, 2};
@@ -160,8 +183,10 @@ static void bench_cpu_surface(void)
   cf_math conv3_w = {0};
   cf_math gamma = {0};
   cf_math beta = {0};
+  cf_math sparse_dense = {0};
   cf_math sparse_vec = {0};
   cf_math_sparse csr = {0};
+  cf_math_sparse csr_product = {0};
   cf_math_dropout_state dropout = {0};
   cf_math_rnn_state rnn = {0};
   const cf_math *concat_inputs[2];
@@ -264,17 +289,17 @@ static void bench_cpu_surface(void)
   bench_free_tensor(&out);
   BENCH_STATUS("cf_math_alloc batched a", 1U, cf_math_alloc(&out, dim122, 3, CF_DTYPE_F64, CF_DEVICE_CPU, CF_MEM_DEFAULT, CF_NULL), &out);
   bench_fill_pattern(&out, 1.0);
-  BENCH_STATUS("cf_math_matmul_batched", BENCH_ITERS_HEAVY, cf_math_matmul_batched(&aux, &out, &out, CF_NULL), &aux);
-  BENCH_STATUS("cf_math_linear", BENCH_ITERS_HEAVY, cf_math_linear(&aux2, &a, &b, &c, CF_NULL), &aux2);
+  BENCH_FRESH_STATUS("cf_math_matmul_batched", BENCH_ITERS_HEAVY, &aux, cf_math_matmul_batched(&aux, &out, &out, CF_NULL), &aux);
+  BENCH_FRESH_STATUS("cf_math_linear", BENCH_ITERS_HEAVY, &aux2, cf_math_linear(&aux2, &a, &b, &c, CF_NULL), &aux2);
   BENCH_STATUS("cf_math_linear_fused_relu", BENCH_ITERS_HEAVY, cf_math_linear_fused_relu(&aux2, &a, &b, &c, CF_NULL), &aux2);
   BENCH_STATUS("cf_math_linear_fused_gelu", BENCH_ITERS_HEAVY, cf_math_linear_fused_gelu(&aux2, &a, &b, &c, CF_NULL), &aux2);
-  BENCH_STATUS("cf_math_linear_backward_W", BENCH_ITERS_HEAVY, cf_math_linear_backward_W(&aux, &aux2, &a, CF_NULL), &aux);
-  BENCH_STATUS("cf_math_linear_backward_x", BENCH_ITERS_HEAVY, cf_math_linear_backward_x(&aux, &aux2, &b, CF_NULL), &aux);
-  BENCH_STATUS("cf_math_linear_backward_b", BENCH_ITERS_HEAVY, cf_math_linear_backward_b(&aux, &aux2, CF_NULL), &aux);
-  BENCH_STATUS("cf_math_outer", BENCH_ITERS_HEAVY, cf_math_outer(&aux, &c, &c, CF_NULL), &aux);
-  BENCH_STATUS("cf_math_matvec", BENCH_ITERS_HEAVY, cf_math_matvec(&aux3, &a, &b, CF_NULL), &aux3);
-  BENCH_STATUS("cf_math_transpose", BENCH_ITERS_HEAVY, cf_math_transpose(&aux, &a, CF_NULL), &aux);
-  BENCH_STATUS("cf_math_scale", BENCH_ITERS_TENSOR, cf_math_scale(&aux, &a, 0.5, CF_NULL), &aux);
+  BENCH_FRESH_STATUS("cf_math_linear_backward_W", BENCH_ITERS_HEAVY, &aux, cf_math_linear_backward_W(&aux, &aux2, &a, CF_NULL), &aux);
+  BENCH_FRESH_STATUS("cf_math_linear_backward_x", BENCH_ITERS_HEAVY, &aux, cf_math_linear_backward_x(&aux, &aux2, &b, CF_NULL), &aux);
+  BENCH_FRESH_STATUS("cf_math_linear_backward_b", BENCH_ITERS_HEAVY, &aux, cf_math_linear_backward_b(&aux, &aux2, CF_NULL), &aux);
+  BENCH_FRESH_STATUS("cf_math_outer", BENCH_ITERS_HEAVY, &aux, cf_math_outer(&aux, &c, &c, CF_NULL), &aux);
+  BENCH_FRESH_STATUS("cf_math_matvec", BENCH_ITERS_HEAVY, &aux3, cf_math_matvec(&aux3, &a, &b, CF_NULL), &aux3);
+  BENCH_FRESH_STATUS("cf_math_transpose", BENCH_ITERS_HEAVY, &aux, cf_math_transpose(&aux, &a, CF_NULL), &aux);
+  BENCH_FRESH_STATUS("cf_math_scale", BENCH_ITERS_TENSOR, &aux, cf_math_scale(&aux, &a, 0.5, CF_NULL), &aux);
 
   BENCH_STATUS("cf_math_relu", BENCH_ITERS_TENSOR, cf_math_relu(&aux, &a, CF_NULL), &aux);
   BENCH_STATUS("cf_math_relu_bwd", BENCH_ITERS_TENSOR, cf_math_relu_bwd(&aux, &a, &a, CF_NULL), &aux);
@@ -293,9 +318,9 @@ static void bench_cpu_surface(void)
   BENCH_STATUS("cf_math_mish", BENCH_ITERS_TENSOR, cf_math_mish(&aux, &a, CF_NULL), &aux);
 
   BENCH_STATUS("cf_math_softmax_fwd", BENCH_ITERS_TENSOR, cf_math_softmax_fwd(&aux, &a, 1U, CF_SOFTMAX_CHANNEL, CF_NULL), &aux);
-  BENCH_STATUS("cf_math_softmax_bwd", BENCH_ITERS_TENSOR, cf_math_softmax_bwd(&aux3, &a, &aux, 1U, CF_NULL), &aux3);
+  BENCH_FRESH_STATUS("cf_math_softmax_bwd", BENCH_ITERS_TENSOR, &aux3, cf_math_softmax_bwd(&aux3, &a, &aux, 1U, CF_NULL), &aux3);
   BENCH_STATUS("cf_math_log_softmax_fwd", BENCH_ITERS_TENSOR, cf_math_log_softmax_fwd(&aux, &a, 1U, CF_NULL), &aux);
-  BENCH_STATUS("cf_math_log_softmax_bwd", BENCH_ITERS_TENSOR, cf_math_log_softmax_bwd(&aux3, &a, &aux, 1U, CF_NULL), &aux3);
+  BENCH_FRESH_STATUS("cf_math_log_softmax_bwd", BENCH_ITERS_TENSOR, &aux3, cf_math_log_softmax_bwd(&aux3, &a, &aux, 1U, CF_NULL), &aux3);
   BENCH_STATUS("cf_math_cross_entropy", BENCH_ITERS_TENSOR, cf_math_cross_entropy(&loss, &aux3, &a, &aux, 1U, CF_NULL), &loss);
   BENCH_STATUS("cf_math_cross_entropy_bwd", BENCH_ITERS_TENSOR, cf_math_cross_entropy_bwd(&aux3, &aux, &a, CF_NULL), &aux3);
 
@@ -309,26 +334,26 @@ static void bench_cpu_surface(void)
   BENCH_STATUS("cf_math_huber_loss", BENCH_ITERS_TENSOR, cf_math_huber_loss(&loss, &a, &aux, 1.0, CF_NULL), &loss);
   BENCH_STATUS("cf_math_focal_loss", BENCH_ITERS_TENSOR, cf_math_focal_loss(&loss, &aux, &a, 0.25, 2.0, CF_NULL), &loss);
 
-  BENCH_STATUS("cf_math_attn_scores", BENCH_ITERS_HEAVY, cf_math_attn_scores(&aux, &c, &c, 0.70710678, CF_NULL), &aux);
-  BENCH_STATUS("cf_math_attn_mask_add", BENCH_ITERS_HEAVY, cf_math_attn_mask_add(&aux3, &aux, &c, CF_NULL), &aux3);
+  BENCH_FRESH_STATUS("cf_math_attn_scores", BENCH_ITERS_HEAVY, &aux, cf_math_attn_scores(&aux, &c, &c, 0.70710678, CF_NULL), &aux);
+  BENCH_FRESH_STATUS("cf_math_attn_mask_add", BENCH_ITERS_HEAVY, &aux3, cf_math_attn_mask_add(&aux3, &aux, &c, CF_NULL), &aux3);
   BENCH_STATUS("cf_math_attn_softmax", BENCH_ITERS_HEAVY, cf_math_attn_softmax(&aux3, &aux, CF_NULL), &aux3);
-  BENCH_STATUS("cf_math_attn_context", BENCH_ITERS_HEAVY, cf_math_attn_context(&aux3, &aux, &c, CF_NULL), &aux3);
-  BENCH_STATUS("cf_math_attn_proj", BENCH_ITERS_HEAVY, cf_math_attn_proj(&aux3, &c, &c, CF_NULL), &aux3);
-  BENCH_STATUS("cf_math_mha_fwd", BENCH_ITERS_HEAVY, cf_math_mha_fwd(&aux3, &c, &c, &c, &c, 1U, CF_NULL), &aux3);
-  BENCH_STATUS("cf_math_mha_bwd", 1U, cf_math_mha_bwd(&aux, &aux2, &aux3, &out, &c, CF_NULL), &aux);
-  BENCH_STATUS("cf_math_attn_dropout_fwd", BENCH_ITERS_TENSOR, cf_math_attn_dropout_fwd(&aux, &dropout, &a, 0.0, 20U, CF_NULL), &aux);
-  BENCH_STATUS("cf_math_rope_fwd", BENCH_ITERS_HEAVY, cf_math_rope_fwd(&aux, &a, &a, &a, CF_NULL), &aux);
+  BENCH_FRESH_STATUS("cf_math_attn_context", BENCH_ITERS_HEAVY, &aux3, cf_math_attn_context(&aux3, &aux, &c, CF_NULL), &aux3);
+  BENCH_FRESH_STATUS("cf_math_attn_proj", BENCH_ITERS_HEAVY, &aux3, cf_math_attn_proj(&aux3, &c, &c, CF_NULL), &aux3);
+  BENCH_FRESH_STATUS("cf_math_mha_fwd", BENCH_ITERS_HEAVY, &aux3, cf_math_mha_fwd(&aux3, &c, &c, &c, &c, 1U, CF_NULL), &aux3);
+  BENCH_FRESH_STATUS("cf_math_mha_bwd", 1U, &aux, cf_math_mha_bwd(&aux, &aux2, &aux3, &out, &c, CF_NULL), &aux);
+  BENCH_FRESH_STATUS("cf_math_attn_dropout_fwd", BENCH_ITERS_TENSOR, &aux, cf_math_attn_dropout_fwd(&aux, &dropout, &a, 0.0, 20U, CF_NULL), &aux);
+  BENCH_FRESH_STATUS("cf_math_rope_fwd", BENCH_ITERS_HEAVY, &aux, cf_math_rope_fwd(&aux, &a, &a, &a, CF_NULL), &aux);
   BENCH_STATUS("cf_math_rope_bwd", BENCH_ITERS_HEAVY, cf_math_rope_bwd(&aux, &a, &a, &a, CF_NULL), &aux);
   BENCH_STATUS("cf_math_causal_mask", BENCH_ITERS_HEAVY, cf_math_causal_mask(&c, CF_NULL), &c);
 
-  BENCH_STATUS("cf_math_dropout_fwd", BENCH_ITERS_TENSOR, cf_math_dropout_fwd(&aux, &dropout, &a, 0.0, 21U, CF_NULL), &aux);
-  BENCH_STATUS("cf_math_dropout_bwd", BENCH_ITERS_TENSOR, cf_math_dropout_bwd(&aux3, &dropout, &a, CF_NULL), &aux3);
+  BENCH_FRESH_STATUS("cf_math_dropout_fwd", BENCH_ITERS_TENSOR, &aux, cf_math_dropout_fwd(&aux, &dropout, &a, 0.0, 21U, CF_NULL), &aux);
+  BENCH_FRESH_STATUS("cf_math_dropout_bwd", BENCH_ITERS_TENSOR, &aux3, cf_math_dropout_bwd(&aux3, &dropout, &a, CF_NULL), &aux3);
   BENCH_STATUS("cf_math_dropout_train_set", BENCH_ITERS_TENSOR, cf_math_dropout_train_set(&dropout, 0.2, CF_TRUE, CF_NULL), CF_NULL);
 
   BENCH_STATUS("cf_math_alloc idx", 1U, cf_math_alloc(&idx, dim2, 1, CF_DTYPE_I32, CF_DEVICE_CPU, CF_MEM_DEFAULT, CF_NULL), &idx);
   i32(&idx)[0] = 0;
   i32(&idx)[1] = 1;
-  BENCH_STATUS("cf_math_embed_fwd", BENCH_ITERS_TENSOR, cf_math_embed_fwd(&aux, &b, &idx, CF_NULL), &aux);
+  BENCH_FRESH_STATUS("cf_math_embed_fwd", BENCH_ITERS_TENSOR, &aux, cf_math_embed_fwd(&aux, &b, &idx, CF_NULL), &aux);
   BENCH_STATUS("cf_math_embed_bwd", BENCH_ITERS_TENSOR, cf_math_embed_bwd(&b, &idx, &aux, CF_NULL), &b);
   BENCH_STATUS("cf_math_embed_bwd_atomic", BENCH_ITERS_TENSOR, cf_math_embed_bwd_atomic(&b, &idx, &aux, CF_NULL), &b);
 
@@ -340,14 +365,16 @@ static void bench_cpu_surface(void)
   BENCH_STATUS("cf_math_lstm_bwd_data", 1U, cf_math_lstm_bwd_data(&aux, &aux2, &aux3, &rnn, &a, CF_NULL), &aux);
   BENCH_STATUS("cf_math_gru_fwd_train", 1U, cf_math_gru_fwd_train(&aux, &rnn, &a, &c, CF_NULL), &aux);
 
+  BENCH_STATUS("cf_math_alloc sparse_dense", 1U, cf_math_alloc(&sparse_dense, dim22, 2, CF_DTYPE_F64, CF_DEVICE_CPU, CF_MEM_DEFAULT, CF_NULL), &sparse_dense);
   BENCH_STATUS("cf_math_alloc sparse_vec", 1U, cf_math_alloc(&sparse_vec, dim2, 1, CF_DTYPE_F64, CF_DEVICE_CPU, CF_MEM_DEFAULT, CF_NULL), &sparse_vec);
+  bench_fill_pattern(&sparse_dense, 0.25);
   bench_fill_pattern(&sparse_vec, 1.0);
-  BENCH_STATUS("cf_math_dense_to_csr", BENCH_ITERS_HEAVY, cf_math_dense_to_csr(&csr, &c, 0.0, CF_NULL), CF_NULL);
-  BENCH_STATUS("cf_math_spmv", BENCH_ITERS_HEAVY, cf_math_spmv(&aux, &csr, &sparse_vec, CF_NULL), &aux);
-  BENCH_STATUS("cf_math_spmm", BENCH_ITERS_HEAVY, cf_math_spmm(&aux, &csr, &c, CF_NULL), &aux);
-  BENCH_STATUS("cf_math_spgemm", 1U, cf_math_spgemm(&csr, &csr, &csr, CF_NULL), CF_NULL);
-  BENCH_STATUS("cf_math_csr_to_dense", BENCH_ITERS_HEAVY, cf_math_csr_to_dense(&aux, &csr, CF_NULL), &aux);
-  BENCH_STATUS("cf_math_sparse_attn", BENCH_ITERS_HEAVY, cf_math_sparse_attn(&aux, &csr, &c, CF_NULL), &aux);
+  BENCH_STATUS("cf_math_dense_to_csr", 1U, cf_math_dense_to_csr(&csr, &sparse_dense, 0.0, CF_NULL), CF_NULL);
+  BENCH_FRESH_STATUS("cf_math_spmv", BENCH_ITERS_HEAVY, &aux, cf_math_spmv(&aux, &csr, &sparse_vec, CF_NULL), &aux);
+  BENCH_FRESH_STATUS("cf_math_spmm", BENCH_ITERS_HEAVY, &aux, cf_math_spmm(&aux, &csr, &sparse_dense, CF_NULL), &aux);
+  BENCH_STATUS("cf_math_spgemm", 1U, cf_math_spgemm(&csr_product, &csr, &csr, CF_NULL), CF_NULL);
+  BENCH_FRESH_STATUS("cf_math_csr_to_dense", BENCH_ITERS_HEAVY, &aux, cf_math_csr_to_dense(&aux, &csr, CF_NULL), &aux);
+  BENCH_FRESH_STATUS("cf_math_sparse_attn", BENCH_ITERS_HEAVY, &aux, cf_math_sparse_attn(&aux, &csr, &sparse_dense, CF_NULL), &aux);
 
   BENCH_STATUS("cf_math_sgd_step", BENCH_ITERS_TENSOR, cf_math_sgd_step(&a, &b, 0.001, CF_NULL), &a);
   BENCH_STATUS("cf_math_sgd_momentum", BENCH_ITERS_TENSOR, cf_math_sgd_momentum(&a, &b, &b, 0.001, 0.9, CF_NULL), &a);
@@ -361,18 +388,18 @@ static void bench_cpu_surface(void)
   BENCH_STATUS("cf_math_grad_allreduce", BENCH_ITERS_TENSOR, cf_math_grad_allreduce(&a, 1U, CF_NULL), &a);
   BENCH_STATUS("cf_math_grad_zero", BENCH_ITERS_TENSOR, cf_math_grad_zero(&a, CF_NULL), &a);
 
-  BENCH_STATUS("cf_math_reshape", BENCH_ITERS_TENSOR, cf_math_reshape(&aux, &a, reshape_dim, 2U), &aux);
-  BENCH_STATUS("cf_math_permute", BENCH_ITERS_TENSOR, cf_math_permute(&aux2, &a, axes, CF_NULL), &aux2);
-  BENCH_STATUS("cf_math_squeeze", BENCH_ITERS_TENSOR, cf_math_squeeze(&aux3, &out), &aux3);
-  BENCH_STATUS("cf_math_unsqueeze", BENCH_ITERS_TENSOR, cf_math_unsqueeze(&aux3, &a, 0U), &aux3);
-  BENCH_STATUS("cf_math_expand", BENCH_ITERS_TENSOR, cf_math_expand(&aux3, &c, expand_dim, 2U), &aux3);
+  BENCH_FRESH_STATUS("cf_math_reshape", 1U, &aux, cf_math_reshape(&aux, &a, reshape_dim, 2U), &aux);
+  BENCH_FRESH_STATUS("cf_math_permute", BENCH_ITERS_TENSOR, &aux2, cf_math_permute(&aux2, &a, axes, CF_NULL), &aux2);
+  BENCH_FRESH_STATUS("cf_math_squeeze", 1U, &aux3, cf_math_squeeze(&aux3, &out), &aux3);
+  BENCH_FRESH_STATUS("cf_math_unsqueeze", 1U, &aux3, cf_math_unsqueeze(&aux3, &a, 0U), &aux3);
+  BENCH_FRESH_STATUS("cf_math_expand", 1U, &aux3, cf_math_expand(&aux3, &c, expand_dim, 2U), &aux3);
   concat_inputs[0] = &c;
   concat_inputs[1] = &c;
   BENCH_STATUS("cf_math_concat", BENCH_ITERS_TENSOR, cf_math_concat(&aux3, concat_inputs, 2U, 0U, CF_NULL), &aux3);
-  BENCH_STATUS("cf_math_split", BENCH_ITERS_TENSOR, cf_math_split(split_outs, 2U, &aux3, 0U), &split_outs[0]);
-  BENCH_STATUS("cf_math_slice", BENCH_ITERS_TENSOR, cf_math_slice(&aux3, &a, slice_start, slice_len), &aux3);
-  BENCH_STATUS("cf_math_pad", BENCH_ITERS_TENSOR, cf_math_pad(&aux3, &a, pad_before, pad_after, CF_NULL), &aux3);
-  BENCH_STATUS("cf_math_flatten", BENCH_ITERS_TENSOR, cf_math_flatten(&aux3, &a, 0U, 1U), &aux3);
+  BENCH_STATUS("cf_math_split", 1U, cf_math_split(split_outs, 2U, &aux3, 0U), &split_outs[0]);
+  BENCH_FRESH_STATUS("cf_math_slice", 1U, &aux3, cf_math_slice(&aux3, &a, slice_start, slice_len), &aux3);
+  BENCH_FRESH_STATUS("cf_math_pad", BENCH_ITERS_TENSOR, &aux3, cf_math_pad(&aux3, &a, pad_before, pad_after, CF_NULL), &aux3);
+  BENCH_FRESH_STATUS("cf_math_flatten", 1U, &aux3, cf_math_flatten(&aux3, &a, 0U, 1U), &aux3);
   printf("%-34s\n", "cf_math_print");
   cf_math_print(&a);
 
@@ -390,11 +417,12 @@ static void bench_cpu_surface(void)
   BENCH_STATUS("cf_math_conv2d_dilated_fwd", BENCH_ITERS_HEAVY, cf_math_conv2d_dilated_fwd(&conv_out, &conv_x, &conv_w, &conv_b, conv, CF_NULL), &conv_out);
   BENCH_STATUS("cf_math_conv2d_transpose_fwd", BENCH_ITERS_HEAVY, cf_math_conv2d_transpose_fwd(&conv_x, &conv_out, &conv_w, conv, CF_NULL), &conv_x);
   BENCH_STATUS("cf_math_conv1d_fwd", BENCH_ITERS_HEAVY, cf_math_conv1d_fwd(&conv_out, &conv_x, &conv_w, &conv_b, conv, CF_NULL), &conv_out);
+  bench_free_tensor(&conv_out);
   BENCH_STATUS("cf_math_alloc conv3_x", 1U, cf_math_alloc(&conv3_x, dim11133, 5, CF_DTYPE_F64, CF_DEVICE_CPU, CF_MEM_DEFAULT, CF_NULL), &conv3_x);
   BENCH_STATUS("cf_math_alloc conv3_w", 1U, cf_math_alloc(&conv3_w, dim11122, 5, CF_DTYPE_F64, CF_DEVICE_CPU, CF_MEM_DEFAULT, CF_NULL), &conv3_w);
   bench_fill_pattern(&conv3_x, 1.0);
   bench_fill_pattern(&conv3_w, 0.25);
-  BENCH_STATUS("cf_math_conv3d_fwd", BENCH_ITERS_HEAVY, cf_math_conv3d_fwd(&conv_out, &conv3_x, &conv3_w, &conv_b, conv, CF_NULL), &conv_out);
+  BENCH_FRESH_STATUS("cf_math_conv3d_fwd", BENCH_ITERS_HEAVY, &conv_out, cf_math_conv3d_fwd(&conv_out, &conv3_x, &conv3_w, &conv_b, conv, CF_NULL), &conv_out);
 
   BENCH_STATUS("cf_math_alloc gamma", 1U, cf_math_alloc(&gamma, dim2, 1, CF_DTYPE_F64, CF_DEVICE_CPU, CF_MEM_DEFAULT, CF_NULL), &gamma);
   BENCH_STATUS("cf_math_alloc beta", 1U, cf_math_alloc(&beta, dim2, 1, CF_DTYPE_F64, CF_DEVICE_CPU, CF_MEM_DEFAULT, CF_NULL), &beta);
@@ -410,11 +438,13 @@ static void bench_cpu_surface(void)
   BENCH_STATUS("cf_math_rms_norm_fwd", BENCH_ITERS_HEAVY, cf_math_rms_norm_fwd(&aux, &a, &gamma, 1e-5, CF_NULL), &aux);
   BENCH_STATUS("cf_math_rms_norm_bwd", BENCH_ITERS_HEAVY, cf_math_rms_norm_bwd(&aux, &aux2, &a, &a, &gamma, 1e-5, CF_NULL), &aux);
 
+  bench_free_sparse(&csr_product);
   bench_free_sparse(&csr);
   free(dropout.reserve);
   bench_free_tensor(&split_outs[0]);
   bench_free_tensor(&split_outs[1]);
   bench_free_tensor(&sparse_vec);
+  bench_free_tensor(&sparse_dense);
   bench_free_tensor(&labels);
   bench_free_tensor(&idx);
   bench_free_tensor(&loss);
@@ -471,12 +501,33 @@ static void bench_cpu_stress(void)
 static void bench_gpu_stress(void)
 {
 #if defined(CF_MATH_HAVE_CUDA_RUNTIME)
+#define BENCH_GPU_STATUS(name, iters, expr, result) \
+  BENCH_STATUS_SYNC((name), (iters), (expr), (result), cudaStreamSynchronize(ctx.stream) == cudaSuccess ? CF_OK : CF_ERR_CUDA_SYNC)
+
   cf_math_cuda_context ctx = {0};
   cf_status status = cf_math_context_init(&ctx, 0);
   cf_usize vec_dim[CF_MATH_HIGHEST_RANK] = {262144U};
+  cf_usize mat_dim[CF_MATH_HIGHEST_RANK] = {128U, 128U};
+  cf_usize small_a_dim[CF_MATH_HIGHEST_RANK] = {2U, 3U};
+  cf_usize small_b_dim[CF_MATH_HIGHEST_RANK] = {3U, 2U};
   cf_math host = {0};
+  cf_math host_y = {0};
+  cf_math host_a = {0};
+  cf_math host_b = {0};
   cf_math device = {0};
+  cf_math device_y = {0};
+  cf_math device_a = {0};
+  cf_math device_b = {0};
+  cf_math gpu_out = {0};
+  cf_math gpu_dot = {0};
+  cf_math gpu_mat = {0};
   cf_math back = {0};
+  cf_math small_host_a = {0};
+  cf_math small_host_b = {0};
+  cf_math small_dev_a = {0};
+  cf_math small_dev_b = {0};
+  cf_math small_dev_out = {0};
+  cf_math small_back = {0};
 
   printf("\n== GPU stress benchmark ==\n");
   if(status != CF_OK)
@@ -486,15 +537,56 @@ static void bench_gpu_stress(void)
   }
 
   BENCH_STATUS("gpu host alloc", 1U, cf_math_alloc(&host, vec_dim, 1, CF_DTYPE_F64, CF_DEVICE_CPU, CF_MEM_DEFAULT, CF_NULL), &host);
+  BENCH_STATUS("gpu host alloc y", 1U, cf_math_alloc(&host_y, vec_dim, 1, CF_DTYPE_F64, CF_DEVICE_CPU, CF_MEM_DEFAULT, CF_NULL), &host_y);
+  BENCH_STATUS("gpu host alloc a", 1U, cf_math_alloc(&host_a, mat_dim, 2, CF_DTYPE_F64, CF_DEVICE_CPU, CF_MEM_DEFAULT, CF_NULL), &host_a);
+  BENCH_STATUS("gpu host alloc b", 1U, cf_math_alloc(&host_b, mat_dim, 2, CF_DTYPE_F64, CF_DEVICE_CPU, CF_MEM_DEFAULT, CF_NULL), &host_b);
   bench_fill_pattern(&host, 1.0);
-  BENCH_STATUS("gpu to_device 262k", BENCH_ITERS_STRESS, cf_math_to_device(&device, &host, 0, &ctx), &device);
-  BENCH_STATUS("gpu to_host 262k", BENCH_ITERS_STRESS, cf_math_to_host(&back, &device, &ctx), &back);
-  BENCH_STATUS("gpu add attempt", BENCH_ITERS_STRESS, cf_math_add(&device, &device, &device, &ctx), &device);
+  bench_fill_pattern(&host_y, 2.0);
+  bench_fill_pattern(&host_a, 0.01);
+  bench_fill_pattern(&host_b, 0.02);
 
+  BENCH_GPU_STATUS("gpu to_device x 262k", 1U, cf_math_to_device(&device, &host, 0, &ctx), &device);
+  BENCH_GPU_STATUS("gpu to_device y 262k", 1U, cf_math_to_device(&device_y, &host_y, 0, &ctx), &device_y);
+  BENCH_GPU_STATUS("gpu to_device a 128x128", 1U, cf_math_to_device(&device_a, &host_a, 0, &ctx), &device_a);
+  BENCH_GPU_STATUS("gpu to_device b 128x128", 1U, cf_math_to_device(&device_b, &host_b, 0, &ctx), &device_b);
+
+  BENCH_GPU_STATUS("gpu add 262k", BENCH_ITERS_STRESS, cf_math_add(&gpu_out, &device, &device_y, &ctx), &gpu_out);
+  BENCH_GPU_STATUS("gpu mul_scalar 262k", BENCH_ITERS_STRESS, cf_math_mul_scalar(&gpu_out, &device, 0.5, &ctx), &gpu_out);
+  BENCH_GPU_STATUS("gpu relu 262k", BENCH_ITERS_STRESS, cf_math_relu(&gpu_out, &device, &ctx), &gpu_out);
+  BENCH_GPU_STATUS("gpu sigmoid 262k", BENCH_ITERS_STRESS, cf_math_sigmoid(&gpu_out, &device, &ctx), &gpu_out);
+  BENCH_GPU_STATUS("gpu dot 262k", BENCH_ITERS_STRESS, cf_math_dot(&gpu_dot, &device, &device_y, &ctx), &gpu_dot);
+  BENCH_GPU_STATUS("gpu matmul 128x128", BENCH_ITERS_STRESS, cf_math_matmul(&gpu_mat, &device_a, &device_b, &ctx), &gpu_mat);
+  BENCH_STATUS("gpu to_host 262k", 1U, cf_math_to_host(&back, &gpu_out, &ctx), &back);
+
+  BENCH_STATUS("gpu small alloc a", 1U, cf_math_alloc(&small_host_a, small_a_dim, 2, CF_DTYPE_F64, CF_DEVICE_CPU, CF_MEM_DEFAULT, CF_NULL), &small_host_a);
+  BENCH_STATUS("gpu small alloc b", 1U, cf_math_alloc(&small_host_b, small_b_dim, 2, CF_DTYPE_F64, CF_DEVICE_CPU, CF_MEM_DEFAULT, CF_NULL), &small_host_b);
+  bench_fill_pattern(&small_host_a, 1.0);
+  bench_fill_pattern(&small_host_b, 0.5);
+  BENCH_GPU_STATUS("gpu small to_device a", 1U, cf_math_to_device(&small_dev_a, &small_host_a, 0, &ctx), &small_dev_a);
+  BENCH_GPU_STATUS("gpu small to_device b", 1U, cf_math_to_device(&small_dev_b, &small_host_b, 0, &ctx), &small_dev_b);
+  BENCH_GPU_STATUS("gpu small matmul", BENCH_ITERS_HEAVY, cf_math_matmul(&small_dev_out, &small_dev_a, &small_dev_b, &ctx), &small_dev_out);
+  BENCH_STATUS("gpu small matmul to_host", 1U, cf_math_to_host(&small_back, &small_dev_out, &ctx), &small_back);
+
+  bench_free_tensor(&small_back);
+  bench_free_tensor_ctx(&small_dev_out, &ctx);
+  bench_free_tensor_ctx(&small_dev_b, &ctx);
+  bench_free_tensor_ctx(&small_dev_a, &ctx);
+  bench_free_tensor(&small_host_b);
+  bench_free_tensor(&small_host_a);
   bench_free_tensor(&back);
-  cf_math_free(&device, &ctx);
+  bench_free_tensor_ctx(&gpu_mat, &ctx);
+  bench_free_tensor_ctx(&gpu_dot, &ctx);
+  bench_free_tensor_ctx(&gpu_out, &ctx);
+  bench_free_tensor_ctx(&device_b, &ctx);
+  bench_free_tensor_ctx(&device_a, &ctx);
+  bench_free_tensor_ctx(&device_y, &ctx);
+  bench_free_tensor_ctx(&device, &ctx);
+  bench_free_tensor(&host_b);
+  bench_free_tensor(&host_a);
+  bench_free_tensor(&host_y);
   bench_free_tensor(&host);
   cf_math_context_destroy(&ctx);
+#undef BENCH_GPU_STATUS
 #else
   printf("\n== GPU stress benchmark ==\n");
   printf("CUDA runtime headers are not available in this build; GPU stress skipped.\n");
