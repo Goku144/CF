@@ -32,7 +32,7 @@ public/inc/
   AI/                   Future AI graph/model/runtime/tokenizer APIs.
   ALLOCATOR/            Allocator interfaces and allocator placeholders.
   CONFIG/               Future config format APIs.
-  MATH/                 Math primitives and tensor API.
+  MATH/                 Math primitives and the cf_math tensor API.
   MEMORY/               Buffer and generic array containers.
   RUNTIME/              Status, types, time, IO, logging, random.
   SECURITY/             AES, hex, base64, future hash/HMAC/secure memory.
@@ -47,7 +47,7 @@ lib/src/
   ALLOCATOR/            Default allocator, debug allocator, placeholders.
   ASM/                  Assembly support files.
   CONFIG/               Placeholder implementations.
-  MATH/                 Math, CPU tensor, CUDA tensor implementation.
+  MATH/                 CUDA-source cf_math implementation with CPU fallback.
   MEMORY/               Buffer and array implementation.
   RUNTIME/              Runtime support implementation.
   SECURITY/             AES, hex, base64, placeholders.
@@ -104,10 +104,24 @@ used by tests and diagnostics.
 ### Math
 
 - `cf_math`
-- `cf_tensor`
-- `cf_tensor_cuda` when CUDA is available
+- `cf_math.cu` as the active implementation file, compiled by `nvcc` when CUDA
+  is available and by `gcc -x c` as a CPU fallback otherwise
+- legacy `cf_tensor` documentation retained for historical context
 
-Math provides low-level bit/field helpers and dense tensor operations.
+Math now centers on the `cf_math` tensor layer:
+
+- dtype-aware tensor metadata,
+- CPU/CUDA device metadata,
+- row-major, column-major, NCHW, NHWC, and strided layout metadata,
+- reference-counted shared storage for views and slices,
+- CUDA context handles and workspace metadata,
+- descriptor caches for cuDNN/cuBLASLt,
+- dense arithmetic, reductions, linear algebra, activations, losses, attention
+  pieces, dropout, embedding, optimizer math, sparse operations, and shape
+  manipulation.
+
+The detailed math hierarchy and function reference is documented in
+[CF Math Layer Guide](cf-math-layer.md).
 
 ## Placeholder Modules
 
@@ -159,4 +173,3 @@ Important rules:
 - New modules should return `cf_status` for recoverable API failures.
 - Data-owning objects should have `init`, `destroy`, validation, and clear
   ownership rules.
-

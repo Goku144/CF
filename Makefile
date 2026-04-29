@@ -29,6 +29,7 @@ INC := public/inc
 CC ?= $(shell command -v gcc 2>&1)
 CC_AVAILABLE := $(if $(CC),1,0)
 FLAG_C := -Wall -Wextra -Wpedantic -Werror -O3
+LIBS_C := -lm
 SRCS_C :=
 OBJS_C :=
 
@@ -52,6 +53,7 @@ FLAG_CUDA := -O3 -Wno-deprecated-gpu-targets
 LIBS_CUDA :=
 SRCS_CUDA :=
 OBJS_CUDA :=
+CU_BACKEND :=
 
 #############
 # CONDITIONS
@@ -75,15 +77,19 @@ endif
 
 ifeq ($(CUDA_AVAILABLE),1)
 FLAG_C += -DCF_CUDA_AVAILABLE=1
+FLAG_CUDA += -DCF_CUDA_AVAILABLE=1
 LIBS_CUDA := -lcublasLt -lcublas
+LINK := $(NVCC)
+CU_BACKEND := nvcc
+else
+$(info visit the website to install: https://developer.nvidia.com/cuda/toolkit)
+$(warning because CUDA is not available compiling .cu sources with the CPU fallback!)
+LINK := $(CC)
+CU_BACKEND := cc
+endif
+
 SRCS_CUDA := $(shell find lib/src -name '*.cu')
 OBJS_CUDA := $(patsubst lib/src/%.cu, lib/bin/%.o, $(SRCS_CUDA))
-LINK := $(NVCC)
-else
-$(info visit the website to intsall: https://developer.nvidia.com/cuda/toolkit)
-$(warning because CUDA is not available running on cpu only!)
-LINK := $(CC)
-endif
 
 ############
 # Build App
@@ -96,7 +102,7 @@ runApp: app/build/app
 
 app/build/app: app/bin/app.o $(OBJS_C) $(OBJS_ASM) $(OBJS_CUDA)
 	@mkdir -p $(dir $@)
-	@$(LINK) $^ $(LIBS_CUDA) -o $@
+	@$(LINK) $^ $(LIBS_CUDA) $(LIBS_C) -o $@
 
 app/bin/app.o: app/src/app.c
 	@mkdir -p $(dir $@)
@@ -118,7 +124,11 @@ lib/bin/%.o: lib/src/%.asm
 
 lib/bin/%.o: lib/src/%.cu
 	@mkdir -p $(dir $@)
+ifeq ($(CU_BACKEND),nvcc)
 	$(NVCC) $(FLAG_CUDA) -I$(INC) -c $< -o $@
+else
+	$(CC) $(FLAG_C) -x c -I$(INC) -c $< -o $@
+endif
 
 ############
 # Run Tests
@@ -132,7 +142,7 @@ runTests: tests/build/test
 
 tests/build/test: tests/bin/test.o $(OBJS_C) $(OBJS_ASM) $(OBJS_CUDA)
 	@mkdir -p $(dir $@)
-	@$(LINK) $^ $(LIBS_CUDA) -o $@
+	@$(LINK) $^ $(LIBS_CUDA) $(LIBS_C) -o $@
 
 tests/bin/test.o: tests/src/test.c
 	@mkdir -p $(dir $@)

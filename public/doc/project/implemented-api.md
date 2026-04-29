@@ -721,265 +721,125 @@ Critical points:
 
 ## Math
 
-### `cf_math_g8_mul_mod`
-
 Header: `public/inc/MATH/cf_math.h`
+
+The current math layer is documented in detail in
+[CF Math Layer Guide](cf-math-layer.md). That page is the complete
+function-by-function and struct-by-struct reference for `cf_math`.
+
+At a high level, the public math API now includes:
+
+- primitive AES/rotate/size helpers,
+- dtype/layout/device metadata,
+- `cf_math` tensor storage and view lifecycle,
+- CUDA context and workspace management,
+- initialization and random functions,
+- elementwise arithmetic,
+- reductions,
+- dense linear algebra,
+- convolution surfaces,
+- normalization surfaces,
+- activation functions,
+- softmax and losses,
+- attention helpers,
+- dropout,
+- embedding,
+- RNN/LSTM/GRU surfaces,
+- sparse CSR operations,
+- optimizer math,
+- shape manipulation.
+
+The broad operation surface lets CPU reference paths and later CUDA library
+dispatch share stable function names.
+
+### Primitive Math Helpers
 
 ```c
 cf_u8 cf_math_g8_mul_mod(cf_u8 p, cf_u8 q);
-```
-
-GF(2^8) multiplication used by AES.
-
-### Rotate Helpers
-
-```c
 cf_u8 cf_math_rotl8(cf_u8 x, cf_u8 n);
 cf_u8 cf_math_rotr8(cf_u8 x, cf_u8 n);
 cf_u32 cf_math_rotl32(cf_u32 x, cf_u8 n);
 cf_u32 cf_math_rotr32(cf_u32 x, cf_u8 n);
-```
-
-Critical points:
-
-- Counts are masked into width.
-- Rotating by the width behaves like rotating by zero.
-
-### Size Helpers
-
-```c
 cf_usize cf_math_min_usize(cf_usize a, cf_usize b);
 cf_usize cf_math_max_usize(cf_usize a, cf_usize b);
+cf_usize cf_math_dtype_size(cf_math_dtype dtype);
 ```
 
-Return the smaller or larger size value.
+These helpers cover AES finite-field multiplication, bit rotation, size min/max,
+and dtype byte-size lookup.
 
-## Tensor
-
-Header: `public/inc/MATH/cf_tensor.h`
-
-Full tensor details are documented in [Tensor And CUDA Backend](tensor-cuda.md).
-This section lists the implemented tensor functions so the public API reference
-has a complete function index.
-
-### Tensor Validation And CPU Lifecycle
+### Tensor Lifecycle And Context
 
 ```c
-cf_usize cf_tensor_element_size(cf_tensor_type elem_type);
-cf_bool cf_tensor_is_valid(const cf_tensor *tensor);
+cf_status cf_math_context_init(cf_math_cuda_context *ctx, int device_id);
+cf_status cf_math_context_destroy(cf_math_cuda_context *ctx);
+cf_status cf_math_workspace_reserve(cf_math_cuda_context *ctx, cf_usize bytes);
 
-cf_status cf_tensor_init_cpu(
-  cf_tensor *tensor,
-  const cf_usize dim[CF_TENSOR_HIGHEST_RANK],
-  cf_usize rank,
-  cf_tensor_type elem_type
-);
-
-cf_status cf_tensor_init_many_cpu(
-  cf_tensor **tensors,
-  cf_usize count,
-  const cf_usize dim[CF_TENSOR_HIGHEST_RANK],
-  cf_usize rank,
-  cf_tensor_type elem_type
-);
-
-void cf_tensor_destroy_cpu(cf_tensor *tensor);
-void cf_tensor_destroy_many_cpu(cf_tensor **tensors, cf_usize count);
-
-cf_status cf_tensor_reserve_cpu(cf_tensor *tensor, cf_usize capacity);
-cf_status cf_tensor_reshape_cpu(
-  cf_tensor *tensor,
-  const cf_usize dim[CF_TENSOR_HIGHEST_RANK],
-  cf_usize rank
-);
-cf_status cf_tensor_resize_cpu(
-  cf_tensor *tensor,
-  const cf_usize dim[CF_TENSOR_HIGHEST_RANK],
-  cf_usize rank
-);
+cf_status cf_math_alloc(...);
+cf_status cf_math_free(cf_math *x, cf_math_cuda_context *ctx);
+cf_status cf_math_alloc_pinned(...);
+cf_status cf_math_alloc_managed(...);
+cf_status cf_math_view(...);
+cf_status cf_math_contiguous(...);
+cf_status cf_math_to_device(...);
+cf_status cf_math_to_host(...);
+cf_status cf_math_clone(...);
 ```
 
-Critical points:
+These functions create, move, clone, view, and free `cf_math` tensors. They are
+the foundation for every higher-level operation.
 
-- `cf_tensor_element_size` maps tensor element types to byte widths.
-- `cf_tensor_is_valid` checks shape, stride, element metadata, active device,
-  active storage, and capacity.
-- `cf_tensor_init_cpu` allocates and zeroes CPU memory.
-- `cf_tensor_init_many_cpu` initializes a pointer array of tensors.
-- `cf_tensor_destroy_cpu` frees CPU memory and resets the object.
-- `cf_tensor_destroy_many_cpu` destroys a pointer array of tensors.
-- `cf_tensor_reshape_cpu` changes metadata only and requires enough capacity.
-- `cf_tensor_resize_cpu` grows storage when the new shape needs more capacity.
+### Operation Families
 
-### Tensor CPU Accessors
+The complete list is intentionally large. See
+[CF Math Layer Guide](cf-math-layer.md) for detailed behavior and
+`public/inc/MATH/cf_math.h` for exact signatures.
 
-```c
-cf_status cf_tensor_get_cpu(
-  void *out_value,
-  const cf_tensor *tensor,
-  const cf_usize indexs[CF_TENSOR_HIGHEST_RANK]
-);
+```text
+Initialization/random:
+  cf_math_fill, cf_math_zeros, cf_math_ones, cf_math_rand_uniform,
+  cf_math_rand_normal, cf_math_rand_bernoulli, Xavier/Kaiming/orthogonal/eye.
 
-cf_status cf_tensor_set_cpu(
-  cf_tensor *tensor,
-  const cf_usize indexs[CF_TENSOR_HIGHEST_RANK],
-  const void *value
-);
+Elementwise:
+  add, sub, mul, div, scalar variants, pow, sqrt, rsqrt, exp, log, abs, neg,
+  clamp, sign.
 
-cf_status cf_tensor_copy_cpu(cf_tensor *dst, const cf_tensor *src);
-cf_status cf_tensor_copy_from_array_cpu(
-  cf_tensor *tensor,
-  const void *array,
-  cf_usize count
-);
-cf_status cf_tensor_copy_to_array_cpu(
-  void *array,
-  const cf_tensor *tensor,
-  cf_usize count
-);
+Reductions:
+  sum, mean, var, std, norms, min/max, argmin/argmax, dot, cumsum.
+
+Linear algebra:
+  matmul, transposed matmul, batched matmul, linear layers, backward helpers,
+  outer, matvec, transpose, scale.
+
+Convolution:
+  conv1d, conv2d, conv3d, depthwise, dilated, transpose, backward data/filter/bias.
+
+Normalization:
+  batch norm, layer norm, instance norm, group norm, RMS norm.
+
+Activations:
+  ReLU, leaky ReLU, ELU, sigmoid, tanh, GELU, Swish, SiLU, softplus, Mish.
+
+Softmax/loss:
+  softmax, log-softmax, cross entropy, NLL, MSE, BCE, Huber, focal.
+
+Attention:
+  scores, mask add, softmax, context, projection, MHA forward/backward surface,
+  attention dropout, RoPE, causal mask.
+
+Dropout/embedding/RNN/sparse/optimizer/shape:
+  dropout forward/backward, embedding forward/backward, RNN/LSTM/GRU surfaces,
+  CSR sparse ops, SGD/Adam/RMSProp/gradient utilities, reshape/permute/slice/etc.
 ```
 
-Critical points:
+## Legacy Tensor
 
-- These require CPU-active storage.
-- Logical coordinates are converted through row-major strides.
-- `value` and `out_value` must point to storage of the tensor element type.
-- Copy helpers can grow the destination and copy shape/data.
+Historical header: `public/inc/MATH/cf_tensor.h` (not present in the active
+tree after the math-layer update)
 
-### Tensor CPU Math
-
-```c
-cf_status cf_tensor_add_cpu(cf_tensor *op1, const cf_tensor *op2);
-cf_status cf_tensor_mul_cpu(cf_tensor *op1, const cf_tensor *op2);
-cf_status cf_tensor_scalar_mul_cpu(cf_tensor *op1, const void *scalar);
-cf_status cf_tensor_batch_mul_cpu(cf_tensor *op1, const cf_tensor *op2);
-cf_status cf_tensor_matrix_mul_cpu(cf_tensor *op1, const cf_tensor *op2);
-```
-
-Critical points:
-
-- Math operations mutate `op1`.
-- Elementwise add/mul do not validate shape/type in the hot path.
-- Scalar multiplication expects `scalar` to match the tensor element type.
-- Batched multiplication supports `[..., M, K] @ [..., K, N] -> [..., M, N]`
-  with broadcastable leading dimensions.
-- Matrix multiplication uses the same implementation as batched multiplication.
-
-### Tensor Printing
-
-```c
-void cf_tensor_print(const cf_tensor *tensor);
-```
-
-Prints a readable nested CPU tensor.
-
-Critical point:
-
-- It reads CPU memory. CUDA tensors should be copied to CPU before printing.
-
-### Tensor CUDA Lifecycle And Movement
-
-Available when `CF_CUDA_AVAILABLE` is enabled:
-
-```c
-cf_status cf_tensor_init_gpu(
-  cf_tensor *tensor,
-  const cf_usize dim[CF_TENSOR_HIGHEST_RANK],
-  cf_usize rank,
-  cf_tensor_type elem_type
-);
-
-cf_status cf_tensor_init_many_gpu(
-  cf_tensor **tensors,
-  cf_usize count,
-  const cf_usize dim[CF_TENSOR_HIGHEST_RANK],
-  cf_usize rank,
-  cf_tensor_type elem_type
-);
-
-void cf_tensor_destroy_gpu(cf_tensor *tensor);
-void cf_tensor_destroy_many_gpu(cf_tensor **tensors, cf_usize count);
-
-cf_status cf_tensor_reserve_gpu(cf_tensor *tensor, cf_usize capacity);
-cf_status cf_tensor_reshape_gpu(
-  cf_tensor *tensor,
-  const cf_usize dim[CF_TENSOR_HIGHEST_RANK],
-  cf_usize rank
-);
-cf_status cf_tensor_resize_gpu(
-  cf_tensor *tensor,
-  const cf_usize dim[CF_TENSOR_HIGHEST_RANK],
-  cf_usize rank
-);
-
-cf_status cf_tensor_to_gpu(cf_tensor *tensor);
-cf_status cf_tensor_to_cpu(cf_tensor *tensor);
-cf_status cf_tensor_free_gpu(cf_tensor *tensor);
-cf_status cf_tensor_sync_gpu(void);
-```
-
-Critical points:
-
-- `cf_tensor_init_gpu` creates GPU-only device storage.
-- `cf_tensor_init_many_gpu` initializes a pointer array of CUDA tensors.
-- `cf_tensor_to_gpu` uploads an existing CPU mirror.
-- `cf_tensor_to_cpu` downloads and allocates CPU storage when needed.
-- `cf_tensor_free_gpu` frees only device storage and preserves CPU storage when
-  available.
-- `cf_tensor_sync_gpu` waits for queued CUDA work and is useful for timing
-  GPU-resident operations without forcing a download.
-- CUDA resize grows device storage and invalidates stale CPU mirrors.
-
-### Tensor CUDA Accessors And Math
-
-Available when `CF_CUDA_AVAILABLE` is enabled:
-
-```c
-cf_status cf_tensor_get_gpu(
-  void *out_value,
-  const cf_tensor *tensor,
-  const cf_usize indexs[CF_TENSOR_HIGHEST_RANK]
-);
-
-cf_status cf_tensor_set_gpu(
-  cf_tensor *tensor,
-  const cf_usize indexs[CF_TENSOR_HIGHEST_RANK],
-  const void *value
-);
-
-cf_status cf_tensor_copy_gpu(cf_tensor *dst, const cf_tensor *src);
-cf_status cf_tensor_copy_from_array_gpu(
-  cf_tensor *tensor,
-  const void *array,
-  cf_usize count
-);
-cf_status cf_tensor_copy_to_array_gpu(
-  void *array,
-  const cf_tensor *tensor,
-  cf_usize count
-);
-
-cf_status cf_tensor_add_gpu(cf_tensor *op1, const cf_tensor *op2);
-cf_status cf_tensor_scalar_mul_gpu(cf_tensor *op1, const void *scalar);
-cf_status cf_tensor_mul_gpu(cf_tensor *op1, const cf_tensor *op2);
-cf_status cf_tensor_batch_mul_gpu(cf_tensor *op1, const cf_tensor *op2);
-cf_status cf_tensor_matrix_mul_gpu(cf_tensor *op1, const cf_tensor *op2);
-```
-
-Critical points:
-
-- GPU get/set copy one element between host and device.
-- `cf_tensor_add_gpu`, `cf_tensor_mul_gpu`, and `cf_tensor_scalar_mul_gpu` are
-  implemented with custom CUDA kernels and mutate `op1`.
-- `cf_tensor_batch_mul_gpu` uses cached cuBLASLt layout/heuristic data for
-  single/broadcasted matrix GEMM and cuBLAS strided-batched GEMM for dense
-  non-broadcast batches.
-- `cf_tensor_matrix_mul_gpu` uses the same implementation.
-- CUDA math operations require existing CUDA storage and keep results on device.
-- Unsupported CUDA tensor element types return `CF_ERR_UNSUPPORTED`, including
-  matrix multiplication for non-float/non-double tensors.
-- The app smoke test in `app/src/app.c` compares these CUDA math functions
-  against the CPU implementations when CUDA is enabled.
+The older `cf_tensor` documentation is preserved in
+[Tensor And CUDA Backend](tensor-cuda.md) for historical context, but the active
+math-layer design now centers on `cf_math`.
 
 ## Security
 
