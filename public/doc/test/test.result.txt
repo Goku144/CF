@@ -1,2 +1,2 @@
-CUDA runtime headers are not available in this build; GPU math tests skipped.
-math tests passed
+cf_math benchmark test is built but not run by default.
+Set CF_MATH_RUN_BENCH=1 when you want to execute the benchmark harness.

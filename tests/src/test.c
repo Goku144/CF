@@ -507,7 +507,16 @@ static void bench_gpu_stress(void)
 
 int main(void)
 {
-  printf("cf_math benchmark test - run manually when timing numbers are needed.\n");
+  const char *run_bench = getenv("CF_MATH_RUN_BENCH");
+
+  if(run_bench == CF_NULL || strcmp(run_bench, "1") != 0)
+  {
+    printf("cf_math benchmark test is built but not run by default.\n");
+    printf("Set CF_MATH_RUN_BENCH=1 when you want to execute the benchmark harness.\n");
+    return 0;
+  }
+
+  printf("cf_math benchmark test - timing run enabled by CF_MATH_RUN_BENCH=1.\n");
   bench_cpu_surface();
   bench_cpu_stress();
   bench_gpu_stress();
