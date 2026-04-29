@@ -8,8 +8,6 @@
  * (at your option) any later version.
  */
 
-#define _POSIX_C_SOURCE 200809L
-
 #include "MATH/cf_math.h"
 #include "RUNTIME/cf_status.h"
 
@@ -25,9 +23,7 @@
 
 static double bench_now_ms(void)
 {
-  struct timespec ts;
-  clock_gettime(CLOCK_MONOTONIC, &ts);
-  return (double)ts.tv_sec * 1000.0 + (double)ts.tv_nsec / 1000000.0;
+  return ((double)clock() * 1000.0) / (double)CLOCKS_PER_SEC;
 }
 
 static double *f64(cf_math *x)
