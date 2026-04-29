@@ -47,6 +47,24 @@ typedef enum cf_math_unary_op
   CF_MATH_UN_SIGN,
 } cf_math_unary_op;
 
+typedef enum cf_math_activation_op
+{
+  CF_MATH_ACT_RELU = 0,
+  CF_MATH_ACT_RELU_BWD,
+  CF_MATH_ACT_LEAKY_RELU,
+  CF_MATH_ACT_ELU,
+  CF_MATH_ACT_SIGMOID,
+  CF_MATH_ACT_SIGMOID_BWD,
+  CF_MATH_ACT_TANH,
+  CF_MATH_ACT_TANH_BWD,
+  CF_MATH_ACT_GELU,
+  CF_MATH_ACT_GELU_APPROX,
+  CF_MATH_ACT_GELU_BWD,
+  CF_MATH_ACT_SWISH,
+  CF_MATH_ACT_SOFTPLUS,
+  CF_MATH_ACT_MISH,
+} cf_math_activation_op;
+
 static cf_status cf_math_cuda_unavailable(void)
 {
   return CF_ERR_UNSUPPORTED;
@@ -228,31 +246,57 @@ static cf_status cf_math_release_storage(cf_math_storage *storage, cf_math_cuda_
   return CF_OK;
 }
 
+static cf_status cf_math_prepare_output(cf_math *out,
+                                        const cf_usize dim[CF_MATH_HIGHEST_RANK],
+                                        cf_usize rank,
+                                        cf_math_dtype dtype,
+                                        cf_math_device device,
+                                        cf_math_mem_flags flags,
+                                        cf_math_cuda_context *ctx)
+{
+  cf_usize len;
+  cf_usize bytes;
+  cf_status status;
+
+  if(out == CF_NULL) return CF_ERR_NULL;
+  status = cf_math_shape_len(dim, rank, &len);
+  if(status != CF_OK) return status;
+  status = cf_math_checked_bytes(len, dtype, &bytes);
+  if(status != CF_OK) return status;
+
+  if(out->storage == CF_NULL)
+    return cf_math_alloc(out, dim, rank, dtype, device, flags, ctx);
+
+  if(out->storage->device != device ||
+     out->metadata.dtype != dtype ||
+     out->storage->capacity < bytes)
+  {
+    status = cf_math_release_storage(out->storage, ctx);
+    if(status != CF_OK) return status;
+    memset(out, 0, sizeof(*out));
+    return cf_math_alloc(out, dim, rank, dtype, device, flags, ctx);
+  }
+
+  cf_math_apply_shape(out, dim, rank, len);
+  out->metadata.device = device;
+  out->metadata.dtype = dtype;
+  out->metadata.mem_flags = flags;
+  cf_math_set_data_from_storage(out);
+  return CF_OK;
+}
+
 static cf_status cf_math_prepare_like(cf_math *out, const cf_math *x, cf_math_cuda_context *ctx)
 {
   if(out == CF_NULL || x == CF_NULL) return CF_ERR_NULL;
   if(x->metadata.device == CF_DEVICE_CUDA) return cf_math_cuda_unavailable();
   if(out == x) return CF_OK;
-  if(out->storage == CF_NULL)
-    return cf_math_alloc(out, x->dim, x->rank, x->metadata.dtype, x->metadata.device, x->metadata.mem_flags, ctx);
-
-  cf_math_apply_shape(out, x->dim, x->rank, x->metadata.len);
-  out->metadata.device = x->metadata.device;
-  out->metadata.dtype = x->metadata.dtype;
-  out->metadata.mem_flags = x->metadata.mem_flags;
-  return CF_OK;
+  return cf_math_prepare_output(out, x->dim, x->rank, x->metadata.dtype, x->metadata.device, x->metadata.mem_flags, ctx);
 }
 
 static cf_status cf_math_prepare_scalar(cf_math *out, cf_math_dtype dtype, cf_math_device device, cf_math_cuda_context *ctx)
 {
   if(out == CF_NULL) return CF_ERR_NULL;
-  if(out->storage == CF_NULL)
-    return cf_math_alloc(out, CF_NULL, 0, dtype, device, CF_MEM_DEFAULT, ctx);
-
-  cf_math_apply_shape(out, CF_NULL, 0, 1);
-  out->metadata.device = device;
-  out->metadata.dtype = dtype;
-  return CF_OK;
+  return cf_math_prepare_output(out, CF_NULL, 0, dtype, device, CF_MEM_DEFAULT, ctx);
 }
 
 static cf_usize cf_math_logical_offset(const cf_math *x, cf_usize linear)
@@ -347,6 +391,571 @@ static double cf_math_unary_value(double x, cf_math_unary_op op)
   }
 }
 
+#if defined(CF_MATH_HAVE_CUDA_RUNTIME)
+#define CF_MATH_CUDA_THREADS 256U
+
+static cudaStream_t cf_math_cuda_stream(cf_math_cuda_context *ctx)
+{
+  return ctx == CF_NULL ? 0 : ctx->stream;
+}
+
+static cf_status cf_math_cuda_launch_status(void)
+{
+  cudaError_t status = cudaPeekAtLastError();
+  return status == cudaSuccess ? CF_OK : CF_ERR_CUDA_LAUNCH;
+}
+
+static cf_status cf_math_cuda_prepare_like(cf_math *out, const cf_math *x, cf_math_cuda_context *ctx)
+{
+  if(out == CF_NULL || x == CF_NULL) return CF_ERR_NULL;
+  if(x->metadata.device != CF_DEVICE_CUDA) return cf_math_cuda_unavailable();
+  if(out == x) return CF_OK;
+  return cf_math_prepare_output(out, x->dim, x->rank, x->metadata.dtype, CF_DEVICE_CUDA, x->metadata.mem_flags, ctx);
+}
+
+static cf_bool cf_math_cuda_same_shape_dtype(const cf_math *x, const cf_math *y)
+{
+  if(x == CF_NULL || y == CF_NULL) return CF_FALSE;
+  if(x->metadata.len != y->metadata.len) return CF_FALSE;
+  if(x->metadata.dtype != y->metadata.dtype) return CF_FALSE;
+  if(x->rank != y->rank) return CF_FALSE;
+  for(cf_usize i = 0; i < x->rank; i++)
+    if(x->dim[i] != y->dim[i]) return CF_FALSE;
+  return CF_TRUE;
+}
+
+static cf_bool cf_math_cuda_supported_float(cf_math_dtype dtype)
+{
+  return dtype == CF_DTYPE_F64 || dtype == CF_DTYPE_F32;
+}
+
+static unsigned int cf_math_cuda_blocks(cf_usize len)
+{
+  return (unsigned int)((len + CF_MATH_CUDA_THREADS - 1U) / CF_MATH_CUDA_THREADS);
+}
+
+static __device__ double cf_math_cuda_binary_value(double a, double b, int op)
+{
+  switch(op)
+  {
+    case CF_MATH_BIN_ADD: return a + b;
+    case CF_MATH_BIN_SUB: return a - b;
+    case CF_MATH_BIN_MUL: return a * b;
+    case CF_MATH_BIN_DIV: return a / b;
+    default: return 0.0;
+  }
+}
+
+static __device__ double cf_math_cuda_unary_value(double x, int op)
+{
+  switch(op)
+  {
+    case CF_MATH_UN_ABS: return fabs(x);
+    case CF_MATH_UN_NEG: return -x;
+    case CF_MATH_UN_SQRT: return sqrt(x);
+    case CF_MATH_UN_RSQRT: return 1.0 / sqrt(x);
+    case CF_MATH_UN_EXP: return exp(x);
+    case CF_MATH_UN_LOG: return log(x);
+    case CF_MATH_UN_SIGN: return (x > 0.0) - (x < 0.0);
+    default: return 0.0;
+  }
+}
+
+static __device__ double cf_math_cuda_activation_value(double x, double aux, double alpha, int op)
+{
+  switch(op)
+  {
+    case CF_MATH_ACT_RELU: return x > 0.0 ? x : 0.0;
+    case CF_MATH_ACT_RELU_BWD: return aux > 0.0 ? x : 0.0;
+    case CF_MATH_ACT_LEAKY_RELU: return x > 0.0 ? x : alpha * x;
+    case CF_MATH_ACT_ELU: return x >= 0.0 ? x : alpha * (exp(x) - 1.0);
+    case CF_MATH_ACT_SIGMOID: return 1.0 / (1.0 + exp(-x));
+    case CF_MATH_ACT_SIGMOID_BWD: return x * aux * (1.0 - aux);
+    case CF_MATH_ACT_TANH: return tanh(x);
+    case CF_MATH_ACT_TANH_BWD: return x * (1.0 - aux * aux);
+    case CF_MATH_ACT_GELU: return 0.5 * x * (1.0 + erf(x / sqrt(2.0)));
+    case CF_MATH_ACT_GELU_APPROX:
+      return 0.5 * x * (1.0 + tanh(CF_MATH_SQRT_2_OVER_PI * (x + 0.044715 * x * x * x)));
+    case CF_MATH_ACT_GELU_BWD:
+    {
+      double cdf = 0.5 * (1.0 + erf(aux / sqrt(2.0)));
+      double pdf = exp(-0.5 * aux * aux) / sqrt(2.0 * CF_MATH_PI);
+      return x * (cdf + aux * pdf);
+    }
+    case CF_MATH_ACT_SWISH: return x / (1.0 + exp(-alpha * x));
+    case CF_MATH_ACT_SOFTPLUS: return x > 20.0 ? x : log1p(exp(x));
+    case CF_MATH_ACT_MISH:
+    {
+      double sp = x > 20.0 ? x : log1p(exp(x));
+      return x * tanh(sp);
+    }
+    default: return 0.0;
+  }
+}
+
+__global__ void cf_math_cuda_fill_f64(double *out, double value, cf_usize len)
+{
+  cf_usize i = (cf_usize)blockIdx.x * blockDim.x + threadIdx.x;
+  if(i < len) out[i] = value;
+}
+
+__global__ void cf_math_cuda_fill_f32(float *out, float value, cf_usize len)
+{
+  cf_usize i = (cf_usize)blockIdx.x * blockDim.x + threadIdx.x;
+  if(i < len) out[i] = value;
+}
+
+__global__ void cf_math_cuda_eye_f64(double *out, cf_usize rows, cf_usize cols)
+{
+  cf_usize i = (cf_usize)blockIdx.x * blockDim.x + threadIdx.x;
+  if(i < rows && i < cols) out[i * cols + i] = 1.0;
+}
+
+__global__ void cf_math_cuda_eye_f32(float *out, cf_usize rows, cf_usize cols)
+{
+  cf_usize i = (cf_usize)blockIdx.x * blockDim.x + threadIdx.x;
+  if(i < rows && i < cols) out[i * cols + i] = 1.0f;
+}
+
+__global__ void cf_math_cuda_binary_f64(double *out, const double *x, const double *y, cf_usize len, int op)
+{
+  cf_usize i = (cf_usize)blockIdx.x * blockDim.x + threadIdx.x;
+  if(i < len) out[i] = cf_math_cuda_binary_value(x[i], y[i], op);
+}
+
+__global__ void cf_math_cuda_binary_f32(float *out, const float *x, const float *y, cf_usize len, int op)
+{
+  cf_usize i = (cf_usize)blockIdx.x * blockDim.x + threadIdx.x;
+  if(i < len) out[i] = (float)cf_math_cuda_binary_value((double)x[i], (double)y[i], op);
+}
+
+__global__ void cf_math_cuda_scalar_f64(double *out, const double *x, double c, cf_usize len, int op)
+{
+  cf_usize i = (cf_usize)blockIdx.x * blockDim.x + threadIdx.x;
+  if(i < len) out[i] = cf_math_cuda_binary_value(x[i], c, op);
+}
+
+__global__ void cf_math_cuda_scalar_f32(float *out, const float *x, float c, cf_usize len, int op)
+{
+  cf_usize i = (cf_usize)blockIdx.x * blockDim.x + threadIdx.x;
+  if(i < len) out[i] = (float)cf_math_cuda_binary_value((double)x[i], (double)c, op);
+}
+
+__global__ void cf_math_cuda_unary_f64(double *out, const double *x, cf_usize len, int op)
+{
+  cf_usize i = (cf_usize)blockIdx.x * blockDim.x + threadIdx.x;
+  if(i < len) out[i] = cf_math_cuda_unary_value(x[i], op);
+}
+
+__global__ void cf_math_cuda_unary_f32(float *out, const float *x, cf_usize len, int op)
+{
+  cf_usize i = (cf_usize)blockIdx.x * blockDim.x + threadIdx.x;
+  if(i < len) out[i] = (float)cf_math_cuda_unary_value((double)x[i], op);
+}
+
+__global__ void cf_math_cuda_pow_f64(double *out, const double *x, double n, cf_usize len)
+{
+  cf_usize i = (cf_usize)blockIdx.x * blockDim.x + threadIdx.x;
+  if(i < len) out[i] = pow(x[i], n);
+}
+
+__global__ void cf_math_cuda_pow_f32(float *out, const float *x, float n, cf_usize len)
+{
+  cf_usize i = (cf_usize)blockIdx.x * blockDim.x + threadIdx.x;
+  if(i < len) out[i] = powf(x[i], n);
+}
+
+__global__ void cf_math_cuda_clamp_f64(double *out, const double *x, double lo, double hi, cf_usize len)
+{
+  cf_usize i = (cf_usize)blockIdx.x * blockDim.x + threadIdx.x;
+  if(i < len)
+  {
+    double v = x[i];
+    out[i] = v < lo ? lo : (v > hi ? hi : v);
+  }
+}
+
+__global__ void cf_math_cuda_clamp_f32(float *out, const float *x, float lo, float hi, cf_usize len)
+{
+  cf_usize i = (cf_usize)blockIdx.x * blockDim.x + threadIdx.x;
+  if(i < len)
+  {
+    float v = x[i];
+    out[i] = v < lo ? lo : (v > hi ? hi : v);
+  }
+}
+
+__global__ void cf_math_cuda_activation_f64(double *out, const double *x, const double *aux, double alpha, cf_usize len, int op)
+{
+  cf_usize i = (cf_usize)blockIdx.x * blockDim.x + threadIdx.x;
+  if(i < len) out[i] = cf_math_cuda_activation_value(x[i], aux == NULL ? 0.0 : aux[i], alpha, op);
+}
+
+__global__ void cf_math_cuda_activation_f32(float *out, const float *x, const float *aux, float alpha, cf_usize len, int op)
+{
+  cf_usize i = (cf_usize)blockIdx.x * blockDim.x + threadIdx.x;
+  if(i < len) out[i] = (float)cf_math_cuda_activation_value((double)x[i], aux == NULL ? 0.0 : (double)aux[i], (double)alpha, op);
+}
+
+__global__ void cf_math_cuda_bias_add_f64(double *out, const double *b, cf_usize rows, cf_usize cols)
+{
+  cf_usize i = (cf_usize)blockIdx.x * blockDim.x + threadIdx.x;
+  if(i < rows * cols) out[i] += b[i % cols];
+}
+
+__global__ void cf_math_cuda_bias_add_f32(float *out, const float *b, cf_usize rows, cf_usize cols)
+{
+  cf_usize i = (cf_usize)blockIdx.x * blockDim.x + threadIdx.x;
+  if(i < rows * cols) out[i] += b[i % cols];
+}
+
+static cf_status cf_math_cuda_fill_float(cf_math *out, double value, cf_math_cuda_context *ctx)
+{
+  cudaStream_t stream;
+  unsigned int blocks;
+
+  if(out == CF_NULL) return CF_ERR_NULL;
+  if(out->metadata.device != CF_DEVICE_CUDA) return cf_math_cuda_unavailable();
+  if(!cf_math_cuda_supported_float(out->metadata.dtype)) return CF_ERR_UNSUPPORTED;
+
+  stream = cf_math_cuda_stream(ctx);
+  blocks = cf_math_cuda_blocks(out->metadata.len);
+  if(out->metadata.dtype == CF_DTYPE_F64)
+    cf_math_cuda_fill_f64<<<blocks, CF_MATH_CUDA_THREADS, 0, stream>>>((double *)out->data, value, out->metadata.len);
+  else
+    cf_math_cuda_fill_f32<<<blocks, CF_MATH_CUDA_THREADS, 0, stream>>>((float *)out->data, (float)value, out->metadata.len);
+
+  return cf_math_cuda_launch_status();
+}
+
+static cf_status cf_math_cuda_binary(cf_math *out, const cf_math *x, const cf_math *y, cf_math_binary_op op, cf_math_cuda_context *ctx)
+{
+  cf_status status;
+  cudaStream_t stream;
+  unsigned int blocks;
+
+  if(out == CF_NULL || x == CF_NULL || y == CF_NULL) return CF_ERR_NULL;
+  if(x->metadata.device != CF_DEVICE_CUDA || y->metadata.device != CF_DEVICE_CUDA) return cf_math_cuda_unavailable();
+  if(!cf_math_cuda_same_shape_dtype(x, y)) return CF_ERR_INVALID;
+  if(!cf_math_cuda_supported_float(x->metadata.dtype)) return CF_ERR_UNSUPPORTED;
+
+  status = cf_math_cuda_prepare_like(out, x, ctx);
+  if(status != CF_OK) return status;
+
+  stream = cf_math_cuda_stream(ctx);
+  blocks = cf_math_cuda_blocks(x->metadata.len);
+  if(x->metadata.dtype == CF_DTYPE_F64)
+    cf_math_cuda_binary_f64<<<blocks, CF_MATH_CUDA_THREADS, 0, stream>>>((double *)out->data, (const double *)x->data, (const double *)y->data, x->metadata.len, (int)op);
+  else
+    cf_math_cuda_binary_f32<<<blocks, CF_MATH_CUDA_THREADS, 0, stream>>>((float *)out->data, (const float *)x->data, (const float *)y->data, x->metadata.len, (int)op);
+
+  return cf_math_cuda_launch_status();
+}
+
+static cf_status cf_math_cuda_scalar(cf_math *out, const cf_math *x, double c, cf_math_binary_op op, cf_math_cuda_context *ctx)
+{
+  cf_status status;
+  cudaStream_t stream;
+  unsigned int blocks;
+
+  if(out == CF_NULL || x == CF_NULL) return CF_ERR_NULL;
+  if(x->metadata.device != CF_DEVICE_CUDA) return cf_math_cuda_unavailable();
+  if(!cf_math_cuda_supported_float(x->metadata.dtype)) return CF_ERR_UNSUPPORTED;
+
+  status = cf_math_cuda_prepare_like(out, x, ctx);
+  if(status != CF_OK) return status;
+
+  stream = cf_math_cuda_stream(ctx);
+  blocks = cf_math_cuda_blocks(x->metadata.len);
+  if(x->metadata.dtype == CF_DTYPE_F64)
+    cf_math_cuda_scalar_f64<<<blocks, CF_MATH_CUDA_THREADS, 0, stream>>>((double *)out->data, (const double *)x->data, c, x->metadata.len, (int)op);
+  else
+    cf_math_cuda_scalar_f32<<<blocks, CF_MATH_CUDA_THREADS, 0, stream>>>((float *)out->data, (const float *)x->data, (float)c, x->metadata.len, (int)op);
+
+  return cf_math_cuda_launch_status();
+}
+
+static cf_status cf_math_cuda_unary(cf_math *out, const cf_math *x, cf_math_unary_op op, cf_math_cuda_context *ctx)
+{
+  cf_status status;
+  cudaStream_t stream;
+  unsigned int blocks;
+
+  if(out == CF_NULL || x == CF_NULL) return CF_ERR_NULL;
+  if(x->metadata.device != CF_DEVICE_CUDA) return cf_math_cuda_unavailable();
+  if(!cf_math_cuda_supported_float(x->metadata.dtype)) return CF_ERR_UNSUPPORTED;
+
+  status = cf_math_cuda_prepare_like(out, x, ctx);
+  if(status != CF_OK) return status;
+
+  stream = cf_math_cuda_stream(ctx);
+  blocks = cf_math_cuda_blocks(x->metadata.len);
+  if(x->metadata.dtype == CF_DTYPE_F64)
+    cf_math_cuda_unary_f64<<<blocks, CF_MATH_CUDA_THREADS, 0, stream>>>((double *)out->data, (const double *)x->data, x->metadata.len, (int)op);
+  else
+    cf_math_cuda_unary_f32<<<blocks, CF_MATH_CUDA_THREADS, 0, stream>>>((float *)out->data, (const float *)x->data, x->metadata.len, (int)op);
+
+  return cf_math_cuda_launch_status();
+}
+
+static cf_status cf_math_cuda_pow(cf_math *out, const cf_math *x, double n, cf_math_cuda_context *ctx)
+{
+  cf_status status;
+  cudaStream_t stream;
+  unsigned int blocks;
+
+  if(out == CF_NULL || x == CF_NULL) return CF_ERR_NULL;
+  if(x->metadata.device != CF_DEVICE_CUDA) return cf_math_cuda_unavailable();
+  if(!cf_math_cuda_supported_float(x->metadata.dtype)) return CF_ERR_UNSUPPORTED;
+
+  status = cf_math_cuda_prepare_like(out, x, ctx);
+  if(status != CF_OK) return status;
+
+  stream = cf_math_cuda_stream(ctx);
+  blocks = cf_math_cuda_blocks(x->metadata.len);
+  if(x->metadata.dtype == CF_DTYPE_F64)
+    cf_math_cuda_pow_f64<<<blocks, CF_MATH_CUDA_THREADS, 0, stream>>>((double *)out->data, (const double *)x->data, n, x->metadata.len);
+  else
+    cf_math_cuda_pow_f32<<<blocks, CF_MATH_CUDA_THREADS, 0, stream>>>((float *)out->data, (const float *)x->data, (float)n, x->metadata.len);
+
+  return cf_math_cuda_launch_status();
+}
+
+static cf_status cf_math_cuda_clamp(cf_math *out, const cf_math *x, double lo, double hi, cf_math_cuda_context *ctx)
+{
+  cf_status status;
+  cudaStream_t stream;
+  unsigned int blocks;
+
+  if(out == CF_NULL || x == CF_NULL) return CF_ERR_NULL;
+  if(x->metadata.device != CF_DEVICE_CUDA) return cf_math_cuda_unavailable();
+  if(!cf_math_cuda_supported_float(x->metadata.dtype)) return CF_ERR_UNSUPPORTED;
+
+  status = cf_math_cuda_prepare_like(out, x, ctx);
+  if(status != CF_OK) return status;
+
+  stream = cf_math_cuda_stream(ctx);
+  blocks = cf_math_cuda_blocks(x->metadata.len);
+  if(x->metadata.dtype == CF_DTYPE_F64)
+    cf_math_cuda_clamp_f64<<<blocks, CF_MATH_CUDA_THREADS, 0, stream>>>((double *)out->data, (const double *)x->data, lo, hi, x->metadata.len);
+  else
+    cf_math_cuda_clamp_f32<<<blocks, CF_MATH_CUDA_THREADS, 0, stream>>>((float *)out->data, (const float *)x->data, (float)lo, (float)hi, x->metadata.len);
+
+  return cf_math_cuda_launch_status();
+}
+
+static cf_status cf_math_cuda_activation(cf_math *out, const cf_math *x, const cf_math *aux, double alpha, cf_math_activation_op op, cf_math_cuda_context *ctx)
+{
+  cf_status status;
+  cudaStream_t stream;
+  unsigned int blocks;
+
+  if(out == CF_NULL || x == CF_NULL) return CF_ERR_NULL;
+  if(x->metadata.device != CF_DEVICE_CUDA) return cf_math_cuda_unavailable();
+  if(aux != CF_NULL && (aux->metadata.device != CF_DEVICE_CUDA || !cf_math_cuda_same_shape_dtype(x, aux))) return CF_ERR_INVALID;
+  if(!cf_math_cuda_supported_float(x->metadata.dtype)) return CF_ERR_UNSUPPORTED;
+
+  status = cf_math_cuda_prepare_like(out, x, ctx);
+  if(status != CF_OK) return status;
+
+  stream = cf_math_cuda_stream(ctx);
+  blocks = cf_math_cuda_blocks(x->metadata.len);
+  if(x->metadata.dtype == CF_DTYPE_F64)
+    cf_math_cuda_activation_f64<<<blocks, CF_MATH_CUDA_THREADS, 0, stream>>>((double *)out->data, (const double *)x->data, aux == CF_NULL ? NULL : (const double *)aux->data, alpha, x->metadata.len, (int)op);
+  else
+    cf_math_cuda_activation_f32<<<blocks, CF_MATH_CUDA_THREADS, 0, stream>>>((float *)out->data, (const float *)x->data, aux == CF_NULL ? NULL : (const float *)aux->data, (float)alpha, x->metadata.len, (int)op);
+
+  return cf_math_cuda_launch_status();
+}
+
+#if defined(CF_MATH_HAVE_CUBLAS)
+static cf_status cf_math_cublas_status(cublasStatus_t status)
+{
+  return status == CUBLAS_STATUS_SUCCESS ? CF_OK : CF_ERR_CUDA;
+}
+
+static cublasHandle_t cf_math_cublas_handle(cf_math_cuda_context *ctx)
+{
+  if(ctx == CF_NULL || ctx->cublas == 0) return 0;
+  (void)cublasSetStream(ctx->cublas, cf_math_cuda_stream(ctx));
+  return ctx->cublas;
+}
+
+static cf_status cf_math_cuda_dot_like(cf_math *out, const cf_math *x, const cf_math *y, cf_bool sqrt_result, cf_bool abs_sum, cf_math_cuda_context *ctx)
+{
+  cf_status status;
+  cublasHandle_t handle;
+  cublasPointerMode_t old_mode;
+
+  if(out == CF_NULL || x == CF_NULL) return CF_ERR_NULL;
+  if(y != CF_NULL && !cf_math_cuda_same_shape_dtype(x, y)) return CF_ERR_INVALID;
+  if(x->metadata.device != CF_DEVICE_CUDA || (y != CF_NULL && y->metadata.device != CF_DEVICE_CUDA)) return cf_math_cuda_unavailable();
+  if(!cf_math_cuda_supported_float(x->metadata.dtype)) return CF_ERR_UNSUPPORTED;
+
+  handle = cf_math_cublas_handle(ctx);
+  if(handle == 0) return CF_ERR_NULL;
+
+  status = cf_math_prepare_scalar(out, x->metadata.dtype, CF_DEVICE_CUDA, ctx);
+  if(status != CF_OK) return status;
+  if(cublasGetPointerMode(handle, &old_mode) != CUBLAS_STATUS_SUCCESS) return CF_ERR_CUDA;
+  if(cublasSetPointerMode(handle, CUBLAS_POINTER_MODE_DEVICE) != CUBLAS_STATUS_SUCCESS) return CF_ERR_CUDA;
+
+  if(x->metadata.dtype == CF_DTYPE_F64)
+  {
+    if(abs_sum)
+      status = cf_math_cublas_status(cublasDasum(handle, (int)x->metadata.len, (const double *)x->data, 1, (double *)out->data));
+    else if(y == CF_NULL || sqrt_result)
+      status = cf_math_cublas_status(cublasDnrm2(handle, (int)x->metadata.len, (const double *)x->data, 1, (double *)out->data));
+    else
+      status = cf_math_cublas_status(cublasDdot(handle, (int)x->metadata.len, (const double *)x->data, 1, (const double *)y->data, 1, (double *)out->data));
+  }
+  else
+  {
+    if(abs_sum)
+      status = cf_math_cublas_status(cublasSasum(handle, (int)x->metadata.len, (const float *)x->data, 1, (float *)out->data));
+    else if(y == CF_NULL || sqrt_result)
+      status = cf_math_cublas_status(cublasSnrm2(handle, (int)x->metadata.len, (const float *)x->data, 1, (float *)out->data));
+    else
+      status = cf_math_cublas_status(cublasSdot(handle, (int)x->metadata.len, (const float *)x->data, 1, (const float *)y->data, 1, (float *)out->data));
+  }
+
+  (void)cublasSetPointerMode(handle, old_mode);
+  return status;
+}
+
+static cf_status cf_math_matmul_cuda_core(cf_math *out, const cf_math *a, const cf_math *b, cf_bool trans_a, cf_bool trans_b, cf_math_cuda_context *ctx)
+{
+  cf_usize a_rows;
+  cf_usize a_cols;
+  cf_usize b_rows;
+  cf_usize b_cols;
+  cf_usize m;
+  cf_usize k;
+  cf_usize n;
+  cf_usize dim[CF_MATH_HIGHEST_RANK];
+  cf_status status;
+  cublasHandle_t handle;
+  cublasOperation_t op_b;
+  cublasOperation_t op_a;
+  int lda;
+  int ldb;
+  int ldc;
+
+  if(out == CF_NULL || a == CF_NULL || b == CF_NULL) return CF_ERR_NULL;
+  if(a->metadata.device != CF_DEVICE_CUDA || b->metadata.device != CF_DEVICE_CUDA) return cf_math_cuda_unavailable();
+  if(a->metadata.dtype != b->metadata.dtype) return CF_ERR_INVALID;
+  if(a->rank < 2 || b->rank < 2) return CF_ERR_INVALID;
+  if(!cf_math_cuda_supported_float(a->metadata.dtype)) return CF_ERR_UNSUPPORTED;
+  if(out == a || out == b) return CF_ERR_INVALID;
+
+  a_rows = a->dim[a->rank - 2];
+  a_cols = a->dim[a->rank - 1];
+  b_rows = b->dim[b->rank - 2];
+  b_cols = b->dim[b->rank - 1];
+  m = trans_a ? a_cols : a_rows;
+  k = trans_a ? a_rows : a_cols;
+  b_rows = trans_b ? b_cols : b_rows;
+  b_cols = trans_b ? b->dim[b->rank - 2] : b_cols;
+  n = b_cols;
+  if(k != b_rows) return CF_ERR_INVALID;
+
+  dim[0] = m;
+  dim[1] = n;
+  for(cf_usize i = 2; i < CF_MATH_HIGHEST_RANK; i++) dim[i] = 0;
+
+  handle = cf_math_cublas_handle(ctx);
+  if(handle == 0) return CF_ERR_NULL;
+
+  status = cf_math_prepare_output(out, dim, 2, a->metadata.dtype, CF_DEVICE_CUDA, a->metadata.mem_flags, ctx);
+  if(status != CF_OK) return status;
+
+  op_b = trans_b ? CUBLAS_OP_T : CUBLAS_OP_N;
+  op_a = trans_a ? CUBLAS_OP_T : CUBLAS_OP_N;
+  lda = (int)b->dim[b->rank - 1];
+  ldb = (int)a->dim[a->rank - 1];
+  ldc = (int)n;
+
+  if(a->metadata.dtype == CF_DTYPE_F64)
+  {
+    const double alpha = 1.0;
+    const double beta = 0.0;
+    return cf_math_cublas_status(cublasDgemm(handle, op_b, op_a, (int)n, (int)m, (int)k, &alpha,
+                                             (const double *)b->data, lda,
+                                             (const double *)a->data, ldb,
+                                             &beta, (double *)out->data, ldc));
+  }
+  else
+  {
+    const float alpha = 1.0f;
+    const float beta = 0.0f;
+    return cf_math_cublas_status(cublasSgemm(handle, op_b, op_a, (int)n, (int)m, (int)k, &alpha,
+                                             (const float *)b->data, lda,
+                                             (const float *)a->data, ldb,
+                                             &beta, (float *)out->data, ldc));
+  }
+}
+
+static cf_status cf_math_matvec_cuda(cf_math *out, const cf_math *a, const cf_math *x, cf_math_cuda_context *ctx)
+{
+  cf_usize dim[CF_MATH_HIGHEST_RANK] = {0};
+  cf_status status;
+  cublasHandle_t handle;
+
+  if(out == CF_NULL || a == CF_NULL || x == CF_NULL) return CF_ERR_NULL;
+  if(a->metadata.device != CF_DEVICE_CUDA || x->metadata.device != CF_DEVICE_CUDA) return cf_math_cuda_unavailable();
+  if(a->metadata.dtype != x->metadata.dtype) return CF_ERR_INVALID;
+  if(a->rank != 2 || x->metadata.len != a->dim[1]) return CF_ERR_INVALID;
+  if(!cf_math_cuda_supported_float(a->metadata.dtype)) return CF_ERR_UNSUPPORTED;
+  if(out == a || out == x) return CF_ERR_INVALID;
+
+  handle = cf_math_cublas_handle(ctx);
+  if(handle == 0) return CF_ERR_NULL;
+
+  dim[0] = a->dim[0];
+  status = cf_math_prepare_output(out, dim, 1, a->metadata.dtype, CF_DEVICE_CUDA, a->metadata.mem_flags, ctx);
+  if(status != CF_OK) return status;
+
+  if(a->metadata.dtype == CF_DTYPE_F64)
+  {
+    const double alpha = 1.0;
+    const double beta = 0.0;
+    return cf_math_cublas_status(cublasDgemv(handle, CUBLAS_OP_T, (int)a->dim[1], (int)a->dim[0], &alpha,
+                                             (const double *)a->data, (int)a->dim[1],
+                                             (const double *)x->data, 1, &beta, (double *)out->data, 1));
+  }
+  else
+  {
+    const float alpha = 1.0f;
+    const float beta = 0.0f;
+    return cf_math_cublas_status(cublasSgemv(handle, CUBLAS_OP_T, (int)a->dim[1], (int)a->dim[0], &alpha,
+                                             (const float *)a->data, (int)a->dim[1],
+                                             (const float *)x->data, 1, &beta, (float *)out->data, 1));
+  }
+}
+
+static cf_status cf_math_cuda_add_bias(cf_math *out, const cf_math *b, cf_usize rows, cf_usize cols, cf_math_cuda_context *ctx)
+{
+  cudaStream_t stream;
+  unsigned int blocks;
+
+  if(out == CF_NULL || b == CF_NULL) return CF_ERR_NULL;
+  if(out->metadata.device != CF_DEVICE_CUDA || b->metadata.device != CF_DEVICE_CUDA) return cf_math_cuda_unavailable();
+  if(out->metadata.dtype != b->metadata.dtype || b->metadata.len != cols) return CF_ERR_INVALID;
+  if(!cf_math_cuda_supported_float(out->metadata.dtype)) return CF_ERR_UNSUPPORTED;
+
+  stream = cf_math_cuda_stream(ctx);
+  blocks = cf_math_cuda_blocks(rows * cols);
+  if(out->metadata.dtype == CF_DTYPE_F64)
+    cf_math_cuda_bias_add_f64<<<blocks, CF_MATH_CUDA_THREADS, 0, stream>>>((double *)out->data, (const double *)b->data, rows, cols);
+  else
+    cf_math_cuda_bias_add_f32<<<blocks, CF_MATH_CUDA_THREADS, 0, stream>>>((float *)out->data, (const float *)b->data, rows, cols);
+
+  return cf_math_cuda_launch_status();
+}
+#endif
+
+#endif
+
 static cf_status cf_math_binary_cpu(cf_math *out, const cf_math *x, const cf_math *y, cf_math_binary_op op, cf_math_cuda_context *ctx)
 {
   cf_status status = cf_math_prepare_like(out, x, ctx);
@@ -435,6 +1044,8 @@ static cf_status cf_math_reduce_axis_cpu(cf_math *out, const cf_math *x, cf_usiz
   cf_usize axis_len;
   cf_status status;
 
+  status = cf_math_require_host_tensor(x);
+  if(status != CF_OK) return status;
   status = cf_math_axis_out_shape(x, axis, dim, &rank);
   if(status != CF_OK) return status;
   if(out->storage == CF_NULL)
@@ -863,7 +1474,8 @@ cf_status cf_math_clone(cf_math *out, const cf_math *x, cf_math_cuda_context *ct
   cf_usize bytes;
 
   if(out == CF_NULL || x == CF_NULL) return CF_ERR_NULL;
-  status = cf_math_alloc(out, x->dim, x->rank, x->metadata.dtype, x->metadata.device, x->metadata.mem_flags, ctx);
+  if(out == x) return CF_OK;
+  status = cf_math_prepare_output(out, x->dim, x->rank, x->metadata.dtype, x->metadata.device, x->metadata.mem_flags, ctx);
   if(status != CF_OK) return status;
   status = cf_math_checked_bytes(x->metadata.len, x->metadata.dtype, &bytes);
   if(status != CF_OK) return status;
@@ -900,7 +1512,9 @@ cf_status cf_math_to_device(cf_math *out, const cf_math *x, int device_id, cf_ma
 #if defined(CF_MATH_HAVE_CUDA_RUNTIME)
   if(ctx != CF_NULL) local_ctx = *ctx;
   local_ctx.device_id = device_id;
-  status = cf_math_alloc(out, x->dim, x->rank, x->metadata.dtype, CF_DEVICE_CUDA, (cf_math_mem_flags)(x->metadata.mem_flags | CF_MEM_ALIGNED_128), &local_ctx);
+  if(out == x && x->metadata.device == CF_DEVICE_CUDA) return CF_OK;
+  if(out == x) return CF_ERR_INVALID;
+  status = cf_math_prepare_output(out, x->dim, x->rank, x->metadata.dtype, CF_DEVICE_CUDA, (cf_math_mem_flags)(x->metadata.mem_flags | CF_MEM_ALIGNED_128), &local_ctx);
   if(status != CF_OK) return status;
   status = cf_math_checked_bytes(x->metadata.len, x->metadata.dtype, &bytes);
   if(status != CF_OK) return status;
@@ -923,7 +1537,9 @@ cf_status cf_math_to_host(cf_math *out, const cf_math *x, cf_math_cuda_context *
   cf_status status;
 
   if(out == CF_NULL || x == CF_NULL) return CF_ERR_NULL;
-  status = cf_math_alloc(out, x->dim, x->rank, x->metadata.dtype, CF_DEVICE_CPU, (cf_math_mem_flags)(x->metadata.mem_flags & ~CF_MEM_POOLED), ctx);
+  if(out == x && x->metadata.device == CF_DEVICE_CPU) return CF_OK;
+  if(out == x) return CF_ERR_INVALID;
+  status = cf_math_prepare_output(out, x->dim, x->rank, x->metadata.dtype, CF_DEVICE_CPU, (cf_math_mem_flags)(x->metadata.mem_flags & ~CF_MEM_POOLED), ctx);
   if(status != CF_OK) return status;
   status = cf_math_checked_bytes(x->metadata.len, x->metadata.dtype, &bytes);
   if(status != CF_OK) return status;
@@ -932,7 +1548,8 @@ cf_status cf_math_to_host(cf_math *out, const cf_math *x, cf_math_cuda_context *
   if(x->metadata.device == CF_DEVICE_CUDA)
   {
     cudaStream_t stream = ctx == CF_NULL ? 0 : ctx->d2h_stream;
-    return cudaMemcpyAsync(out->data, x->data, bytes, cudaMemcpyDeviceToHost, stream) == cudaSuccess ? CF_OK : CF_ERR_CUDA_COPY;
+    if(cudaMemcpyAsync(out->data, x->data, bytes, cudaMemcpyDeviceToHost, stream) != cudaSuccess) return CF_ERR_CUDA_COPY;
+    return cudaStreamSynchronize(stream) == cudaSuccess ? CF_OK : CF_ERR_CUDA_SYNC;
   }
 #else
   if(x->metadata.device == CF_DEVICE_CUDA) return cf_math_cuda_unavailable();
@@ -944,9 +1561,13 @@ cf_status cf_math_to_host(cf_math *out, const cf_math *x, cf_math_cuda_context *
 
 cf_status cf_math_fill(cf_math *out, double value, cf_math_cuda_context *ctx)
 {
-  CF_UNUSED(ctx);
   if(out == CF_NULL) return CF_ERR_NULL;
+#if defined(CF_MATH_HAVE_CUDA_RUNTIME)
+  if(out->metadata.device == CF_DEVICE_CUDA) return cf_math_cuda_fill_float(out, value, ctx);
+#else
+  CF_UNUSED(ctx);
   if(out->metadata.device == CF_DEVICE_CUDA) return cf_math_cuda_unavailable();
+#endif
   for(cf_usize i = 0; i < out->metadata.len; i++) cf_math_store(out, i, value);
   return CF_OK;
 }
@@ -1097,9 +1718,31 @@ cf_status cf_math_init_orthogonal(cf_math *out, cf_u64 seed, cf_math_cuda_contex
 
 cf_status cf_math_init_eye(cf_math *out, cf_math_cuda_context *ctx)
 {
-  CF_UNUSED(ctx);
   if(out == CF_NULL) return CF_ERR_NULL;
+#if defined(CF_MATH_HAVE_CUDA_RUNTIME)
+  if(out->metadata.device == CF_DEVICE_CUDA)
+  {
+    cf_status status;
+    cudaStream_t stream;
+    unsigned int blocks;
+
+    if(out->rank != 2) return CF_ERR_INVALID;
+    if(!cf_math_cuda_supported_float(out->metadata.dtype)) return CF_ERR_UNSUPPORTED;
+    status = cf_math_zeros(out, ctx);
+    if(status != CF_OK) return status;
+
+    stream = cf_math_cuda_stream(ctx);
+    blocks = cf_math_cuda_blocks(out->dim[0] < out->dim[1] ? out->dim[0] : out->dim[1]);
+    if(out->metadata.dtype == CF_DTYPE_F64)
+      cf_math_cuda_eye_f64<<<blocks, CF_MATH_CUDA_THREADS, 0, stream>>>((double *)out->data, out->dim[0], out->dim[1]);
+    else
+      cf_math_cuda_eye_f32<<<blocks, CF_MATH_CUDA_THREADS, 0, stream>>>((float *)out->data, out->dim[0], out->dim[1]);
+    return cf_math_cuda_launch_status();
+  }
+#else
+  CF_UNUSED(ctx);
   if(out->metadata.device == CF_DEVICE_CUDA) return cf_math_cuda_unavailable();
+#endif
   cf_math_zeros(out, ctx);
   for(cf_usize i = 0; i < out->dim[0] && i < out->dim[1]; i++)
     cf_math_store(out, i * out->dim[1] + i, 1.0);
@@ -1108,67 +1751,155 @@ cf_status cf_math_init_eye(cf_math *out, cf_math_cuda_context *ctx)
 
 cf_status cf_math_add(cf_math *out, const cf_math *x, const cf_math *y, cf_math_cuda_context *ctx)
 {
-  if(x->metadata.device == CF_DEVICE_CUDA) return cf_math_cuda_unavailable();
+#if defined(CF_MATH_HAVE_CUDA_RUNTIME)
+  if(x == CF_NULL || y == CF_NULL) return CF_ERR_NULL;
+  if(x->metadata.device == CF_DEVICE_CUDA || y->metadata.device == CF_DEVICE_CUDA)
+    return cf_math_cuda_binary(out, x, y, CF_MATH_BIN_ADD, ctx);
+#endif
   return cf_math_binary_cpu(out, x, y, CF_MATH_BIN_ADD, ctx);
 }
 
 cf_status cf_math_add_scalar(cf_math *out, const cf_math *x, double c, cf_math_cuda_context *ctx)
 {
-  if(x->metadata.device == CF_DEVICE_CUDA) return cf_math_cuda_unavailable();
+#if defined(CF_MATH_HAVE_CUDA_RUNTIME)
+  if(x == CF_NULL) return CF_ERR_NULL;
+  if(x->metadata.device == CF_DEVICE_CUDA) return cf_math_cuda_scalar(out, x, c, CF_MATH_BIN_ADD, ctx);
+#endif
   return cf_math_scalar_cpu(out, x, c, CF_MATH_BIN_ADD, ctx);
 }
 
 cf_status cf_math_sub(cf_math *out, const cf_math *x, const cf_math *y, cf_math_cuda_context *ctx)
 {
-  if(x->metadata.device == CF_DEVICE_CUDA) return cf_math_cuda_unavailable();
+#if defined(CF_MATH_HAVE_CUDA_RUNTIME)
+  if(x == CF_NULL || y == CF_NULL) return CF_ERR_NULL;
+  if(x->metadata.device == CF_DEVICE_CUDA || y->metadata.device == CF_DEVICE_CUDA)
+    return cf_math_cuda_binary(out, x, y, CF_MATH_BIN_SUB, ctx);
+#endif
   return cf_math_binary_cpu(out, x, y, CF_MATH_BIN_SUB, ctx);
 }
 
 cf_status cf_math_mul(cf_math *out, const cf_math *x, const cf_math *y, cf_math_cuda_context *ctx)
 {
-  if(x->metadata.device == CF_DEVICE_CUDA) return cf_math_cuda_unavailable();
+#if defined(CF_MATH_HAVE_CUDA_RUNTIME)
+  if(x == CF_NULL || y == CF_NULL) return CF_ERR_NULL;
+  if(x->metadata.device == CF_DEVICE_CUDA || y->metadata.device == CF_DEVICE_CUDA)
+    return cf_math_cuda_binary(out, x, y, CF_MATH_BIN_MUL, ctx);
+#endif
   return cf_math_binary_cpu(out, x, y, CF_MATH_BIN_MUL, ctx);
 }
 
 cf_status cf_math_mul_scalar(cf_math *out, const cf_math *x, double c, cf_math_cuda_context *ctx)
 {
-  if(x->metadata.device == CF_DEVICE_CUDA) return cf_math_cuda_unavailable();
+#if defined(CF_MATH_HAVE_CUDA_RUNTIME)
+  if(x == CF_NULL) return CF_ERR_NULL;
+  if(x->metadata.device == CF_DEVICE_CUDA) return cf_math_cuda_scalar(out, x, c, CF_MATH_BIN_MUL, ctx);
+#endif
   return cf_math_scalar_cpu(out, x, c, CF_MATH_BIN_MUL, ctx);
 }
 
 cf_status cf_math_div(cf_math *out, const cf_math *x, const cf_math *y, cf_math_cuda_context *ctx)
 {
-  if(x->metadata.device == CF_DEVICE_CUDA) return cf_math_cuda_unavailable();
+#if defined(CF_MATH_HAVE_CUDA_RUNTIME)
+  if(x == CF_NULL || y == CF_NULL) return CF_ERR_NULL;
+  if(x->metadata.device == CF_DEVICE_CUDA || y->metadata.device == CF_DEVICE_CUDA)
+    return cf_math_cuda_binary(out, x, y, CF_MATH_BIN_DIV, ctx);
+#endif
   return cf_math_binary_cpu(out, x, y, CF_MATH_BIN_DIV, ctx);
 }
 
 cf_status cf_math_div_scalar(cf_math *out, const cf_math *x, double c, cf_math_cuda_context *ctx)
 {
-  if(x->metadata.device == CF_DEVICE_CUDA) return cf_math_cuda_unavailable();
+#if defined(CF_MATH_HAVE_CUDA_RUNTIME)
+  if(x == CF_NULL) return CF_ERR_NULL;
+  if(x->metadata.device == CF_DEVICE_CUDA) return cf_math_cuda_scalar(out, x, c, CF_MATH_BIN_DIV, ctx);
+#endif
   return cf_math_scalar_cpu(out, x, c, CF_MATH_BIN_DIV, ctx);
 }
 
 cf_status cf_math_pow(cf_math *out, const cf_math *x, double n, cf_math_cuda_context *ctx)
 {
   cf_status status;
-  if(x->metadata.device == CF_DEVICE_CUDA) return cf_math_cuda_unavailable();
+#if defined(CF_MATH_HAVE_CUDA_RUNTIME)
+  if(x == CF_NULL) return CF_ERR_NULL;
+  if(x->metadata.device == CF_DEVICE_CUDA) return cf_math_cuda_pow(out, x, n, ctx);
+#endif
   status = cf_math_prepare_like(out, x, ctx);
   if(status != CF_OK) return status;
   for(cf_usize i = 0; i < x->metadata.len; i++) cf_math_store(out, i, pow(cf_math_load(x, i), n));
   return CF_OK;
 }
 
-cf_status cf_math_sqrt(cf_math *out, const cf_math *x, cf_math_cuda_context *ctx) { return cf_math_unary_cpu(out, x, CF_MATH_UN_SQRT, ctx); }
-cf_status cf_math_rsqrt(cf_math *out, const cf_math *x, cf_math_cuda_context *ctx) { return cf_math_unary_cpu(out, x, CF_MATH_UN_RSQRT, ctx); }
-cf_status cf_math_exp(cf_math *out, const cf_math *x, cf_math_cuda_context *ctx) { return cf_math_unary_cpu(out, x, CF_MATH_UN_EXP, ctx); }
-cf_status cf_math_log(cf_math *out, const cf_math *x, cf_math_cuda_context *ctx) { return cf_math_unary_cpu(out, x, CF_MATH_UN_LOG, ctx); }
-cf_status cf_math_abs(cf_math *out, const cf_math *x, cf_math_cuda_context *ctx) { return cf_math_unary_cpu(out, x, CF_MATH_UN_ABS, ctx); }
-cf_status cf_math_neg(cf_math *out, const cf_math *x, cf_math_cuda_context *ctx) { return cf_math_unary_cpu(out, x, CF_MATH_UN_NEG, ctx); }
-cf_status cf_math_sign(cf_math *out, const cf_math *x, cf_math_cuda_context *ctx) { return cf_math_unary_cpu(out, x, CF_MATH_UN_SIGN, ctx); }
+cf_status cf_math_sqrt(cf_math *out, const cf_math *x, cf_math_cuda_context *ctx)
+{
+#if defined(CF_MATH_HAVE_CUDA_RUNTIME)
+  if(x == CF_NULL) return CF_ERR_NULL;
+  if(x->metadata.device == CF_DEVICE_CUDA) return cf_math_cuda_unary(out, x, CF_MATH_UN_SQRT, ctx);
+#endif
+  return cf_math_unary_cpu(out, x, CF_MATH_UN_SQRT, ctx);
+}
+
+cf_status cf_math_rsqrt(cf_math *out, const cf_math *x, cf_math_cuda_context *ctx)
+{
+#if defined(CF_MATH_HAVE_CUDA_RUNTIME)
+  if(x == CF_NULL) return CF_ERR_NULL;
+  if(x->metadata.device == CF_DEVICE_CUDA) return cf_math_cuda_unary(out, x, CF_MATH_UN_RSQRT, ctx);
+#endif
+  return cf_math_unary_cpu(out, x, CF_MATH_UN_RSQRT, ctx);
+}
+
+cf_status cf_math_exp(cf_math *out, const cf_math *x, cf_math_cuda_context *ctx)
+{
+#if defined(CF_MATH_HAVE_CUDA_RUNTIME)
+  if(x == CF_NULL) return CF_ERR_NULL;
+  if(x->metadata.device == CF_DEVICE_CUDA) return cf_math_cuda_unary(out, x, CF_MATH_UN_EXP, ctx);
+#endif
+  return cf_math_unary_cpu(out, x, CF_MATH_UN_EXP, ctx);
+}
+
+cf_status cf_math_log(cf_math *out, const cf_math *x, cf_math_cuda_context *ctx)
+{
+#if defined(CF_MATH_HAVE_CUDA_RUNTIME)
+  if(x == CF_NULL) return CF_ERR_NULL;
+  if(x->metadata.device == CF_DEVICE_CUDA) return cf_math_cuda_unary(out, x, CF_MATH_UN_LOG, ctx);
+#endif
+  return cf_math_unary_cpu(out, x, CF_MATH_UN_LOG, ctx);
+}
+
+cf_status cf_math_abs(cf_math *out, const cf_math *x, cf_math_cuda_context *ctx)
+{
+#if defined(CF_MATH_HAVE_CUDA_RUNTIME)
+  if(x == CF_NULL) return CF_ERR_NULL;
+  if(x->metadata.device == CF_DEVICE_CUDA) return cf_math_cuda_unary(out, x, CF_MATH_UN_ABS, ctx);
+#endif
+  return cf_math_unary_cpu(out, x, CF_MATH_UN_ABS, ctx);
+}
+
+cf_status cf_math_neg(cf_math *out, const cf_math *x, cf_math_cuda_context *ctx)
+{
+#if defined(CF_MATH_HAVE_CUDA_RUNTIME)
+  if(x == CF_NULL) return CF_ERR_NULL;
+  if(x->metadata.device == CF_DEVICE_CUDA) return cf_math_cuda_unary(out, x, CF_MATH_UN_NEG, ctx);
+#endif
+  return cf_math_unary_cpu(out, x, CF_MATH_UN_NEG, ctx);
+}
+
+cf_status cf_math_sign(cf_math *out, const cf_math *x, cf_math_cuda_context *ctx)
+{
+#if defined(CF_MATH_HAVE_CUDA_RUNTIME)
+  if(x == CF_NULL) return CF_ERR_NULL;
+  if(x->metadata.device == CF_DEVICE_CUDA) return cf_math_cuda_unary(out, x, CF_MATH_UN_SIGN, ctx);
+#endif
+  return cf_math_unary_cpu(out, x, CF_MATH_UN_SIGN, ctx);
+}
 
 cf_status cf_math_clamp(cf_math *out, const cf_math *x, double lo, double hi, cf_math_cuda_context *ctx)
 {
-  cf_status status = cf_math_prepare_like(out, x, ctx);
+  cf_status status;
+#if defined(CF_MATH_HAVE_CUDA_RUNTIME)
+  if(x == CF_NULL) return CF_ERR_NULL;
+  if(x->metadata.device == CF_DEVICE_CUDA) return cf_math_cuda_clamp(out, x, lo, hi, ctx);
+#endif
+  status = cf_math_prepare_like(out, x, ctx);
   if(status != CF_OK) return status;
   for(cf_usize i = 0; i < x->metadata.len; i++)
   {
@@ -1237,6 +1968,10 @@ cf_status cf_math_norm2(cf_math *out, const cf_math *x, cf_math_cuda_context *ct
 {
   double acc = 0.0;
   cf_status status = cf_math_require_host_tensor(x);
+#if defined(CF_MATH_HAVE_CUDA_RUNTIME) && defined(CF_MATH_HAVE_CUBLAS)
+  if(x == CF_NULL) return CF_ERR_NULL;
+  if(x->metadata.device == CF_DEVICE_CUDA) return cf_math_cuda_dot_like(out, x, CF_NULL, CF_TRUE, CF_FALSE, ctx);
+#endif
   if(status != CF_OK) return status;
   for(cf_usize i = 0; i < x->metadata.len; i++)
   {
@@ -1250,6 +1985,10 @@ cf_status cf_math_norm1(cf_math *out, const cf_math *x, cf_math_cuda_context *ct
 {
   double acc = 0.0;
   cf_status status = cf_math_require_host_tensor(x);
+#if defined(CF_MATH_HAVE_CUDA_RUNTIME) && defined(CF_MATH_HAVE_CUBLAS)
+  if(x == CF_NULL) return CF_ERR_NULL;
+  if(x->metadata.device == CF_DEVICE_CUDA) return cf_math_cuda_dot_like(out, x, CF_NULL, CF_FALSE, CF_TRUE, ctx);
+#endif
   if(status != CF_OK) return status;
   for(cf_usize i = 0; i < x->metadata.len; i++) acc += fabs(cf_math_load(x, i));
   return cf_math_scalar_loss(out, x, acc, ctx);
@@ -1286,8 +2025,11 @@ cf_status cf_math_min(cf_math *out, const cf_math *x, cf_math_cuda_context *ctx)
 cf_status cf_math_argmax(cf_math *out, const cf_math *x, cf_math_cuda_context *ctx)
 {
   cf_usize best_i = 0;
-  double best = cf_math_load(x, 0);
-  cf_status status = cf_math_prepare_scalar(out, CF_DTYPE_I32, x->metadata.device, ctx);
+  double best;
+  cf_status status = cf_math_require_host_tensor(x);
+  if(status != CF_OK) return status;
+  best = cf_math_load(x, 0);
+  status = cf_math_prepare_scalar(out, CF_DTYPE_I32, x->metadata.device, ctx);
   if(status != CF_OK) return status;
   for(cf_usize i = 1; i < x->metadata.len; i++)
   {
@@ -1301,8 +2043,11 @@ cf_status cf_math_argmax(cf_math *out, const cf_math *x, cf_math_cuda_context *c
 cf_status cf_math_argmin(cf_math *out, const cf_math *x, cf_math_cuda_context *ctx)
 {
   cf_usize best_i = 0;
-  double best = cf_math_load(x, 0);
-  cf_status status = cf_math_prepare_scalar(out, CF_DTYPE_I32, x->metadata.device, ctx);
+  double best;
+  cf_status status = cf_math_require_host_tensor(x);
+  if(status != CF_OK) return status;
+  best = cf_math_load(x, 0);
+  status = cf_math_prepare_scalar(out, CF_DTYPE_I32, x->metadata.device, ctx);
   if(status != CF_OK) return status;
   for(cf_usize i = 1; i < x->metadata.len; i++)
   {
@@ -1317,6 +2062,11 @@ cf_status cf_math_dot(cf_math *out, const cf_math *x, const cf_math *y, cf_math_
 {
   double acc = 0.0;
   cf_status status = cf_math_require_host_tensor(x);
+#if defined(CF_MATH_HAVE_CUDA_RUNTIME) && defined(CF_MATH_HAVE_CUBLAS)
+  if(x == CF_NULL || y == CF_NULL) return CF_ERR_NULL;
+  if(x->metadata.device == CF_DEVICE_CUDA || y->metadata.device == CF_DEVICE_CUDA)
+    return cf_math_cuda_dot_like(out, x, y, CF_FALSE, CF_FALSE, ctx);
+#endif
   if(status != CF_OK) return status;
   status = cf_math_require_host_tensor(y);
   if(status != CF_OK) return status;
@@ -1339,22 +2089,41 @@ cf_status cf_math_cumsum(cf_math *out, const cf_math *x, cf_math_cuda_context *c
 
 cf_status cf_math_matmul(cf_math *out, const cf_math *a, const cf_math *b, cf_math_cuda_context *ctx)
 {
+#if defined(CF_MATH_HAVE_CUDA_RUNTIME) && defined(CF_MATH_HAVE_CUBLAS)
+  if(a == CF_NULL || b == CF_NULL) return CF_ERR_NULL;
+  if(a->metadata.device == CF_DEVICE_CUDA || b->metadata.device == CF_DEVICE_CUDA)
+    return cf_math_matmul_cuda_core(out, a, b, CF_FALSE, CF_FALSE, ctx);
+#endif
   return cf_math_matmul_cpu_core(out, a, b, CF_FALSE, CF_FALSE, ctx);
 }
 
 cf_status cf_math_matmul_t(cf_math *out, const cf_math *a, const cf_math *b, cf_bool trans_a, cf_bool trans_b, cf_math_cuda_context *ctx)
 {
+#if defined(CF_MATH_HAVE_CUDA_RUNTIME) && defined(CF_MATH_HAVE_CUBLAS)
+  if(a == CF_NULL || b == CF_NULL) return CF_ERR_NULL;
+  if(a->metadata.device == CF_DEVICE_CUDA || b->metadata.device == CF_DEVICE_CUDA)
+    return cf_math_matmul_cuda_core(out, a, b, trans_a, trans_b, ctx);
+#endif
   return cf_math_matmul_cpu_core(out, a, b, trans_a, trans_b, ctx);
 }
 
 cf_status cf_math_matmul_batched(cf_math *out, const cf_math *a, const cf_math *b, cf_math_cuda_context *ctx)
 {
   cf_usize batch_count = 1;
-  cf_usize m = a->dim[a->rank - 2];
-  cf_usize k = a->dim[a->rank - 1];
-  cf_usize n = b->dim[b->rank - 1];
+  cf_usize m;
+  cf_usize k;
+  cf_usize n;
   cf_usize dim[CF_MATH_HIGHEST_RANK] = {0};
   cf_status status;
+
+  status = cf_math_require_host_tensor(a);
+  if(status != CF_OK) return status;
+  status = cf_math_require_host_tensor(b);
+  if(status != CF_OK) return status;
+
+  m = a->dim[a->rank - 2];
+  k = a->dim[a->rank - 1];
+  n = b->dim[b->rank - 1];
 
   for(cf_usize i = 0; i + 2 < a->rank; i++)
   {
@@ -1392,11 +2161,46 @@ cf_status cf_math_matmul_batched(cf_math *out, const cf_math *a, const cf_math *
 
 cf_status cf_math_linear(cf_math *out, const cf_math *x, const cf_math *w, const cf_math *b, cf_math_cuda_context *ctx)
 {
-  cf_usize batch = x->rank == 1 ? 1 : x->dim[0];
-  cf_usize in = x->dim[x->rank - 1];
-  cf_usize out_features = w->dim[0];
-  cf_usize dim[CF_MATH_HIGHEST_RANK] = {batch, out_features};
+  cf_usize batch;
+  cf_usize in;
+  cf_usize out_features;
+  cf_usize dim[CF_MATH_HIGHEST_RANK] = {0};
   cf_status status;
+
+  if(x == CF_NULL || w == CF_NULL) return CF_ERR_NULL;
+#if defined(CF_MATH_HAVE_CUDA_RUNTIME) && defined(CF_MATH_HAVE_CUBLAS)
+  if(x->metadata.device == CF_DEVICE_CUDA || w->metadata.device == CF_DEVICE_CUDA || (b != CF_NULL && b->metadata.device == CF_DEVICE_CUDA))
+  {
+    if(x->rank == 1)
+    {
+      status = cf_math_matvec_cuda(out, w, x, ctx);
+      if(status != CF_OK) return status;
+      if(b != CF_NULL) return cf_math_cuda_add_bias(out, b, 1U, w->dim[0], ctx);
+      return CF_OK;
+    }
+
+    status = cf_math_matmul_cuda_core(out, x, w, CF_FALSE, CF_TRUE, ctx);
+    if(status != CF_OK) return status;
+    if(b != CF_NULL) return cf_math_cuda_add_bias(out, b, x->dim[0], w->dim[0], ctx);
+    return CF_OK;
+  }
+#endif
+
+  status = cf_math_require_host_tensor(x);
+  if(status != CF_OK) return status;
+  status = cf_math_require_host_tensor(w);
+  if(status != CF_OK) return status;
+  if(b != CF_NULL)
+  {
+    status = cf_math_require_host_tensor(b);
+    if(status != CF_OK) return status;
+  }
+
+  batch = x->rank == 1 ? 1 : x->dim[0];
+  in = x->dim[x->rank - 1];
+  out_features = w->dim[0];
+  dim[0] = batch;
+  dim[1] = out_features;
 
   if(out->storage == CF_NULL)
   {
@@ -1486,8 +2290,19 @@ cf_status cf_math_outer(cf_math *out, const cf_math *x, const cf_math *y, cf_mat
 
 cf_status cf_math_matvec(cf_math *out, const cf_math *a, const cf_math *x, cf_math_cuda_context *ctx)
 {
-  cf_usize dim[CF_MATH_HIGHEST_RANK] = {a->dim[0]};
-  cf_status status = out->storage == CF_NULL ? cf_math_alloc(out, dim, 1, a->metadata.dtype, a->metadata.device, a->metadata.mem_flags, ctx) : CF_OK;
+  cf_usize dim[CF_MATH_HIGHEST_RANK] = {0};
+  cf_status status;
+  if(a == CF_NULL || x == CF_NULL) return CF_ERR_NULL;
+#if defined(CF_MATH_HAVE_CUDA_RUNTIME) && defined(CF_MATH_HAVE_CUBLAS)
+  if(a->metadata.device == CF_DEVICE_CUDA || x->metadata.device == CF_DEVICE_CUDA)
+    return cf_math_matvec_cuda(out, a, x, ctx);
+#endif
+  status = cf_math_require_host_tensor(a);
+  if(status != CF_OK) return status;
+  status = cf_math_require_host_tensor(x);
+  if(status != CF_OK) return status;
+  dim[0] = a->dim[0];
+  status = out->storage == CF_NULL ? cf_math_alloc(out, dim, 1, a->metadata.dtype, a->metadata.device, a->metadata.mem_flags, ctx) : CF_OK;
   if(status != CF_OK) return status;
   for(cf_usize row = 0; row < a->dim[0]; row++)
   {
@@ -1516,7 +2331,12 @@ cf_status cf_math_scale(cf_math *out, const cf_math *a, double alpha, cf_math_cu
 
 cf_status cf_math_relu(cf_math *out, const cf_math *x, cf_math_cuda_context *ctx)
 {
-  cf_status status = cf_math_prepare_like(out, x, ctx);
+  cf_status status;
+#if defined(CF_MATH_HAVE_CUDA_RUNTIME)
+  if(x == CF_NULL) return CF_ERR_NULL;
+  if(x->metadata.device == CF_DEVICE_CUDA) return cf_math_cuda_activation(out, x, CF_NULL, 0.0, CF_MATH_ACT_RELU, ctx);
+#endif
+  status = cf_math_prepare_like(out, x, ctx);
   if(status != CF_OK) return status;
   for(cf_usize i = 0; i < x->metadata.len; i++)
   {
@@ -1528,7 +2348,13 @@ cf_status cf_math_relu(cf_math *out, const cf_math *x, cf_math_cuda_context *ctx
 
 cf_status cf_math_relu_bwd(cf_math *dx, const cf_math *dy, const cf_math *y, cf_math_cuda_context *ctx)
 {
-  cf_status status = cf_math_prepare_like(dx, dy, ctx);
+  cf_status status;
+#if defined(CF_MATH_HAVE_CUDA_RUNTIME)
+  if(dy == CF_NULL || y == CF_NULL) return CF_ERR_NULL;
+  if(dy->metadata.device == CF_DEVICE_CUDA || y->metadata.device == CF_DEVICE_CUDA)
+    return cf_math_cuda_activation(dx, dy, y, 0.0, CF_MATH_ACT_RELU_BWD, ctx);
+#endif
+  status = cf_math_prepare_like(dx, dy, ctx);
   if(status != CF_OK) return status;
   for(cf_usize i = 0; i < dy->metadata.len; i++) cf_math_store(dx, i, cf_math_load(y, i) > 0.0 ? cf_math_load(dy, i) : 0.0);
   return CF_OK;
@@ -1536,7 +2362,12 @@ cf_status cf_math_relu_bwd(cf_math *dx, const cf_math *dy, const cf_math *y, cf_
 
 cf_status cf_math_leaky_relu(cf_math *out, const cf_math *x, double alpha, cf_math_cuda_context *ctx)
 {
-  cf_status status = cf_math_prepare_like(out, x, ctx);
+  cf_status status;
+#if defined(CF_MATH_HAVE_CUDA_RUNTIME)
+  if(x == CF_NULL) return CF_ERR_NULL;
+  if(x->metadata.device == CF_DEVICE_CUDA) return cf_math_cuda_activation(out, x, CF_NULL, alpha, CF_MATH_ACT_LEAKY_RELU, ctx);
+#endif
+  status = cf_math_prepare_like(out, x, ctx);
   if(status != CF_OK) return status;
   for(cf_usize i = 0; i < x->metadata.len; i++)
   {
@@ -1548,7 +2379,12 @@ cf_status cf_math_leaky_relu(cf_math *out, const cf_math *x, double alpha, cf_ma
 
 cf_status cf_math_elu(cf_math *out, const cf_math *x, double alpha, cf_math_cuda_context *ctx)
 {
-  cf_status status = cf_math_prepare_like(out, x, ctx);
+  cf_status status;
+#if defined(CF_MATH_HAVE_CUDA_RUNTIME)
+  if(x == CF_NULL) return CF_ERR_NULL;
+  if(x->metadata.device == CF_DEVICE_CUDA) return cf_math_cuda_activation(out, x, CF_NULL, alpha, CF_MATH_ACT_ELU, ctx);
+#endif
+  status = cf_math_prepare_like(out, x, ctx);
   if(status != CF_OK) return status;
   for(cf_usize i = 0; i < x->metadata.len; i++)
   {
@@ -1560,7 +2396,12 @@ cf_status cf_math_elu(cf_math *out, const cf_math *x, double alpha, cf_math_cuda
 
 cf_status cf_math_sigmoid(cf_math *out, const cf_math *x, cf_math_cuda_context *ctx)
 {
-  cf_status status = cf_math_prepare_like(out, x, ctx);
+  cf_status status;
+#if defined(CF_MATH_HAVE_CUDA_RUNTIME)
+  if(x == CF_NULL) return CF_ERR_NULL;
+  if(x->metadata.device == CF_DEVICE_CUDA) return cf_math_cuda_activation(out, x, CF_NULL, 0.0, CF_MATH_ACT_SIGMOID, ctx);
+#endif
+  status = cf_math_prepare_like(out, x, ctx);
   if(status != CF_OK) return status;
   for(cf_usize i = 0; i < x->metadata.len; i++) cf_math_store(out, i, 1.0 / (1.0 + exp(-cf_math_load(x, i))));
   return CF_OK;
@@ -1568,7 +2409,13 @@ cf_status cf_math_sigmoid(cf_math *out, const cf_math *x, cf_math_cuda_context *
 
 cf_status cf_math_sigmoid_bwd(cf_math *dx, const cf_math *dy, const cf_math *y, cf_math_cuda_context *ctx)
 {
-  cf_status status = cf_math_prepare_like(dx, dy, ctx);
+  cf_status status;
+#if defined(CF_MATH_HAVE_CUDA_RUNTIME)
+  if(dy == CF_NULL || y == CF_NULL) return CF_ERR_NULL;
+  if(dy->metadata.device == CF_DEVICE_CUDA || y->metadata.device == CF_DEVICE_CUDA)
+    return cf_math_cuda_activation(dx, dy, y, 0.0, CF_MATH_ACT_SIGMOID_BWD, ctx);
+#endif
+  status = cf_math_prepare_like(dx, dy, ctx);
   if(status != CF_OK) return status;
   for(cf_usize i = 0; i < dy->metadata.len; i++)
   {
@@ -1580,7 +2427,12 @@ cf_status cf_math_sigmoid_bwd(cf_math *dx, const cf_math *dy, const cf_math *y, 
 
 cf_status cf_math_tanh(cf_math *out, const cf_math *x, cf_math_cuda_context *ctx)
 {
-  cf_status status = cf_math_prepare_like(out, x, ctx);
+  cf_status status;
+#if defined(CF_MATH_HAVE_CUDA_RUNTIME)
+  if(x == CF_NULL) return CF_ERR_NULL;
+  if(x->metadata.device == CF_DEVICE_CUDA) return cf_math_cuda_activation(out, x, CF_NULL, 0.0, CF_MATH_ACT_TANH, ctx);
+#endif
+  status = cf_math_prepare_like(out, x, ctx);
   if(status != CF_OK) return status;
   for(cf_usize i = 0; i < x->metadata.len; i++) cf_math_store(out, i, tanh(cf_math_load(x, i)));
   return CF_OK;
@@ -1588,7 +2440,13 @@ cf_status cf_math_tanh(cf_math *out, const cf_math *x, cf_math_cuda_context *ctx
 
 cf_status cf_math_tanh_bwd(cf_math *dx, const cf_math *dy, const cf_math *y, cf_math_cuda_context *ctx)
 {
-  cf_status status = cf_math_prepare_like(dx, dy, ctx);
+  cf_status status;
+#if defined(CF_MATH_HAVE_CUDA_RUNTIME)
+  if(dy == CF_NULL || y == CF_NULL) return CF_ERR_NULL;
+  if(dy->metadata.device == CF_DEVICE_CUDA || y->metadata.device == CF_DEVICE_CUDA)
+    return cf_math_cuda_activation(dx, dy, y, 0.0, CF_MATH_ACT_TANH_BWD, ctx);
+#endif
+  status = cf_math_prepare_like(dx, dy, ctx);
   if(status != CF_OK) return status;
   for(cf_usize i = 0; i < dy->metadata.len; i++)
   {
@@ -1600,7 +2458,12 @@ cf_status cf_math_tanh_bwd(cf_math *dx, const cf_math *dy, const cf_math *y, cf_
 
 cf_status cf_math_gelu(cf_math *out, const cf_math *x, cf_math_cuda_context *ctx)
 {
-  cf_status status = cf_math_prepare_like(out, x, ctx);
+  cf_status status;
+#if defined(CF_MATH_HAVE_CUDA_RUNTIME)
+  if(x == CF_NULL) return CF_ERR_NULL;
+  if(x->metadata.device == CF_DEVICE_CUDA) return cf_math_cuda_activation(out, x, CF_NULL, 0.0, CF_MATH_ACT_GELU, ctx);
+#endif
+  status = cf_math_prepare_like(out, x, ctx);
   if(status != CF_OK) return status;
   for(cf_usize i = 0; i < x->metadata.len; i++)
   {
@@ -1612,7 +2475,12 @@ cf_status cf_math_gelu(cf_math *out, const cf_math *x, cf_math_cuda_context *ctx
 
 cf_status cf_math_gelu_approx(cf_math *out, const cf_math *x, cf_math_cuda_context *ctx)
 {
-  cf_status status = cf_math_prepare_like(out, x, ctx);
+  cf_status status;
+#if defined(CF_MATH_HAVE_CUDA_RUNTIME)
+  if(x == CF_NULL) return CF_ERR_NULL;
+  if(x->metadata.device == CF_DEVICE_CUDA) return cf_math_cuda_activation(out, x, CF_NULL, 0.0, CF_MATH_ACT_GELU_APPROX, ctx);
+#endif
+  status = cf_math_prepare_like(out, x, ctx);
   if(status != CF_OK) return status;
   for(cf_usize i = 0; i < x->metadata.len; i++)
   {
@@ -1624,7 +2492,13 @@ cf_status cf_math_gelu_approx(cf_math *out, const cf_math *x, cf_math_cuda_conte
 
 cf_status cf_math_gelu_bwd(cf_math *dx, const cf_math *dy, const cf_math *x, cf_math_cuda_context *ctx)
 {
-  cf_status status = cf_math_prepare_like(dx, dy, ctx);
+  cf_status status;
+#if defined(CF_MATH_HAVE_CUDA_RUNTIME)
+  if(dy == CF_NULL || x == CF_NULL) return CF_ERR_NULL;
+  if(dy->metadata.device == CF_DEVICE_CUDA || x->metadata.device == CF_DEVICE_CUDA)
+    return cf_math_cuda_activation(dx, dy, x, 0.0, CF_MATH_ACT_GELU_BWD, ctx);
+#endif
+  status = cf_math_prepare_like(dx, dy, ctx);
   if(status != CF_OK) return status;
   for(cf_usize i = 0; i < dy->metadata.len; i++)
   {
@@ -1638,7 +2512,12 @@ cf_status cf_math_gelu_bwd(cf_math *dx, const cf_math *dy, const cf_math *x, cf_
 
 cf_status cf_math_swish(cf_math *out, const cf_math *x, double beta, cf_math_cuda_context *ctx)
 {
-  cf_status status = cf_math_prepare_like(out, x, ctx);
+  cf_status status;
+#if defined(CF_MATH_HAVE_CUDA_RUNTIME)
+  if(x == CF_NULL) return CF_ERR_NULL;
+  if(x->metadata.device == CF_DEVICE_CUDA) return cf_math_cuda_activation(out, x, CF_NULL, beta, CF_MATH_ACT_SWISH, ctx);
+#endif
+  status = cf_math_prepare_like(out, x, ctx);
   if(status != CF_OK) return status;
   for(cf_usize i = 0; i < x->metadata.len; i++)
   {
@@ -1655,7 +2534,12 @@ cf_status cf_math_silu(cf_math *out, const cf_math *x, cf_math_cuda_context *ctx
 
 cf_status cf_math_softplus(cf_math *out, const cf_math *x, cf_math_cuda_context *ctx)
 {
-  cf_status status = cf_math_prepare_like(out, x, ctx);
+  cf_status status;
+#if defined(CF_MATH_HAVE_CUDA_RUNTIME)
+  if(x == CF_NULL) return CF_ERR_NULL;
+  if(x->metadata.device == CF_DEVICE_CUDA) return cf_math_cuda_activation(out, x, CF_NULL, 0.0, CF_MATH_ACT_SOFTPLUS, ctx);
+#endif
+  status = cf_math_prepare_like(out, x, ctx);
   if(status != CF_OK) return status;
   for(cf_usize i = 0; i < x->metadata.len; i++)
   {
@@ -1667,7 +2551,12 @@ cf_status cf_math_softplus(cf_math *out, const cf_math *x, cf_math_cuda_context 
 
 cf_status cf_math_mish(cf_math *out, const cf_math *x, cf_math_cuda_context *ctx)
 {
-  cf_status status = cf_math_prepare_like(out, x, ctx);
+  cf_status status;
+#if defined(CF_MATH_HAVE_CUDA_RUNTIME)
+  if(x == CF_NULL) return CF_ERR_NULL;
+  if(x->metadata.device == CF_DEVICE_CUDA) return cf_math_cuda_activation(out, x, CF_NULL, 0.0, CF_MATH_ACT_MISH, ctx);
+#endif
+  status = cf_math_prepare_like(out, x, ctx);
   if(status != CF_OK) return status;
   for(cf_usize i = 0; i < x->metadata.len; i++)
   {

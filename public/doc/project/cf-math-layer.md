@@ -2146,6 +2146,12 @@ Currently:
   activation, softmax, loss, dropout, embedding, optimizer, sparse, shape, and
   several convolution/normalization paths.
 - CUDA allocation/copy/context hooks are guarded by CUDA availability.
+- CUDA F32/F64 fast paths are implemented for the high-payoff dense operations:
+  fill/zeros/ones/eye, elementwise add/sub/mul/div/scalar math, unary math,
+  common activations, dot, L1/L2 norms, matrix-vector multiply, matrix multiply,
+  transposed matrix multiply, and linear forward. Elementwise and activation
+  paths use custom CUDA kernels; dot/norm/GEMV/GEMM/linear dispatch through
+  cuBLAS when a `cf_math_cuda_context` with a cuBLAS handle is supplied.
 - RNN/LSTM/GRU functions return `CF_ERR_UNSUPPORTED` until the cuDNN RNN state
   implementation is completed.
 - MHA backward returns `CF_ERR_UNSUPPORTED` until saved forward state and weight
@@ -2188,3 +2194,30 @@ Good performance rules:
 - Use fused operations such as linear+activation when the backend supports it.
 - Prefer vendor libraries for GEMM, convolution, normalization, sparse ops, and
   recurrent layers.
+
+## CUDA Backend Coverage
+
+The CUDA backend is intentionally split between custom kernels and NVIDIA
+libraries:
+
+- Custom CUDA kernels are used for memory-bandwidth-bound dense tensor
+  operations where a vendor library call would add overhead or would require
+  extra copies: fill, scalar math, add/sub/mul/div, pow, sqrt/rsqrt, exp/log,
+  abs/neg/sign, clamp, ReLU, leaky ReLU, ELU, sigmoid, tanh, GELU, Swish/SiLU,
+  softplus, and Mish.
+- cuBLAS is used where it is the correct high-performance primitive: dot,
+  L1/L2 norms, matrix-vector multiply, matrix multiply, transposed matrix
+  multiply, and linear forward.
+- `cf_math_to_host` synchronizes the D2H stream before returning so host-side
+  inspection and benchmark printing see completed GPU results.
+- CUDA math fast paths currently support `CF_DTYPE_F32` and `CF_DTYPE_F64`.
+  Other dtypes return `CF_ERR_UNSUPPORTED` until the dtype-specific kernels and
+  library dispatch contracts are added.
+- Mixed CPU/GPU inputs are not implicitly copied inside math operations. Move
+  tensors explicitly with `cf_math_to_device` or `cf_math_to_host` so benchmark
+  output makes transfer cost visible.
+
+The benchmark harness runs GPU timings when the project is built with CUDA
+support and `CF_MATH_RUN_BENCH=1` is set. It includes transfer timings,
+elementwise CUDA kernels, activation kernels, cuBLAS dot/GEMM, and a small
+GPU matrix multiplication copied back to host for readable output.
