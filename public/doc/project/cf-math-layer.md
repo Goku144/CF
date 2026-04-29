@@ -2124,6 +2124,17 @@ Example:
 [2, 3, 4] flatten axes 1..2 -> [2, 12]
 ```
 
+#### `cf_math_print`
+
+```c
+void cf_math_print(const cf_math *x);
+```
+
+Prints tensor metadata and CPU tensor values to stdout.
+
+CUDA-backed tensors are identified as device memory and should be copied to
+host with `cf_math_to_host` before printing values.
+
 ## Current Implementation Notes
 
 The public function map is intentionally broad. Not every high-level training
