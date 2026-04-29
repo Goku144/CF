@@ -22,6 +22,7 @@
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
 
 #define CF_MATH_ALIGN_BYTES 128U
 #define CF_MATH_PI 3.14159265358979323846264338327950288
@@ -557,6 +558,96 @@ static cf_usize cf_math_channel_of(const cf_math *x, cf_usize linear)
   for(cf_usize i = 2; i < x->rank; i++) spatial *= x->dim[i];
   return (linear / spatial) % x->dim[1];
 }
+
+static const char *cf_math_dtype_name(cf_math_dtype dtype)
+{
+  switch(dtype)
+  {
+    case CF_DTYPE_F64: return "f64";
+    case CF_DTYPE_F32: return "f32";
+    case CF_DTYPE_F16: return "f16";
+    case CF_DTYPE_BF16: return "bf16";
+    case CF_DTYPE_FP8E4M3: return "fp8e4m3";
+    case CF_DTYPE_FP8E5M2: return "fp8e5m2";
+    case CF_DTYPE_I32: return "i32";
+    case CF_DTYPE_I8: return "i8";
+    case CF_DTYPE_U8: return "u8";
+    case CF_DTYPE_BOOL: return "bool";
+    default: return "unknown";
+  }
+}
+
+static const char *cf_math_device_name(cf_math_device device)
+{
+  switch(device)
+  {
+    case CF_DEVICE_CPU: return "cpu";
+    case CF_DEVICE_CUDA: return "cuda";
+    default: return "unknown";
+  }
+}
+
+static void cf_math_print_value(const cf_math *x, cf_usize linear)
+{
+  double v = cf_math_load(x, linear);
+
+  switch(x->metadata.dtype)
+  {
+    case CF_DTYPE_I32:
+    case CF_DTYPE_I8:
+    case CF_DTYPE_U8:
+    case CF_DTYPE_BOOL:
+      printf("%6lld", (long long)v);
+      break;
+
+    case CF_DTYPE_F64:
+    case CF_DTYPE_F32:
+      printf("%10.4f", v);
+      break;
+
+    default:
+      printf("%10.4f", v);
+      break;
+  }
+}
+
+static void cf_math_print_recursive(const cf_math *x, cf_usize axis, cf_usize base)
+{
+  cf_usize stride_block = 1;
+
+  if(axis >= x->rank || axis >= CF_MATH_HIGHEST_RANK)
+    return;
+
+  if(axis + 1 >= x->rank)
+  {
+    printf("[");
+    for(cf_usize i = 0; i < x->dim[axis]; i++)
+    {
+      if(i != 0) printf(", ");
+      cf_math_print_value(x, base + i);
+    }
+    printf("]");
+    return;
+  }
+
+  for(cf_usize i = axis + 1; i < x->rank && i < CF_MATH_HIGHEST_RANK; i++)
+    stride_block *= x->dim[i];
+
+  printf("[\n");
+  for(cf_usize i = 0; i < x->dim[axis]; i++)
+  {
+    for(cf_usize s = 0; s <= axis; s++) printf("  ");
+
+    cf_math_print_recursive(x, axis + 1, base + i * stride_block);
+
+    if(i + 1 < x->dim[axis]) printf(",");
+    printf("\n");
+  }
+
+  for(cf_usize s = 0; s < axis; s++) printf("  ");
+  printf("]");
+}
+
 
 cf_status cf_math_context_init(cf_math_cuda_context *ctx, int device_id)
 {
@@ -2701,6 +2792,71 @@ cf_status cf_math_lstm_bwd_data(cf_math *dx, cf_math *dh, cf_math *dc, cf_math_r
 { CF_UNUSED(dx); CF_UNUSED(dh); CF_UNUSED(dc); CF_UNUSED(state); CF_UNUSED(dL); CF_UNUSED(ctx); return CF_ERR_UNSUPPORTED; }
 cf_status cf_math_gru_fwd_train(cf_math *out, cf_math_rnn_state *state, const cf_math *x, const cf_math *h0, cf_math_cuda_context *ctx)
 { CF_UNUSED(out); CF_UNUSED(state); CF_UNUSED(x); CF_UNUSED(h0); CF_UNUSED(ctx); return CF_ERR_UNSUPPORTED; }
+
+void cf_math_print(const cf_math *x)
+{
+  if(x == CF_NULL)
+  {
+    printf("cf_math(NULL)\n");
+    return;
+  }
+
+  printf("cf_math {\n");
+  printf("  dtype  : %s\n", cf_math_dtype_name(x->metadata.dtype));
+  printf("  device : %s\n", cf_math_device_name(x->metadata.device));
+  printf("  rank   : %llu\n", (unsigned long long)x->rank);
+
+  printf("  shape  : (");
+  for(cf_usize i = 0; i < x->rank; i++)
+  {
+    if(i != 0)
+      printf(", ");
+    printf("%llu", (unsigned long long)x->dim[i]);
+  }
+  printf(")\n");
+
+  printf("  len    : %llu\n", (unsigned long long)x->metadata.len);
+  printf("  data   : %p\n", x->data);
+
+  if(x->data == CF_NULL)
+  {
+    printf("  values : <null-data>\n");
+    printf("}\n");
+    return;
+  }
+
+  if(x->rank == 0)
+  {
+    printf("  values : <invalid-rank>\n");
+    printf("}\n");
+    return;
+  }
+
+  if(x->rank > CF_MATH_HIGHEST_RANK)
+  {
+    printf("  values : <invalid-rank>\n");
+    printf("}\n");
+    return;
+  }
+
+  if(x->metadata.len == 0)
+  {
+    printf("  values : []\n");
+    printf("}\n");
+    return;
+  }
+
+  if(x->metadata.device == CF_DEVICE_CUDA)
+  {
+    printf("  values : <cuda-device-memory: copy to CPU before printing>\n");
+    printf("}\n");
+    return;
+  }
+
+  printf("  values : ");
+  cf_math_print_recursive(x, 0, 0);
+  printf("\n}\n");
+}
 
 cf_u8 cf_math_g8_mul_mod(cf_u8 p, cf_u8 q)
 {

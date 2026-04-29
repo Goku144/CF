@@ -2047,6 +2047,11 @@ cf_status cf_math_pad(cf_math *out, const cf_math *x, const cf_usize before[CF_M
  */
 cf_status cf_math_flatten(cf_math *out, const cf_math *x, cf_usize start_axis, cf_usize end_axis);
 
+/**
+ * @brief Print tensor metadata and small CPU tensor values to stdout.
+ * @param x Tensor to inspect. Passing `CF_NULL` prints a null tensor marker.
+ */
+void cf_math_print(const cf_math *x);
 
 #ifdef __cplusplus
 }
