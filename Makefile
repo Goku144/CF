@@ -20,7 +20,7 @@
 # PUBLIC VARS
 ##############
 
-INC := public/inc
+INC := public/inc -I/usr/local/cuda/include
 
 ############
 # C OPTIONS
