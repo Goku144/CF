@@ -1,1519 +1,327 @@
-#include "ALLOCATOR/cf_alloc.h"
-#include "ALLOCATOR/cf_alloc_debug.h"
-#include "MATH/cf_math.h"
-#include "MATH/cf_tensor.h"
-#include "MEMORY/cf_array.h"
-#include "RUNTIME/cf_io.h"
-#include "RUNTIME/cf_log.h"
-#include "RUNTIME/cf_random.h"
-#include "RUNTIME/cf_status.h"
-#include "RUNTIME/cf_time.h"
-#include "RUNTIME/cf_types.h"
-#include "SECURITY/cf_aes.h"
-#include "SECURITY/cf_base64.h"
-#include "SECURITY/cf_hex.h"
-#include "TEXT/cf_ascii.h"
-#include "TEXT/cf_string.h"
+/*
+ * CF Framework
+ * Copyright (C) 2026 Orion
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ */
 
+#include "MATH/cf_math.h"
+#include "RUNTIME/cf_status.h"
+
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-typedef struct test_alloc_state
+static int g_failures = 0;
+
+static void test_fail(const char *file, int line, const char *expr)
 {
-  cf_usize alloc_calls;
-  cf_usize realloc_calls;
-  cf_usize free_calls;
-  cf_usize fail_alloc_count;
-  cf_usize fail_realloc_count;
-  cf_usize bad_ctx_alloc_calls;
-  cf_usize bad_ctx_realloc_calls;
-  cf_usize bad_ctx_free_calls;
-  void *expected_ctx;
-} test_alloc_state;
-
-static test_alloc_state *g_test_alloc_state = CF_NULL;
-static int g_test_passed = 0;
-static int g_test_failed = 0;
-
-/*******************************************************************************
- * Test Harness Helpers
- ******************************************************************************/
-
-static void test_section(const char *name)
-{
-  printf("\n── %s\n", name);
+  printf("FAIL %s:%d: %s\n", file, line, expr);
+  g_failures++;
 }
 
-static void test_pass(const char *message)
+#define CHECK_TRUE(expr) do { if(!(expr)) test_fail(__FILE__, __LINE__, #expr); } while(0)
+
+#define CHECK_STATUS(expr) do { \
+  cf_status cf_test_status__ = (expr); \
+  if(cf_test_status__ != CF_OK) { \
+    printf("FAIL %s:%d: %s -> %s\n", __FILE__, __LINE__, #expr, cf_status_as_char(cf_test_status__)); \
+    g_failures++; \
+  } \
+} while(0)
+
+#define CHECK_NEAR(actual, expected, eps) do { \
+  double cf_test_actual__ = (double)(actual); \
+  double cf_test_expected__ = (double)(expected); \
+  if(fabs(cf_test_actual__ - cf_test_expected__) > (eps)) { \
+    printf("FAIL %s:%d: %s expected %.12g got %.12g\n", __FILE__, __LINE__, #actual, cf_test_expected__, cf_test_actual__); \
+    g_failures++; \
+  } \
+} while(0)
+
+static double *f64(cf_math *x)
 {
-  g_test_passed++;
-  printf("  PASS  %s\n", message);
+  return (double *)x->data;
 }
 
-static void test_check(_Bool condition, const char *message)
+static const double *cf64(const cf_math *x)
 {
-  if(condition) test_pass(message);
+  return (const double *)x->data;
+}
+
+static cf_i32 *i32(cf_math *x)
+{
+  return (cf_i32 *)x->data;
+}
+
+static void fill_f64(cf_math *x, const double *values)
+{
+  for(cf_usize i = 0; i < x->metadata.len; i++) f64(x)[i] = values[i];
+}
+
+static void check_f64_array(const cf_math *x, const double *expected, cf_usize count, double eps)
+{
+  CHECK_TRUE(x->metadata.len == count);
+  for(cf_usize i = 0; i < count; i++) CHECK_NEAR(cf64(x)[i], expected[i], eps);
+}
+
+static void free_sparse(cf_math_sparse *x)
+{
+  if(x == CF_NULL) return;
+  free(x->values);
+  free(x->row_offsets);
+  free(x->col_indices);
+  memset(x, 0, sizeof(*x));
+}
+
+static void test_primitives(void)
+{
+  CHECK_TRUE(cf_math_g8_mul_mod(0x57U, 0x83U) == 0xc1U);
+  CHECK_TRUE(cf_math_rotl8(0x12U, 4U) == 0x21U);
+  CHECK_TRUE(cf_math_rotr8(0x12U, 4U) == 0x21U);
+  CHECK_TRUE(cf_math_rotl32(0x12345678U, 8U) == 0x34567812U);
+  CHECK_TRUE(cf_math_rotr32(0x12345678U, 8U) == 0x78123456U);
+  CHECK_TRUE(cf_math_min_usize(7U, 3U) == 3U);
+  CHECK_TRUE(cf_math_max_usize(7U, 3U) == 7U);
+  CHECK_TRUE(cf_math_dtype_size(CF_DTYPE_F64) == sizeof(double));
+  CHECK_TRUE(cf_math_dtype_size(CF_DTYPE_F32) == sizeof(float));
+  CHECK_TRUE(cf_math_dtype_size(CF_DTYPE_I32) == sizeof(cf_i32));
+}
+
+static void test_lifecycle_views_and_shape(void)
+{
+  cf_math x = {0};
+  cf_math clone = {0};
+  cf_math view = {0};
+  cf_math reshaped = {0};
+  cf_math flat = {0};
+  cf_usize dim[CF_MATH_HIGHEST_RANK] = {2, 3};
+  cf_usize view_dim[CF_MATH_HIGHEST_RANK] = {2};
+  cf_usize reshape_dim[CF_MATH_HIGHEST_RANK] = {3, 2};
+  double values[] = {1.0, 2.0, 3.0, 4.0, 5.0, 6.0};
+
+  CHECK_STATUS(cf_math_alloc(&x, dim, 2, CF_DTYPE_F64, CF_DEVICE_CPU, CF_MEM_DEFAULT, CF_NULL));
+  fill_f64(&x, values);
+  CHECK_TRUE(x.metadata.len == 6U);
+  CHECK_TRUE(x.metadata.strides[0] == 3U);
+  CHECK_TRUE(x.metadata.strides[1] == 1U);
+
+  CHECK_STATUS(cf_math_clone(&clone, &x, CF_NULL));
+  check_f64_array(&clone, values, 6U, 1e-12);
+
+  CHECK_STATUS(cf_math_view(&view, &x, 2U, view_dim, 1U));
+  CHECK_NEAR(cf64(&view)[0], 3.0, 1e-12);
+  CHECK_NEAR(cf64(&view)[1], 4.0, 1e-12);
+
+  CHECK_STATUS(cf_math_reshape(&reshaped, &x, reshape_dim, 2U));
+  CHECK_TRUE(reshaped.dim[0] == 3U);
+  CHECK_TRUE(reshaped.dim[1] == 2U);
+  CHECK_NEAR(cf64(&reshaped)[5], 6.0, 1e-12);
+
+  CHECK_STATUS(cf_math_flatten(&flat, &x, 0U, 1U));
+  CHECK_TRUE(flat.rank == 1U);
+  CHECK_TRUE(flat.dim[0] == 6U);
+
+  CHECK_STATUS(cf_math_free(&flat, CF_NULL));
+  CHECK_STATUS(cf_math_free(&reshaped, CF_NULL));
+  CHECK_STATUS(cf_math_free(&view, CF_NULL));
+  CHECK_STATUS(cf_math_free(&clone, CF_NULL));
+  CHECK_STATUS(cf_math_free(&x, CF_NULL));
+}
+
+static void test_elementwise_and_reductions(void)
+{
+  cf_math x = {0};
+  cf_math y = {0};
+  cf_math out = {0};
+  cf_math scalar = {0};
+  cf_usize dim[CF_MATH_HIGHEST_RANK] = {4};
+  double xv[] = {1.0, 4.0, 9.0, 16.0};
+  double yv[] = {2.0, 2.0, 3.0, 4.0};
+  double expect_add[] = {3.0, 6.0, 12.0, 20.0};
+  double expect_mul[] = {2.0, 8.0, 27.0, 64.0};
+  double expect_sqrt[] = {1.0, 2.0, 3.0, 4.0};
+  double expect_cumsum[] = {1.0, 5.0, 14.0, 30.0};
+
+  CHECK_STATUS(cf_math_alloc(&x, dim, 1, CF_DTYPE_F64, CF_DEVICE_CPU, CF_MEM_DEFAULT, CF_NULL));
+  CHECK_STATUS(cf_math_alloc(&y, dim, 1, CF_DTYPE_F64, CF_DEVICE_CPU, CF_MEM_DEFAULT, CF_NULL));
+  fill_f64(&x, xv);
+  fill_f64(&y, yv);
+
+  CHECK_STATUS(cf_math_add(&out, &x, &y, CF_NULL));
+  check_f64_array(&out, expect_add, 4U, 1e-12);
+  CHECK_STATUS(cf_math_mul(&out, &x, &y, CF_NULL));
+  check_f64_array(&out, expect_mul, 4U, 1e-12);
+  CHECK_STATUS(cf_math_sqrt(&out, &x, CF_NULL));
+  check_f64_array(&out, expect_sqrt, 4U, 1e-12);
+  CHECK_STATUS(cf_math_cumsum(&out, &x, CF_NULL));
+  check_f64_array(&out, expect_cumsum, 4U, 1e-12);
+  CHECK_STATUS(cf_math_clamp(&out, &x, 3.0, 10.0, CF_NULL));
+  CHECK_NEAR(cf64(&out)[0], 3.0, 1e-12);
+  CHECK_NEAR(cf64(&out)[3], 10.0, 1e-12);
+
+  CHECK_STATUS(cf_math_sum(&scalar, &x, CF_NULL));
+  CHECK_NEAR(cf64(&scalar)[0], 30.0, 1e-12);
+  CHECK_STATUS(cf_math_mean(&scalar, &x, CF_NULL));
+  CHECK_NEAR(cf64(&scalar)[0], 7.5, 1e-12);
+  CHECK_STATUS(cf_math_norm1(&scalar, &x, CF_NULL));
+  CHECK_NEAR(cf64(&scalar)[0], 30.0, 1e-12);
+  CHECK_STATUS(cf_math_dot(&scalar, &x, &y, CF_NULL));
+  CHECK_NEAR(cf64(&scalar)[0], 101.0, 1e-12);
+  CHECK_STATUS(cf_math_argmax(&scalar, &x, CF_NULL));
+  CHECK_TRUE(i32(&scalar)[0] == 3);
+
+  CHECK_STATUS(cf_math_free(&scalar, CF_NULL));
+  CHECK_STATUS(cf_math_free(&out, CF_NULL));
+  CHECK_STATUS(cf_math_free(&y, CF_NULL));
+  CHECK_STATUS(cf_math_free(&x, CF_NULL));
+}
+
+static void test_linalg_activation_and_loss(void)
+{
+  cf_math a = {0};
+  cf_math b = {0};
+  cf_math out = {0};
+  cf_math bias = {0};
+  cf_math target = {0};
+  cf_math loss = {0};
+  cf_usize a_dim[CF_MATH_HIGHEST_RANK] = {2, 3};
+  cf_usize b_dim[CF_MATH_HIGHEST_RANK] = {3, 2};
+  cf_usize w_dim[CF_MATH_HIGHEST_RANK] = {2, 3};
+  cf_usize bias_dim[CF_MATH_HIGHEST_RANK] = {2};
+  double av[] = {1.0, 2.0, 3.0, 4.0, 5.0, 6.0};
+  double bv[] = {7.0, 8.0, 9.0, 10.0, 11.0, 12.0};
+  double matmul_expected[] = {58.0, 64.0, 139.0, 154.0};
+  double wv[] = {1.0, 0.0, 1.0, 0.0, 1.0, 1.0};
+  double biasv[] = {1.0, -1.0};
+  double linear_expected[] = {5.0, 4.0, 11.0, 10.0};
+  double targetv[] = {1.0, 1.0, 1.0, 1.0};
+
+  CHECK_STATUS(cf_math_alloc(&a, a_dim, 2, CF_DTYPE_F64, CF_DEVICE_CPU, CF_MEM_DEFAULT, CF_NULL));
+  CHECK_STATUS(cf_math_alloc(&b, b_dim, 2, CF_DTYPE_F64, CF_DEVICE_CPU, CF_MEM_DEFAULT, CF_NULL));
+  fill_f64(&a, av);
+  fill_f64(&b, bv);
+
+  CHECK_STATUS(cf_math_matmul(&out, &a, &b, CF_NULL));
+  check_f64_array(&out, matmul_expected, 4U, 1e-12);
+  CHECK_STATUS(cf_math_free(&out, CF_NULL));
+  CHECK_STATUS(cf_math_free(&b, CF_NULL));
+
+  CHECK_STATUS(cf_math_alloc(&b, w_dim, 2, CF_DTYPE_F64, CF_DEVICE_CPU, CF_MEM_DEFAULT, CF_NULL));
+  fill_f64(&b, wv);
+  CHECK_STATUS(cf_math_alloc(&bias, bias_dim, 1, CF_DTYPE_F64, CF_DEVICE_CPU, CF_MEM_DEFAULT, CF_NULL));
+  fill_f64(&bias, biasv);
+  CHECK_STATUS(cf_math_linear(&out, &a, &b, &bias, CF_NULL));
+  check_f64_array(&out, linear_expected, 4U, 1e-12);
+
+  CHECK_STATUS(cf_math_relu(&out, &out, CF_NULL));
+  CHECK_NEAR(cf64(&out)[0], 5.0, 1e-12);
+  CHECK_STATUS(cf_math_sigmoid(&out, &bias, CF_NULL));
+  CHECK_NEAR(cf64(&out)[0], 1.0 / (1.0 + exp(-1.0)), 1e-12);
+
+  CHECK_STATUS(cf_math_alloc(&target, bias_dim, 1, CF_DTYPE_F64, CF_DEVICE_CPU, CF_MEM_DEFAULT, CF_NULL));
+  fill_f64(&target, targetv);
+  CHECK_STATUS(cf_math_mse_loss(&loss, &out, &target, CF_NULL));
+  CHECK_TRUE(isfinite(cf64(&loss)[0]));
+
+  CHECK_STATUS(cf_math_free(&loss, CF_NULL));
+  CHECK_STATUS(cf_math_free(&target, CF_NULL));
+  CHECK_STATUS(cf_math_free(&bias, CF_NULL));
+  CHECK_STATUS(cf_math_free(&out, CF_NULL));
+  CHECK_STATUS(cf_math_free(&b, CF_NULL));
+  CHECK_STATUS(cf_math_free(&a, CF_NULL));
+}
+
+static void test_dropout_embedding_sparse_and_unsupported(void)
+{
+  cf_math w = {0};
+  cf_math idx = {0};
+  cf_math out = {0};
+  cf_math dense = {0};
+  cf_math restored = {0};
+  cf_math_dropout_state dropout = {0};
+  cf_math_sparse csr = {0};
+  cf_usize w_dim[CF_MATH_HIGHEST_RANK] = {3, 2};
+  cf_usize idx_dim[CF_MATH_HIGHEST_RANK] = {2};
+  cf_usize dense_dim[CF_MATH_HIGHEST_RANK] = {2, 3};
+  double wv[] = {1.0, 2.0, 3.0, 4.0, 5.0, 6.0};
+  double densev[] = {10.0, 0.0, 3.0, 0.0, 2.0, 0.0};
+
+  CHECK_STATUS(cf_math_alloc(&w, w_dim, 2, CF_DTYPE_F64, CF_DEVICE_CPU, CF_MEM_DEFAULT, CF_NULL));
+  CHECK_STATUS(cf_math_alloc(&idx, idx_dim, 1, CF_DTYPE_I32, CF_DEVICE_CPU, CF_MEM_DEFAULT, CF_NULL));
+  fill_f64(&w, wv);
+  i32(&idx)[0] = 2;
+  i32(&idx)[1] = 0;
+  CHECK_STATUS(cf_math_embed_fwd(&out, &w, &idx, CF_NULL));
+  CHECK_NEAR(cf64(&out)[0], 5.0, 1e-12);
+  CHECK_NEAR(cf64(&out)[3], 2.0, 1e-12);
+  CHECK_STATUS(cf_math_free(&out, CF_NULL));
+
+  CHECK_STATUS(cf_math_dropout_fwd(&out, &dropout, &w, 0.0, 123U, CF_NULL));
+  check_f64_array(&out, wv, 6U, 1e-12);
+  CHECK_STATUS(cf_math_dropout_train_set(&dropout, 0.5, CF_FALSE, CF_NULL));
+  CHECK_NEAR(dropout.probability, 0.0, 1e-12);
+
+  CHECK_STATUS(cf_math_alloc(&dense, dense_dim, 2, CF_DTYPE_F64, CF_DEVICE_CPU, CF_MEM_DEFAULT, CF_NULL));
+  fill_f64(&dense, densev);
+  CHECK_STATUS(cf_math_dense_to_csr(&csr, &dense, 0.0, CF_NULL));
+  CHECK_TRUE(csr.nnz == 3U);
+  CHECK_STATUS(cf_math_csr_to_dense(&restored, &csr, CF_NULL));
+  check_f64_array(&restored, densev, 6U, 1e-12);
+
+  CHECK_TRUE(cf_math_grad_allreduce(&w, 1U, CF_NULL) == CF_OK);
+  CHECK_TRUE(cf_math_grad_allreduce(&w, 2U, CF_NULL) == CF_ERR_UNSUPPORTED);
+  CHECK_TRUE(cf_math_rnn_fwd_train(&out, CF_NULL, &w, CF_NULL, CF_NULL) == CF_ERR_UNSUPPORTED);
+
+  free(dropout.reserve);
+  free_sparse(&csr);
+  CHECK_STATUS(cf_math_free(&restored, CF_NULL));
+  CHECK_STATUS(cf_math_free(&dense, CF_NULL));
+  CHECK_STATUS(cf_math_free(&out, CF_NULL));
+  CHECK_STATUS(cf_math_free(&idx, CF_NULL));
+  CHECK_STATUS(cf_math_free(&w, CF_NULL));
+}
+
+static void test_cuda_guard(void)
+{
+#if defined(CF_MATH_HAVE_CUDA_RUNTIME)
+  int device_count = 0;
+  cudaError_t cuda_status = cudaGetDeviceCount(&device_count);
+  if(cuda_status == cudaSuccess && device_count > 0)
+  {
+    cf_math_cuda_context ctx = {0};
+    cf_status status = cf_math_context_init(&ctx, 0);
+    CHECK_TRUE(status == CF_OK || status == CF_ERR_CUDA_DEVICE || status == CF_ERR_CUDA_RUNTIME || status == CF_ERR_CUDA);
+    if(status == CF_OK) CHECK_STATUS(cf_math_context_destroy(&ctx));
+  }
   else
   {
-    g_test_failed++;
-    printf("  FAIL  %s\n", message);
+    printf("CUDA runtime present, but no usable CUDA device was reported; GPU math tests skipped.\n");
   }
-}
-
-static void test_check_string_value(cf_string *str, const char *expected, const char *message)
-{
-  test_check(str != CF_NULL && expected != CF_NULL && cf_string_is_valid(str) == CF_TRUE && str->data != CF_NULL && strcmp((char *)str->data, expected) == 0 && str->len == strlen(expected), message);
-}
-
-/*******************************************************************************
- * Allocator Test Helpers
- ******************************************************************************/
-
-static void *test_alloc(void *ctx, cf_usize size)
-{
-  if(g_test_alloc_state == CF_NULL) return CF_NULL;
-
-  g_test_alloc_state->alloc_calls++;
-  if(ctx != g_test_alloc_state->expected_ctx)
-    g_test_alloc_state->bad_ctx_alloc_calls++;
-
-  if(g_test_alloc_state->fail_alloc_count > 0)
-  {
-    g_test_alloc_state->fail_alloc_count--;
-    return CF_NULL;
-  }
-
-  return malloc(size);
-}
-
-static void *test_realloc(void *ctx, void *ptr, cf_usize size)
-{
-  if(g_test_alloc_state == CF_NULL) return CF_NULL;
-
-  g_test_alloc_state->realloc_calls++;
-  if(ctx != g_test_alloc_state->expected_ctx)
-    g_test_alloc_state->bad_ctx_realloc_calls++;
-
-  if(g_test_alloc_state->fail_realloc_count > 0)
-  {
-    g_test_alloc_state->fail_realloc_count--;
-    return CF_NULL;
-  }
-
-  return realloc(ptr, size);
-}
-
-static void test_free(void *ctx, void *ptr)
-{
-  if(g_test_alloc_state == CF_NULL) return;
-
-  g_test_alloc_state->free_calls++;
-  if(ctx != g_test_alloc_state->expected_ctx)
-    g_test_alloc_state->bad_ctx_free_calls++;
-
-  free(ptr);
-}
-
-/*******************************************************************************
- * Allocator Tests
- ******************************************************************************/
-
-static void test_cf_alloc_debug_new_model(void)
-{
-  test_alloc_state state = {0};
-  cf_alloc backing =
-  {
-    .ctx = &state,
-    .alloc = test_alloc,
-    .realloc = test_realloc,
-    .free = test_free,
-  };
-  cf_alloc_debug debug = {0};
-  cf_alloc_debug debug_default = {0};
-  cf_alloc_debug untouched =
-  {
-    .ptr_live = 77,
-    .ptr_all_live = 88,
-    .statement = "unchanged",
-  };
-  char statement[] = "tests/src/test.c cf_alloc_debug test";
-
-  g_test_alloc_state = &state;
-  state.expected_ctx = &state;
-
-  test_section("cf_alloc_debug_new");
-
-  cf_alloc_debug_new(&debug, &backing, statement);
-  cf_alloc_debug_new(&debug_default, &backing, CF_NULL);
-
-  test_check(debug.internal_allocator.ctx == &state, "internal allocator stores backing ctx");
-  test_check(debug.internal_allocator.alloc == backing.alloc, "internal allocator stores alloc fn");
-  test_check(debug.internal_allocator.realloc == backing.realloc, "internal allocator stores realloc fn");
-  test_check(debug.internal_allocator.free == backing.free, "internal allocator stores free fn");
-  test_check(debug.allocator.ctx == &debug, "public allocator ctx points to debug object");
-  test_check(debug.allocator.alloc != CF_NULL, "public alloc callback is set");
-  test_check(debug.allocator.realloc != CF_NULL, "public realloc callback is set");
-  test_check(debug.allocator.free != CF_NULL, "public free callback is set");
-  test_check(debug.statement == statement, "custom statement is stored");
-  test_check(strcmp(debug_default.statement, "NO STATEMENT DECLARED") == 0, "default statement fallback is stored");
-  test_check(debug.ptr_live == 0, "live count starts at zero");
-  test_check(debug.ptr_free == 0, "free count starts at zero");
-  test_check(debug.ptr_max_live == 0, "max live count starts at zero");
-  test_check(debug.ptr_max_free == 0, "max free count starts at zero");
-  test_check(debug.ptr_all_live == 0, "all live count starts at zero");
-  test_check(debug.ptr_all_free == 0, "all free count starts at zero");
-  test_check(debug.ptr_invalid_alloc == 0, "invalid tracking alloc count starts at zero");
-  test_check(debug.ptr_internal_invalid_alloc == 0, "internal alloc failure count starts at zero");
-  test_check(debug.ptr_internal_invalid_realloc == 0, "internal realloc failure count starts at zero");
-  test_check(debug.ptr_internal_invalid_free == 0, "internal free failure count starts at zero");
-  test_check(debug.latest_valid_ptr == CF_NULL, "latest valid pointer starts null");
-  test_check(debug.head == CF_NULL, "head starts null");
-
-  cf_alloc_debug_log(&debug, __LINE__);
-
-  cf_alloc_debug_new(CF_NULL, &backing, statement);
-  cf_alloc_debug_new(&untouched, CF_NULL, statement);
-  test_check(untouched.ptr_live == 77, "null backing argument leaves target unchanged");
-  test_check(untouched.ptr_all_live == 88, "null backing preserves other fields");
-  test_check(strcmp(untouched.statement, "unchanged") == 0, "null backing preserves statement");
-}
-
-/*******************************************************************************
- * Allocator Tests
- ******************************************************************************/
-
-static void test_cf_alloc_debug_callbacks(void)
-{
-  test_alloc_state state = {0};
-  cf_alloc backing =
-  {
-    .ctx = &state,
-    .alloc = test_alloc,
-    .realloc = test_realloc,
-    .free = test_free,
-  };
-  cf_alloc_debug debug = {0};
-  cf_u8 external_byte = 0;
-  cf_u8 *ptr_a = CF_NULL;
-  cf_u8 *ptr_b = CF_NULL;
-  cf_u8 *ptr_c = CF_NULL;
-  cf_u8 *ptr_c_realloc = CF_NULL;
-
-  g_test_alloc_state = &state;
-  state.expected_ctx = &state;
-
-  test_section("cf_alloc_debug callbacks");
-
-  cf_alloc_debug_new(&debug, &backing, "cf_alloc_debug callback section");
-
-  test_check(debug.allocator.alloc(CF_NULL, 16) == CF_NULL, "alloc with null ctx returns null");
-  test_check(debug.allocator.realloc(CF_NULL, &external_byte, 16) == CF_NULL, "realloc with null ctx returns null");
-  debug.allocator.free(CF_NULL, &external_byte);
-  test_check(debug.ptr_live == 0, "null ctx free does not change live count");
-  test_check(debug.ptr_all_live == 0, "null ctx alloc path does not change all_live");
-  test_check(debug.ptr_all_free == 0, "null ctx free path does not change all_free");
-  test_check(debug.ptr_internal_invalid_alloc == 0, "null ctx alloc does not count as internal alloc failure");
-  test_check(debug.ptr_internal_invalid_realloc == 0, "null ctx realloc does not count as internal realloc failure");
-  test_check(debug.ptr_internal_invalid_free == 0, "null ctx free does not count as internal free failure");
-
-  state.fail_alloc_count = 1;
-  test_check(debug.allocator.alloc(debug.allocator.ctx, 32) == CF_NULL, "failed backing alloc returns null");
-  test_check(state.alloc_calls == 1, "backing alloc called once for failed alloc");
-  test_check(debug.ptr_internal_invalid_alloc == 1, "failed backing alloc increments invalid alloc count");
-  test_check(debug.ptr_live == 0, "failed backing alloc does not change live count");
-  test_check(debug.ptr_all_live == 0, "failed backing alloc does not change total live count");
-  test_check(debug.head == CF_NULL, "failed backing alloc does not create list node");
-  test_check(debug.latest_valid_ptr == CF_NULL, "failed backing alloc leaves latest pointer null");
-
-  cf_alloc_debug_log(&debug, __LINE__);
-
-  ptr_a = debug.allocator.alloc(debug.allocator.ctx, 32);
-  ptr_b = debug.allocator.alloc(debug.allocator.ctx, 24);
-  ptr_c = debug.allocator.alloc(debug.allocator.ctx, 8);
-  test_check(ptr_a != CF_NULL, "first tracked alloc succeeds");
-  test_check(ptr_b != CF_NULL, "second tracked alloc succeeds");
-  test_check(ptr_c != CF_NULL, "third tracked alloc succeeds");
-  test_check(state.alloc_calls == 4, "three successful allocs plus one failed alloc hit backing allocator");
-
-  ptr_a[0] = 0xAA;
-  ptr_a[31] = 0x55;
-  ptr_b[0] = 0xB1;
-  ptr_b[23] = 0xB2;
-  ptr_c[0] = 0xC3;
-
-  test_check(debug.ptr_live == 3, "three successful allocs set live count to three");
-  test_check(debug.ptr_free == 0, "allocs do not advance free count");
-  test_check(debug.ptr_max_live == 3, "max live count tracks peak allocations");
-  test_check(debug.ptr_max_free == 0, "max free count stays zero before frees");
-  test_check(debug.ptr_all_live == 3, "all_live counts successful allocs");
-  test_check(debug.ptr_all_free == 0, "all_free stays zero before frees");
-  test_check(debug.latest_valid_ptr == ptr_c, "latest valid pointer tracks newest alloc");
-  test_check(debug.head != CF_NULL, "head exists after successful allocs");
-  test_check(debug.head != CF_NULL && debug.head->ptr == ptr_c, "head points to newest pointer");
-  test_check(debug.head != CF_NULL && debug.head->next != CF_NULL, "second node exists");
-  test_check(debug.head != CF_NULL && debug.head->next != CF_NULL && debug.head->next->ptr == ptr_b, "second node tracks middle pointer");
-  test_check(debug.head != CF_NULL && debug.head->next != CF_NULL && debug.head->next->next != CF_NULL && debug.head->next->next->ptr == ptr_a, "third node tracks oldest pointer");
-
-  cf_alloc_debug_log(&debug, __LINE__);
-
-  test_check(debug.allocator.realloc(debug.allocator.ctx, &external_byte, 16) == CF_NULL, "realloc of untracked pointer returns null");
-  test_check(state.realloc_calls == 0, "realloc of untracked pointer does not call backing realloc");
-  test_check(debug.ptr_internal_invalid_realloc == 0, "realloc of untracked pointer does not count as internal realloc failure");
-
-  state.fail_realloc_count = 1;
-  test_check(debug.allocator.realloc(debug.allocator.ctx, ptr_c, 64) == CF_NULL, "failed backing realloc returns null");
-  test_check(state.realloc_calls == 1, "tracked realloc calls backing realloc");
-  test_check(debug.ptr_internal_invalid_realloc == 1, "failed backing realloc increments invalid realloc count");
-  test_check(debug.latest_valid_ptr == ptr_c, "failed realloc keeps latest valid pointer unchanged");
-  test_check(debug.head != CF_NULL && debug.head->ptr == ptr_c, "failed realloc keeps tracked pointer unchanged");
-
-  cf_alloc_debug_log(&debug, __LINE__);
-
-  ptr_c_realloc = debug.allocator.realloc(debug.allocator.ctx, ptr_c, 64);
-  test_check(ptr_c_realloc != CF_NULL, "successful realloc returns non-null");
-  test_check(state.realloc_calls == 2, "second tracked realloc hits backing realloc");
-  test_check(ptr_c_realloc[0] == 0xC3, "realloc preserves prior contents");
-  test_check(debug.ptr_live == 3, "realloc does not change live count");
-  test_check(debug.ptr_all_live == 3, "realloc does not change all_live count");
-  test_check(debug.ptr_all_free == 0, "realloc does not change all_free count");
-  test_check(debug.latest_valid_ptr == ptr_c_realloc, "successful realloc updates latest valid pointer");
-  test_check(debug.head != CF_NULL && debug.head->ptr == ptr_c_realloc, "successful realloc updates tracked head pointer");
-
-  cf_alloc_debug_log(&debug, __LINE__);
-
-  debug.allocator.free(debug.allocator.ctx, &external_byte);
-  test_check(debug.ptr_internal_invalid_free == 1, "free of untracked pointer increments invalid free count");
-  test_check(state.free_calls == 0, "free of untracked pointer does not call backing free");
-
-  debug.allocator.free(debug.allocator.ctx, ptr_b);
-  test_check(state.free_calls == 1, "free of middle node hits backing free");
-  test_check(debug.ptr_live == 2, "free decrements live count");
-  test_check(debug.ptr_free == 0, "first successful free keeps free ratio at zero while live side drains");
-  test_check(debug.ptr_max_free == 0, "max free count stays zero while frees are absorbed by live ratio");
-  test_check(debug.ptr_all_free == 1, "all_free increments after first free");
-  test_check(debug.latest_valid_ptr == ptr_c_realloc, "free of middle node keeps latest pointer at head");
-  test_check(debug.head != CF_NULL && debug.head->ptr == ptr_c_realloc, "head stays at most recent allocation after middle free");
-  test_check(debug.head != CF_NULL && debug.head->next != CF_NULL && debug.head->next->ptr == ptr_a, "middle free relinks list to oldest node");
-
-  cf_alloc_debug_log(&debug, __LINE__);
-
-  debug.allocator.free(debug.allocator.ctx, ptr_c_realloc);
-  test_check(state.free_calls == 2, "free of head node hits backing free");
-  test_check(debug.ptr_live == 1, "second free decrements live count");
-  test_check(debug.ptr_free == 0, "second free still keeps free ratio at zero");
-  test_check(debug.ptr_max_free == 0, "max free count remains zero after second free");
-  test_check(debug.ptr_all_free == 2, "all_free increments after second free");
-  test_check(debug.latest_valid_ptr == ptr_a, "free of head node moves latest pointer to new head");
-  test_check(debug.head != CF_NULL && debug.head->ptr == ptr_a, "free of head node promotes next node to head");
-  test_check(debug.head != CF_NULL && debug.head->next == CF_NULL, "one node remains after freeing head");
-
-  cf_alloc_debug_log(&debug, __LINE__);
-
-  debug.allocator.free(debug.allocator.ctx, ptr_a);
-  test_check(state.free_calls == 3, "free of final node hits backing free");
-  test_check(debug.ptr_live == 0, "final free drains live ratio back to zero");
-  test_check(debug.ptr_free == 0, "free ratio stays zero after balanced tracked frees");
-  test_check(debug.ptr_max_free == 0, "max free count stays zero when no free-side surplus appears");
-  test_check(debug.ptr_all_free == 3, "all_free equals number of successful frees");
-  test_check(debug.latest_valid_ptr == CF_NULL, "latest valid pointer becomes null when list is empty");
-  test_check(debug.head == CF_NULL, "head becomes null after final free");
-
-  cf_alloc_debug_log(&debug, __LINE__);
-
-  test_check(state.bad_ctx_alloc_calls == 0, "backing alloc receives backing ctx");
-  test_check(state.bad_ctx_realloc_calls == 0, "backing realloc receives backing ctx");
-  test_check(state.bad_ctx_free_calls == 0, "backing free receives backing ctx");
-}
-
-/*******************************************************************************
- * Allocator Tests
- ******************************************************************************/
-
-static void test_cf_alloc_debug_log_fn(void)
-{
-  test_alloc_state state = {0};
-  cf_alloc backing =
-  {
-    .ctx = &state,
-    .alloc = test_alloc,
-    .realloc = test_realloc,
-    .free = test_free,
-  };
-  cf_alloc_debug debug = {0};
-
-  g_test_alloc_state = &state;
-  state.expected_ctx = &state;
-
-  test_section("cf_alloc_debug_log");
-
-  cf_alloc_debug_new(&debug, &backing, CF_NULL);
-  cf_alloc_debug_log(CF_NULL, __LINE__);
-  cf_alloc_debug_log(&debug, __LINE__);
-  test_pass("debug log handles null and valid debug objects");
-}
-
-/*******************************************************************************
- * Allocator Tests
- ******************************************************************************/
-
-static void test_cf_alloc_debug_ratio_switch(void)
-{
-  test_alloc_state state = {0};
-  cf_alloc backing =
-  {
-    .ctx = &state,
-    .alloc = test_alloc,
-    .realloc = test_realloc,
-    .free = test_free,
-  };
-  cf_alloc_debug debug = {0};
-  cf_u8 *ptr_a = CF_NULL;
-  cf_u8 *ptr_b = CF_NULL;
-
-  g_test_alloc_state = &state;
-  state.expected_ctx = &state;
-
-  test_section("cf_alloc_debug ratio switch");
-
-  cf_alloc_debug_new(&debug, &backing, "cf_alloc_debug ratio switch");
-
-  /* Prime the debug counters to simulate free-side surplus so alloc can consume it. */
-  debug.ptr_free = 2;
-  debug.ptr_max_free = 2;
-  cf_alloc_debug_log(&debug, __LINE__);
-
-  ptr_a = debug.allocator.alloc(debug.allocator.ctx, 16);
-  test_check(ptr_a != CF_NULL, "alloc succeeds while free ratio has surplus");
-  test_check(debug.ptr_live == 0, "alloc consumes free surplus before growing live count");
-  test_check(debug.ptr_free == 1, "alloc consumes one step from free-side surplus");
-  test_check(debug.ptr_all_live == 1, "all_live still counts the allocation event");
-  test_check(debug.ptr_max_live == 0, "max live stays unchanged while alloc only consumes free surplus");
-  cf_alloc_debug_log(&debug, __LINE__);
-
-  ptr_b = debug.allocator.alloc(debug.allocator.ctx, 16);
-  test_check(ptr_b != CF_NULL, "second alloc succeeds while free surplus remains");
-  test_check(debug.ptr_live == 0, "second alloc also consumes free surplus before live grows");
-  test_check(debug.ptr_free == 0, "second alloc clears the free-side surplus");
-  test_check(debug.ptr_all_live == 2, "all_live counts both allocations that consumed surplus");
-  cf_alloc_debug_log(&debug, __LINE__);
-
-  debug.allocator.free(debug.allocator.ctx, ptr_b);
-  test_check(debug.ptr_live == 0, "free sees no live-side surplus to drain");
-  test_check(debug.ptr_free == 1, "free grows the free side once live side is zero");
-  test_check(debug.ptr_all_free == 1, "all_free still counts the free operation");
-  test_check(debug.ptr_max_free == 2, "max free keeps the earlier primed surplus peak");
-  cf_alloc_debug_log(&debug, __LINE__);
-
-  debug.allocator.free(debug.allocator.ctx, ptr_a);
-  test_check(debug.ptr_live == 0, "final free leaves live side at zero");
-  test_check(debug.ptr_free == 2, "final free restores the free-side surplus");
-  test_check(debug.ptr_all_free == 2, "all_free counts both cleanup frees");
-  test_check(debug.ptr_max_free == 2, "max free remains at the highest free-side peak");
-  test_check(debug.head == CF_NULL, "cleanup empties the tracked list");
-  cf_alloc_debug_log(&debug, __LINE__);
-}
-
-/*******************************************************************************
- * Memory Array Tests
- ******************************************************************************/
-
-static void test_cf_array_basic_flow(void)
-{
-  cf_array array = {0};
-  cf_array_element first = {.data = (cf_u8 *)"A", .elem_size = sizeof(cf_u8), .len = 1};
-  cf_array_element second = {.data = (cf_u8 *)"BC", .elem_size = sizeof(cf_u8), .len = 2};
-  cf_array_element third = {.data = (cf_u8 *)"DEF", .elem_size = sizeof(cf_u8), .len = 3};
-  cf_array_element popped = {0};
-  cf_status status = CF_OK;
-
-  test_section("cf_array basic flow");
-
-  status = cf_array_init(&array, 1);
-  test_check(status == CF_OK, "array init succeeds");
-  test_check(array.len == 0, "array starts empty");
-  test_check(array.cap == 1, "array starts with requested capacity");
-
-  status = cf_array_push(&array, &first, &second, &third, CF_NULL);
-  test_check(status == CF_OK, "array push accepts multiple elements");
-  test_check(array.len == 3, "array length reflects pushed elements");
-  test_check(array.cap >= 3, "array grows to fit additional elements");
-  test_check(array.data[0].data == first.data, "first pushed element is stored");
-  test_check(array.data[1].data == second.data, "second pushed element is stored");
-  test_check(array.data[2].data == third.data, "third pushed element is stored");
-  test_check(array.data[0].elem_size == sizeof(cf_u8), "stored element type width is preserved");
-  test_check(array.data[2].len == third.len, "stored metadata is preserved");
-
-  status = cf_array_pop(&array, &popped);
-  test_check(status == CF_OK, "array pop succeeds on non-empty array");
-  test_check(array.len == 2, "array pop decrements length");
-  test_check(popped.data == third.data, "array pop returns the last element");
-  test_check(popped.len == third.len, "array pop preserves popped length");
-
-  cf_array_reset(&array);
-  test_pass("array reset succeeds");
-  test_check(array.len == 0, "array reset clears logical length");
-  test_check(array.cap >= 3, "array reset preserves capacity");
-
-  popped = (cf_array_element){.data = (cf_u8 *)"x", .elem_size = sizeof(cf_u16), .len = 9};
-  status = cf_array_pop(&array, &popped);
-  test_check(status == CF_OK, "array pop on empty array succeeds");
-  test_check(popped.data == CF_NULL, "array pop on empty array clears output data");
-  test_check(popped.elem_size == 0, "array pop on empty array clears output type width");
-  test_check(popped.len == 0, "array pop on empty array clears output length");
-
-  cf_array_destroy(&array);
-}
-
-/*******************************************************************************
- * Memory Array Tests
- ******************************************************************************/
-
-static void test_cf_array_accessors(void)
-{
-  cf_array array = {0};
-  cf_array_element first = {.data = (cf_u8 *)"AB", .elem_size = sizeof(cf_u8), .len = 2};
-  cf_array_element second = {.data = (cf_u16[]){10, 20}, .elem_size = sizeof(cf_u16), .len = 2};
-  cf_array_element third = {.data = (cf_u32[]){30}, .elem_size = sizeof(cf_u32), .len = 1};
-  cf_array_element read_back = {0};
-  cf_array_element replacement = {.data = (cf_u64[]){77}, .elem_size = sizeof(cf_u64), .len = 1};
-  cf_status status = CF_OK;
-
-  test_section("cf_array accessors");
-
-  test_check(cf_array_is_valid(&array) == CF_TRUE, "zero-initialized array is structurally valid");
-  test_check(cf_array_is_empty(&array) == CF_TRUE, "zero-initialized array reports empty");
-
-  status = cf_array_init(&array, 0);
-  test_check(status == CF_OK, "array init with zero capacity succeeds");
-  test_check(cf_array_is_valid(&array) == CF_TRUE, "initialized array stays structurally valid");
-  test_check(cf_array_is_empty(&array) == CF_TRUE, "initialized empty array reports empty");
-
-  status = cf_array_push(&array, &first, &second, CF_NULL);
-  test_check(status == CF_OK, "push prepares array for accessor tests");
-  test_check(cf_array_is_empty(&array) == CF_FALSE, "non-empty array reports not empty");
-
-  status = cf_array_peek(&array, &read_back);
-  test_check(status == CF_OK, "peek succeeds on non-empty array");
-  test_check(read_back.data == second.data, "peek reads the last element");
-  test_check(read_back.len == second.len, "peek preserves element length");
-  test_check(array.len == 2, "peek does not change array length");
-
-  status = cf_array_get(&array, 0, &read_back);
-  test_check(status == CF_OK, "get succeeds for a valid index");
-  test_check(read_back.data == first.data, "get reads the requested element");
-  test_check(read_back.elem_size == first.elem_size, "get preserves requested element size");
-  test_check(read_back.len == first.len, "get preserves requested element length");
-
-  status = cf_array_set(&array, 1, &replacement);
-  test_check(status == CF_OK, "set succeeds for a valid index");
-  test_check(array.len == 2, "set does not change array length");
-
-  status = cf_array_get(&array, 1, &read_back);
-  test_check(status == CF_OK, "get succeeds after set");
-  test_check(read_back.data == replacement.data, "set replaces the stored data pointer");
-  test_check(read_back.elem_size == replacement.elem_size, "set replaces the stored element size");
-  test_check(read_back.len == replacement.len, "set replaces the stored element length");
-
-  status = cf_array_get(&array, 2, &read_back);
-  test_check(status == CF_ERR_BOUNDS, "get rejects an out-of-bounds index");
-  status = cf_array_set(&array, 2, &third);
-  test_check(status == CF_ERR_BOUNDS, "set rejects an out-of-bounds index");
-
-  cf_array_destroy(&array);
-  test_check(cf_array_is_valid(&array) == CF_TRUE, "destroy resets array to a valid empty state");
-  test_check(cf_array_is_empty(&array) == CF_TRUE, "destroyed array reports empty");
-}
-
-/*******************************************************************************
- * Memory Array Tests
- ******************************************************************************/
-
-static void test_cf_array_state_and_diagnostics(void)
-{
-  cf_array array = {0};
-  cf_array invalid = {.data = CF_NULL, .len = 1, .cap = 0};
-  cf_array_element element = {.data = (cf_u8 *)"Z", .elem_size = sizeof(cf_u8), .len = 1};
-  cf_status status = CF_OK;
-
-  test_section("cf_array state and diagnostics");
-
-  test_check(cf_array_is_valid(CF_NULL) == CF_FALSE, "array validity rejects null array");
-  test_check(cf_array_init(CF_NULL, 0) == CF_ERR_NULL, "array init rejects null array");
-  test_check(cf_array_reserve(CF_NULL, 1) == CF_ERR_NULL, "array reserve rejects null array");
-  test_check(cf_array_peek(CF_NULL, &element) == CF_ERR_NULL, "array peek rejects null array");
-  test_check(cf_array_peek(&array, CF_NULL) == CF_ERR_NULL, "array peek rejects null output");
-  test_check(cf_array_push(CF_NULL, &element, CF_NULL) == CF_ERR_NULL, "array push rejects null array");
-  test_check(cf_array_pop(CF_NULL, &element) == CF_ERR_NULL, "array pop rejects null array");
-  test_check(cf_array_get(CF_NULL, 0, &element) == CF_ERR_NULL, "array get rejects null array");
-  test_check(cf_array_set(CF_NULL, 0, &element) == CF_ERR_NULL, "array set rejects null array");
-
-  status = cf_array_init(&array, 0);
-  test_check(status == CF_OK, "array init prepares reserve tests");
-  status = cf_array_reserve(&array, 4);
-  test_check(status == CF_OK, "array reserve allocates backing storage");
-  test_check(array.cap >= 4, "array reserve stores requested capacity");
-  test_check(array.len == 0, "array reserve keeps length unchanged");
-
-  status = cf_array_push(&array, CF_NULL);
-  test_check(status == CF_OK, "array push with null first element is a no-op");
-  test_check(array.len == 0, "null push keeps array length unchanged");
-
-  status = cf_array_push(&array, &element, CF_NULL);
-  test_check(status == CF_OK, "array push prepares diagnostics");
-  cf_array_info(&array);
-  cf_array_info(CF_NULL);
-  test_pass("array info handles valid and null arrays");
-
-  test_check(cf_array_is_valid(&invalid) == CF_FALSE, "array validity detects impossible len/cap state");
-
-  cf_array_destroy(&array);
-}
-
-/*******************************************************************************
- * Text ASCII Tests
- ******************************************************************************/
-
-static void test_cf_ascii_helpers(void)
-{
-  test_section("cf_ascii helpers");
-
-  test_check(cf_ascii_is_alpha('A') == CF_TRUE, "ascii alpha accepts uppercase lower bound");
-  test_check(cf_ascii_is_alpha('Z') == CF_TRUE, "ascii alpha accepts uppercase upper bound");
-  test_check(cf_ascii_is_alpha('a') == CF_TRUE, "ascii alpha accepts lowercase lower bound");
-  test_check(cf_ascii_is_alpha('z') == CF_TRUE, "ascii alpha accepts lowercase upper bound");
-  test_check(cf_ascii_is_alpha('@') == CF_FALSE, "ascii alpha rejects char before uppercase letters");
-  test_check(cf_ascii_is_alpha('[') == CF_FALSE, "ascii alpha rejects char after uppercase letters");
-  test_check(cf_ascii_is_alpha('`') == CF_FALSE, "ascii alpha rejects char before lowercase letters");
-  test_check(cf_ascii_is_alpha('{') == CF_FALSE, "ascii alpha rejects char after lowercase letters");
-
-  test_check(cf_ascii_is_digit('0') == CF_TRUE, "ascii digit accepts lower bound");
-  test_check(cf_ascii_is_digit('9') == CF_TRUE, "ascii digit accepts upper bound");
-  test_check(cf_ascii_is_digit('/') == CF_FALSE, "ascii digit rejects char before digits");
-  test_check(cf_ascii_is_digit(':') == CF_FALSE, "ascii digit rejects char after digits");
-
-  test_check(cf_ascii_is_alnum('A') == CF_TRUE, "ascii alnum accepts letters");
-  test_check(cf_ascii_is_alnum('7') == CF_TRUE, "ascii alnum accepts digits");
-  test_check(cf_ascii_is_alnum('_') == CF_FALSE, "ascii alnum rejects punctuation");
-
-  test_check(cf_ascii_is_space(' ') == CF_TRUE, "ascii space accepts space");
-  test_check(cf_ascii_is_space('\t') == CF_TRUE, "ascii space accepts horizontal tab");
-  test_check(cf_ascii_is_space('\n') == CF_TRUE, "ascii space accepts newline");
-  test_check(cf_ascii_is_space('\v') == CF_TRUE, "ascii space accepts vertical tab");
-  test_check(cf_ascii_is_space('\f') == CF_TRUE, "ascii space accepts form feed");
-  test_check(cf_ascii_is_space('\r') == CF_TRUE, "ascii space accepts carriage return");
-  test_check(cf_ascii_is_space('\0') == CF_FALSE, "ascii space rejects nul");
-  test_check(cf_ascii_is_space('A') == CF_FALSE, "ascii space rejects non-whitespace");
-
-  test_check(cf_ascii_is_upper('A') == CF_TRUE, "ascii upper accepts lower bound");
-  test_check(cf_ascii_is_upper('Z') == CF_TRUE, "ascii upper accepts upper bound");
-  test_check(cf_ascii_is_upper('a') == CF_FALSE, "ascii upper rejects lowercase");
-  test_check(cf_ascii_is_lower('a') == CF_TRUE, "ascii lower accepts lower bound");
-  test_check(cf_ascii_is_lower('z') == CF_TRUE, "ascii lower accepts upper bound");
-  test_check(cf_ascii_is_lower('A') == CF_FALSE, "ascii lower rejects uppercase");
-
-  test_check(cf_ascii_to_upper('a') == 'A', "ascii to upper converts lowercase");
-  test_check(cf_ascii_to_upper('Z') == 'Z', "ascii to upper keeps uppercase");
-  test_check(cf_ascii_to_upper('7') == '7', "ascii to upper keeps non-letters");
-  test_check(cf_ascii_to_lower('A') == 'a', "ascii to lower converts uppercase");
-  test_check(cf_ascii_to_lower('z') == 'z', "ascii to lower keeps lowercase");
-  test_check(cf_ascii_to_lower('7') == '7', "ascii to lower keeps non-letters");
-
-  test_check(cf_ascii_hex_value('0') == 0, "ascii hex converts zero");
-  test_check(cf_ascii_hex_value('9') == 9, "ascii hex converts nine");
-  test_check(cf_ascii_hex_value('a') == 10, "ascii hex converts lowercase a");
-  test_check(cf_ascii_hex_value('f') == 15, "ascii hex converts lowercase f");
-  test_check(cf_ascii_hex_value('A') == 10, "ascii hex converts uppercase A");
-  test_check(cf_ascii_hex_value('F') == 15, "ascii hex converts uppercase F");
-  test_check(cf_ascii_hex_value('g') == -1, "ascii hex rejects lowercase past f");
-  test_check(cf_ascii_hex_value('G') == -1, "ascii hex rejects uppercase past F");
-  test_check(cf_ascii_hex_value('/') == -1, "ascii hex rejects char before digits");
-  test_check(cf_ascii_hex_value(':') == -1, "ascii hex rejects char after digits");
-}
-
-/*******************************************************************************
- * Text String Tests
- ******************************************************************************/
-
-static void test_cf_string_build_and_lifecycle(void)
-{
-  cf_string str = {0};
-  cf_string suffix = {0};
-  char *owned = CF_NULL;
-  cf_status status = CF_OK;
-
-  test_section("cf_string build and lifecycle");
-
-  status = cf_string_init(&str, 0);
-  test_check(status == CF_OK, "string init with zero capacity succeeds");
-  test_check(cf_string_is_valid(&str) == CF_TRUE, "initialized string is valid");
-  test_check(cf_string_is_empty(&str) == CF_TRUE, "initialized string reports empty");
-
-  status = cf_string_reserve(&str, 8);
-  test_check(status == CF_OK, "string reserve succeeds");
-  test_check(str.cap >= 9, "string reserve keeps room for terminator");
-  test_check(str.data != CF_NULL && str.data[str.len] == '\0', "string reserve writes terminator");
-
-  status = cf_string_append_char(&str, 'c');
-  test_check(status == CF_OK, "string append char succeeds");
-  status = cf_string_append_cstr(&str, "ypher");
-  test_check(status == CF_OK, "string append cstr succeeds");
-  test_check_string_value(&str, "cypher", "append char and cstr build expected text");
-
-  status = cf_string_init(&suffix, 0);
-  test_check(status == CF_OK, "source string init succeeds");
-  status = cf_string_from_cstr(&suffix, "Framework");
-  test_check(status == CF_OK, "string from cstr writes source text");
-  status = cf_string_append_str(&str, &suffix);
-  test_check(status == CF_OK, "string append str succeeds");
-  test_check_string_value(&str, "cypherFramework", "append str copies source contents");
-
-  status = cf_string_as_cstr(&owned, &str);
-  test_check(status == CF_OK, "string as cstr succeeds");
-  test_check(owned != CF_NULL && strcmp(owned, "cypherFramework") == 0, "as cstr returns an owned null-terminated copy");
-  str.allocator.free(str.allocator.ctx, owned);
-  owned = CF_NULL;
-
-  status = cf_string_trunc(&str, 6);
-  test_check(status == CF_OK, "string trunc succeeds");
-  test_check_string_value(&str, "cypher", "string trunc keeps requested prefix");
-  test_check(cf_string_trunc(&str, 99) == CF_ERR_BOUNDS, "string trunc rejects too-large length");
-
-  cf_string_reset(&str);
-  test_pass("string reset succeeds");
-  test_check(cf_string_is_empty(&str) == CF_TRUE, "string reset reports empty");
-  test_check(str.data != CF_NULL && str.data[0] == '\0', "string reset keeps terminator");
-
-  cf_string_info(&str);
-  cf_string_info(CF_NULL);
-  test_pass("string info handles valid and null strings");
-
-  cf_string_destroy(&suffix);
-  cf_string_destroy(&str);
-  test_check(cf_string_is_valid(&str) == CF_TRUE, "destroy resets string to valid empty state");
-  test_check(cf_string_is_empty(&str) == CF_TRUE, "destroyed string reports empty");
-}
-
-static void test_cf_string_queries_and_slices(void)
-{
-  cf_string haystack = {0};
-  cf_string same = {0};
-  cf_string needle = {0};
-  char c = '\0';
-  char *tail = CF_NULL;
-  char *slice = CF_NULL;
-  cf_status status = CF_OK;
-
-  test_section("cf_string queries and slices");
-
-  cf_string_init(&haystack, 0);
-  cf_string_init(&same, 0);
-  cf_string_init(&needle, 0);
-  cf_string_from_cstr(&haystack, "alpha beta gamma");
-  cf_string_from_cstr(&same, "alpha beta gamma");
-  cf_string_from_cstr(&needle, "beta");
-
-  test_check(cf_string_eq(&haystack, &same) == CF_TRUE, "string eq accepts identical strings");
-  test_check(cf_string_eq(&haystack, &needle) == CF_FALSE, "string eq rejects different strings");
-  test_check(cf_string_contains_char(&haystack, 'g') == CF_TRUE, "contains char finds present character");
-  test_check(cf_string_contains_char(&haystack, 'z') == CF_FALSE, "contains char rejects missing character");
-  test_check(cf_string_contains_cstr(&haystack, "beta") == CF_TRUE, "contains cstr finds present substring");
-  test_check(cf_string_contains_cstr(&haystack, "delta") == CF_FALSE, "contains cstr rejects missing substring");
-  test_check(cf_string_contains_str(&haystack, &needle) == CF_TRUE, "contains str finds present string");
-  test_check(cf_string_contains_str(&needle, &haystack) == CF_FALSE, "contains str rejects longer missing string");
-
-  status = cf_string_char_at(&haystack, 6, &c);
-  test_check(status == CF_OK && c == 'b', "char at returns requested character");
-  test_check(cf_string_char_at(&haystack, haystack.len, &c) == CF_ERR_BOUNDS, "char at rejects end index");
-
-  status = cf_string_str_at(&haystack, 6, &tail);
-  test_check(status == CF_OK, "str at copies suffix");
-  test_check(tail != CF_NULL && strcmp(tail, "beta gamma") == 0, "str at suffix content is correct");
-  haystack.allocator.free(haystack.allocator.ctx, tail);
-  tail = CF_NULL;
-  test_check(cf_string_str_at(&haystack, haystack.len, &tail) == CF_ERR_BOUNDS, "str at rejects end index");
-
-  status = cf_string_slice(&slice, &haystack, 6, 9);
-  test_check(status == CF_OK, "string slice copies inclusive range");
-  test_check(slice != CF_NULL && strcmp(slice, "beta") == 0, "string slice content is correct");
-  haystack.allocator.free(haystack.allocator.ctx, slice);
-  slice = CF_NULL;
-  test_check(cf_string_slice(&slice, &haystack, 4, 3) == CF_ERR_INVALID, "string slice rejects reversed range");
-  test_check(cf_string_slice(&slice, &haystack, 0, haystack.len) == CF_ERR_BOUNDS, "string slice rejects end past content");
-
-  cf_string_destroy(&needle);
-  cf_string_destroy(&same);
-  cf_string_destroy(&haystack);
-}
-
-static void test_cf_string_mutation_helpers(void)
-{
-  cf_string str = {0};
-  cf_string csv = {0};
-  cf_array parts = {0};
-  cf_array_element part = {0};
-  cf_status status = CF_OK;
-
-  test_section("cf_string mutation helpers");
-
-  cf_string_init(&str, 0);
-  cf_string_from_cstr(&str, " \talpha beta\n");
-
-  status = cf_string_trim_left(&str);
-  test_check(status == CF_OK, "string trim left succeeds");
-  test_check_string_value(&str, "alpha beta\n", "trim left removes leading whitespace and updates length");
-
-  status = cf_string_trim_right(&str);
-  test_check(status == CF_OK, "string trim right succeeds");
-  test_check_string_value(&str, "alpha beta", "trim right removes trailing whitespace");
-
-  cf_string_from_cstr(&str, "\n alpha beta \t");
-  status = cf_string_trim(&str);
-  test_check(status == CF_OK, "string trim succeeds");
-  test_check_string_value(&str, "alpha beta", "trim removes both leading and trailing whitespace");
-
-  status = cf_string_strip(&str);
-  test_check(status == CF_OK, "string strip succeeds");
-  test_check_string_value(&str, "alphabeta", "strip removes all framework whitespace");
-
-  status = cf_string_replace(&str, 'a', 'A');
-  test_check(status == CF_OK, "string replace succeeds");
-  test_check_string_value(&str, "AlphAbetA", "replace swaps every target character");
-
-  cf_string_init(&csv, 0);
-  cf_array_init(&parts, 0);
-  cf_string_from_cstr(&csv, "red,,green,blue,");
-  status = cf_string_split(&parts, &csv, ',');
-  test_check(status == CF_OK, "string split succeeds");
-  test_check(parts.len == 3, "string split skips empty fields");
-
-  status = cf_array_get(&parts, 0, &part);
-  test_check(status == CF_OK && part.data != CF_NULL && strcmp((char *)part.data, "red") == 0, "split part 0 is correct");
-  csv.allocator.free(csv.allocator.ctx, part.data);
-  status = cf_array_get(&parts, 1, &part);
-  test_check(status == CF_OK && part.data != CF_NULL && strcmp((char *)part.data, "green") == 0, "split part 1 is correct");
-  csv.allocator.free(csv.allocator.ctx, part.data);
-  status = cf_array_get(&parts, 2, &part);
-  test_check(status == CF_OK && part.data != CF_NULL && strcmp((char *)part.data, "blue") == 0, "split part 2 is correct");
-  csv.allocator.free(csv.allocator.ctx, part.data);
-
-  cf_array_destroy(&parts);
-  cf_string_destroy(&csv);
-  cf_string_destroy(&str);
-}
-
-static void test_cf_string_invalid_state(void)
-{
-  cf_string invalid = {.data = CF_NULL, .len = 1, .cap = 0};
-  cf_string str = {0};
-
-  test_section("cf_string invalid state");
-
-  test_check(cf_string_is_valid(&invalid) == CF_FALSE, "string validity detects impossible len/cap state");
-  test_check(cf_string_is_valid(CF_NULL) == CF_FALSE, "string validity rejects null string");
-  test_check(cf_string_init(CF_NULL, 0) == CF_ERR_NULL, "string init rejects null string");
-  test_check(cf_string_append_cstr(CF_NULL, "x") == CF_ERR_NULL, "string append cstr rejects null destination");
-  test_check(cf_string_append_cstr(&str, CF_NULL) == CF_ERR_NULL, "string append cstr rejects null source");
-  test_check(cf_string_from_cstr(CF_NULL, "x") == CF_ERR_NULL, "string from cstr rejects null destination");
-  test_check(cf_string_as_cstr(CF_NULL, &str) == CF_ERR_NULL, "string as cstr rejects null output");
-  test_check(cf_string_char_at(CF_NULL, 0, (char[]){0}) == CF_ERR_NULL, "string char at rejects null string");
-  test_check(cf_string_str_at(CF_NULL, 0, (char *[]){0}) == CF_ERR_NULL, "string str at rejects null string");
-  test_check(cf_string_slice(CF_NULL, &str, 0, 0) == CF_ERR_NULL, "string slice rejects null output");
-  test_check(cf_string_split(CF_NULL, &str, ',') == CF_ERR_NULL, "string split rejects null destination");
-
-  cf_string_init(&str, 0);
-  test_check(cf_string_is_valid(&str) == CF_TRUE, "initialized string remains valid");
-  cf_string_destroy(&str);
-}
-
-/*******************************************************************************
- * Security Encoding Tests
- ******************************************************************************/
-
-static void test_cf_hex_encode_decode(void)
-{
-  cf_u8 raw[] = {0x00, 0x2A, 0xFF, 0x10};
-  cf_string encoded = {0};
-  cf_string hex = {0};
-  cf_buffer decoded = {0};
-  cf_bytes src = {.data = raw, .elem_size = sizeof(cf_u8), .len = sizeof(raw)};
-  cf_status status = CF_OK;
-
-  test_section("cf_hex encode/decode");
-
-  status = cf_string_init(&encoded, 0);
-  test_check(status == CF_OK, "hex encode destination init succeeds");
-  status = cf_hex_encode(&encoded, src);
-  test_check(status == CF_OK, "hex encode succeeds");
-  test_check_string_value(&encoded, "002AFF10", "hex encode writes contiguous uppercase text");
-  test_check(cf_hex_encode(CF_NULL, src) == CF_ERR_NULL, "hex encode rejects null destination");
-  test_check(cf_hex_encode(&encoded, (cf_bytes){.data = CF_NULL, .elem_size = 1, .len = 1}) == CF_ERR_NULL, "hex encode rejects non-empty null source data");
-  test_check(cf_hex_encode(&encoded, (cf_bytes){.data = raw, .elem_size = 2, .len = 1}) == CF_ERR_INVALID, "hex encode rejects non-byte source view");
-
-  status = cf_string_from_cstr(&encoded, "prefix:");
-  test_check(status == CF_OK, "hex encode append target reset succeeds");
-  status = cf_hex_encode(&encoded, (cf_bytes){.data = raw + 1, .elem_size = 1, .len = 2});
-  test_check(status == CF_OK, "hex encode appends to existing string");
-  test_check_string_value(&encoded, "prefix:2AFF", "hex encode preserves existing destination content");
-
-  status = cf_string_init(&hex, 0);
-  test_check(status == CF_OK, "hex decode source init succeeds");
-  status = cf_buffer_init(&decoded, 0);
-  test_check(status == CF_OK, "hex decode destination init succeeds");
-  status = cf_string_from_cstr(&hex, "002aff10");
-  test_check(status == CF_OK, "hex decode source text write succeeds");
-  status = cf_hex_decode(&decoded, &hex);
-  test_check(status == CF_OK, "hex decode accepts lowercase input");
-  test_check(decoded.len == 4, "hex decode writes expected byte count");
-  test_check(decoded.data[0] == 0x00, "hex decode byte 0 is correct");
-  test_check(decoded.data[1] == 0x2A, "hex decode byte 1 is correct");
-  test_check(decoded.data[2] == 0xFF, "hex decode byte 2 is correct");
-  test_check(decoded.data[3] == 0x10, "hex decode byte 3 is correct");
-
-  status = cf_string_from_cstr(&hex, "Aa");
-  test_check(status == CF_OK, "hex decode mixed-case source write succeeds");
-  status = cf_hex_decode(&decoded, &hex);
-  test_check(status == CF_OK, "hex decode appends mixed-case input");
-  test_check(decoded.len == 5, "hex decode appends to existing buffer");
-  test_check(decoded.data[4] == 0xAA, "hex decode mixed-case byte is correct");
-
-  status = cf_string_from_cstr(&hex, "ABC");
-  test_check(status == CF_OK, "hex decode odd-length source write succeeds");
-  test_check(cf_hex_decode(CF_NULL, &hex) == CF_ERR_NULL, "hex decode rejects null destination");
-  test_check(cf_hex_decode(&decoded, &hex) == CF_ERR_INVALID, "hex decode rejects odd-length text");
-  status = cf_string_from_cstr(&hex, "0G");
-  test_check(status == CF_OK, "hex decode invalid source write succeeds");
-  test_check(cf_hex_decode(&decoded, &hex) == CF_ERR_INVALID, "hex decode rejects invalid hex character");
-
-  cf_buffer_destroy(&decoded);
-  cf_string_destroy(&hex);
-  cf_string_destroy(&encoded);
-}
-
-static void test_cf_base64_encode_decode(void)
-{
-  cf_u8 raw[] = {'M', 'a', 'n'};
-  cf_string encoded = {0};
-  cf_string base64 = {0};
-  cf_buffer decoded = {0};
-  cf_bytes src = {.data = raw, .elem_size = sizeof(cf_u8), .len = sizeof(raw)};
-  cf_status status = CF_OK;
-
-  test_section("cf_base64 encode/decode");
-
-  status = cf_string_init(&encoded, 0);
-  test_check(status == CF_OK, "base64 encode destination init succeeds");
-  status = cf_base64_encode(&encoded, src);
-  test_check(status == CF_OK, "base64 encode succeeds for three-byte input");
-  test_check_string_value(&encoded, "TWFu", "base64 encode writes unpadded text");
-  test_check(cf_base64_encode(CF_NULL, src) == CF_ERR_NULL, "base64 encode rejects null destination");
-  test_check(cf_base64_encode(&encoded, (cf_bytes){.data = CF_NULL, .elem_size = 1, .len = 1}) == CF_ERR_NULL, "base64 encode rejects non-empty null source data");
-  test_check(cf_base64_encode(&encoded, (cf_bytes){.data = raw, .elem_size = 2, .len = 1}) == CF_ERR_INVALID, "base64 encode rejects non-byte source view");
-
-  status = cf_string_from_cstr(&encoded, "");
-  test_check(status == CF_OK, "base64 encode destination reset succeeds");
-  status = cf_base64_encode(&encoded, (cf_bytes){.data = (cf_u8 *)"Ma", .elem_size = 1, .len = 2});
-  test_check(status == CF_OK, "base64 encode succeeds for two-byte input");
-  test_check_string_value(&encoded, "TWE=", "base64 encode writes one padding character");
-
-  status = cf_string_from_cstr(&encoded, "prefix:");
-  test_check(status == CF_OK, "base64 encode append target reset succeeds");
-  status = cf_base64_encode(&encoded, (cf_bytes){.data = (cf_u8 *)"M", .elem_size = 1, .len = 1});
-  test_check(status == CF_OK, "base64 encode succeeds for one-byte input");
-  test_check_string_value(&encoded, "prefix:TQ==", "base64 encode appends padded text");
-
-  status = cf_string_init(&base64, 0);
-  test_check(status == CF_OK, "base64 decode source init succeeds");
-  status = cf_buffer_init(&decoded, 0);
-  test_check(status == CF_OK, "base64 decode destination init succeeds");
-  status = cf_string_from_cstr(&base64, "TWFu");
-  test_check(status == CF_OK, "base64 decode source text write succeeds");
-  status = cf_base64_decode(&decoded, &base64);
-  test_check(status == CF_OK, "base64 decode succeeds for unpadded input");
-  test_check(decoded.len == 3, "base64 decode writes expected byte count");
-  test_check(decoded.data[0] == 'M', "base64 decode byte 0 is correct");
-  test_check(decoded.data[1] == 'a', "base64 decode byte 1 is correct");
-  test_check(decoded.data[2] == 'n', "base64 decode byte 2 is correct");
-
-  status = cf_string_from_cstr(&base64, "TWE=");
-  test_check(status == CF_OK, "base64 decode padded source write succeeds");
-  status = cf_base64_decode(&decoded, &base64);
-  test_check(status == CF_OK, "base64 decode appends padded input");
-  test_check(decoded.len == 5, "base64 decode appends decoded bytes");
-  test_check(decoded.data[3] == 'M', "base64 decode padded byte 0 is correct");
-  test_check(decoded.data[4] == 'a', "base64 decode padded byte 1 is correct");
-
-  status = cf_string_from_cstr(&base64, "ABC");
-  test_check(status == CF_OK, "base64 decode invalid-length source write succeeds");
-  test_check(cf_base64_decode(CF_NULL, &base64) == CF_ERR_NULL, "base64 decode rejects null destination");
-  test_check(cf_base64_decode(&decoded, &base64) == CF_ERR_INVALID, "base64 decode rejects non-multiple-of-four text");
-  status = cf_string_from_cstr(&base64, "!!!!");
-  test_check(status == CF_OK, "base64 decode invalid-character source write succeeds");
-  test_check(cf_base64_decode(&decoded, &base64) == CF_ERR_INVALID, "base64 decode rejects invalid characters");
-
-  cf_buffer_destroy(&decoded);
-  cf_string_destroy(&base64);
-  cf_string_destroy(&encoded);
-}
-
-/*******************************************************************************
- * Runtime Random Tests
- ******************************************************************************/
-static void test_cf_random_api(void)
-{
-  cf_u8 bytes[34] = {0};
-  cf_u32 value32 = 0;
-  cf_u64 value64 = 0;
-  cf_status status = CF_OK;
-
-  test_section("cf_random api");
-
-  memset(bytes, 0xA5, sizeof(bytes));
-
-  test_check(cf_random_bytes(CF_NULL, 0) == CF_OK, "random bytes accepts zero-length null destination");
-  test_check(cf_random_bytes(CF_NULL, 1) == CF_ERR_NULL, "random bytes rejects null destination for non-empty request");
-
-  status = cf_random_bytes(bytes + 1, sizeof(bytes) - 2);
-  test_check(status == CF_OK, "random bytes fills requested range");
-  test_check(bytes[0] == 0xA5, "random bytes preserves leading canary");
-  test_check(bytes[sizeof(bytes) - 1] == 0xA5, "random bytes preserves trailing canary");
-
-  status = cf_random_u32(&value32);
-  test_check(status == CF_OK, "random u32 succeeds");
-  status = cf_random_u64(&value64);
-  test_check(status == CF_OK, "random u64 succeeds");
-  test_check(cf_random_u32(CF_NULL) == CF_ERR_NULL, "random u32 rejects null destination");
-  test_check(cf_random_u64(CF_NULL) == CF_ERR_NULL, "random u64 rejects null destination");
-
-  test_check(strcmp(cf_status_as_char(CF_ERR_RANDOM), "CF_ERR_RANDOM") == 0, "random status has symbolic name");
-  (void)value32;
-  (void)value64;
-}
-
-/*******************************************************************************
- * Runtime Log Tests
- ******************************************************************************/
-static void test_cf_log_api(void)
-{
-  cf_log_level original = cf_log_get_level();
-
-  test_section("cf_log api");
-
-  test_check(strcmp(cf_log_level_as_char(CF_LOG_LEVEL_TRACE), "TRACE") == 0, "log level trace has stable name");
-  test_check(strcmp(cf_log_level_as_char(CF_LOG_LEVEL_DEBUG), "DEBUG") == 0, "log level debug has stable name");
-  test_check(strcmp(cf_log_level_as_char(CF_LOG_LEVEL_INFO), "INFO") == 0, "log level info has stable name");
-  test_check(strcmp(cf_log_level_as_char(CF_LOG_LEVEL_WARN), "WARN") == 0, "log level warn has stable name");
-  test_check(strcmp(cf_log_level_as_char(CF_LOG_LEVEL_ERROR), "ERROR") == 0, "log level error has stable name");
-  test_check(strcmp(cf_log_level_as_char(CF_LOG_LEVEL_FATAL), "FATAL") == 0, "log level fatal has stable name");
-  test_check(strcmp(cf_log_level_as_char(CF_LOG_LEVEL_OFF), "OFF") == 0, "log level off has stable name");
-  test_check(strcmp(cf_log_level_as_char((cf_log_level)99), "UNKNOWN") == 0, "unknown log level has fallback name");
-
-  cf_log_set_level(CF_LOG_LEVEL_WARN);
-  test_check(cf_log_get_level() == CF_LOG_LEVEL_WARN, "log set level updates global minimum");
-  test_check(cf_log_should_write(CF_LOG_LEVEL_INFO) == CF_FALSE, "log filter rejects lower level");
-  test_check(cf_log_should_write(CF_LOG_LEVEL_WARN) == CF_TRUE, "log filter accepts equal level");
-  test_check(cf_log_should_write(CF_LOG_LEVEL_ERROR) == CF_TRUE, "log filter accepts higher level");
-  test_check(cf_log_should_write(CF_LOG_LEVEL_OFF) == CF_FALSE, "log filter never writes off level");
-
-  cf_log_set_level((cf_log_level)99);
-  test_check(cf_log_get_level() == CF_LOG_LEVEL_WARN, "log set level ignores invalid level");
-
-  cf_log_set_level(CF_LOG_LEVEL_OFF);
-  test_check(cf_log_should_write(CF_LOG_LEVEL_FATAL) == CF_FALSE, "log off suppresses fatal level");
-  CF_LOG_STATUS(CF_LOG_LEVEL_ERROR, CF_ERR_RANDOM);
-  cf_log_write(CF_LOG_LEVEL_INFO, "tests/src/test.c", __LINE__, "suppressed log message");
-  cf_log_write(CF_LOG_LEVEL_INFO, "tests/src/test.c", __LINE__, CF_NULL);
-  test_pass("log write handles suppressed status and null format messages");
-
-  cf_log_set_level(original);
-}
-
-/*******************************************************************************
- * Runtime Error Check Tests
- ******************************************************************************/
-static void test_cf_runtime_error_checks(void)
-{
-  cf_usize size = 0;
-  cf_time_point point = {0};
-
-  test_section("cf_runtime error checks");
-
-  test_check(cf_io_exists(CF_NULL) == CF_FALSE, "io exists rejects null path");
-  test_check(cf_io_file_size(CF_NULL, &size) == CF_ERR_NULL, "io file size rejects null path");
-  test_check(cf_io_file_size("public/doc/crypt/test_padding_plain.bin", CF_NULL) == CF_ERR_NULL, "io file size rejects null output");
-  test_check(cf_io_read_file(CF_NULL, "public/doc/crypt/test_padding_plain.bin") == CF_ERR_NULL, "io read file rejects null buffer");
-  test_check(cf_io_write_file(CF_NULL, (cf_bytes){.data = CF_NULL, .elem_size = 1, .len = 0}) == CF_ERR_NULL, "io write file rejects null path");
-  test_check(cf_io_write_file("public/doc/crypt/test_padding_invalid.bin", (cf_bytes){.data = CF_NULL, .elem_size = 1, .len = 1}) == CF_ERR_NULL, "io write file rejects non-empty null data");
-  test_check(cf_time_now_wall(CF_NULL) == CF_ERR_NULL, "time wall clock rejects null output");
-  test_check(cf_time_now_mono(CF_NULL) == CF_ERR_NULL, "time monotonic clock rejects null output");
-  test_check(cf_time_now_wall(&point) == CF_OK, "time wall clock still succeeds with output");
-}
-
-/*******************************************************************************
- * Math Tests
- ******************************************************************************/
-static void test_cf_math_primitives(void)
-{
-  test_section("cf_math primitives");
-
-  test_check(cf_math_g8_mul_mod(0x57, 0x83) == 0xC1, "g8 multiply matches AES reference example");
-  test_check(cf_math_g8_mul_mod(0x00, 0x83) == 0x00, "g8 multiply by zero returns zero");
-  test_check(cf_math_g8_mul_mod(0xAE, 0x01) == 0xAE, "g8 multiply by one returns input");
-
-  test_check(cf_math_rotl8(0x81, 1) == 0x03, "rotl8 wraps high bit");
-  test_check(cf_math_rotr8(0x81, 1) == 0xC0, "rotr8 wraps low bit");
-  test_check(cf_math_rotl8(0xA5, 8) == 0xA5, "rotl8 count wraps modulo eight");
-  test_check(cf_math_rotr8(0xA5, 16) == 0xA5, "rotr8 count wraps modulo eight");
-
-  test_check(cf_math_rotl32(0x80000001U, 1) == 0x00000003U, "rotl32 wraps high bit");
-  test_check(cf_math_rotr32(0x80000001U, 1) == 0xC0000000U, "rotr32 wraps low bit");
-  test_check(cf_math_rotl32(0x12345678U, 32) == 0x12345678U, "rotl32 count wraps modulo thirty-two");
-  test_check(cf_math_rotr32(0x12345678U, 64) == 0x12345678U, "rotr32 count wraps modulo thirty-two");
-
-  test_check(cf_math_min_usize(3, 9) == 3, "min usize returns smaller value");
-  test_check(cf_math_min_usize(9, 3) == 3, "min usize handles reversed order");
-  test_check(cf_math_max_usize(3, 9) == 9, "max usize returns larger value");
-  test_check(cf_math_max_usize(9, 3) == 9, "max usize handles reversed order");
-}
-
-/*******************************************************************************
- * Tensor Tests
- ******************************************************************************/
-static void test_cf_tensor_cpu_api(void)
-{
-  cf_tensor a = {0};
-  cf_tensor b = {0};
-  cf_tensor copy = {0};
-  cf_tensor mat_a = {0};
-  cf_tensor mat_b = {0};
-  cf_tensor batch_a = {0};
-  cf_tensor batch_b = {0};
-  cf_tensor *pair[2] = {&a, &b};
-  cf_tensor *cleanup[7] = {&a, &b, &copy, &mat_a, &mat_b, &batch_a, &batch_b};
-  cf_usize vec_dim[CF_TENSOR_HIGHEST_RANK] = {4, 0, 0, 0, 0, 0, 0, 0};
-  cf_usize square_dim[CF_TENSOR_HIGHEST_RANK] = {2, 2, 0, 0, 0, 0, 0, 0};
-  cf_usize grow_dim[CF_TENSOR_HIGHEST_RANK] = {8, 0, 0, 0, 0, 0, 0, 0};
-  cf_usize mat_a_dim[CF_TENSOR_HIGHEST_RANK] = {2, 3, 0, 0, 0, 0, 0, 0};
-  cf_usize mat_b_dim[CF_TENSOR_HIGHEST_RANK] = {3, 2, 0, 0, 0, 0, 0, 0};
-  cf_usize batch_a_dim[CF_TENSOR_HIGHEST_RANK] = {2, 1, 2, 3, 0, 0, 0, 0};
-  cf_usize batch_b_dim[CF_TENSOR_HIGHEST_RANK] = {1, 4, 3, 2, 0, 0, 0, 0};
-  cf_usize idx[CF_TENSOR_HIGHEST_RANK] = {0};
-  double a_values[4] = {1.0, 2.0, 3.0, 4.0};
-  double b_values[4] = {10.0, 20.0, 30.0, 40.0};
-  double batch_a_values[12] = {
-    1.0, 2.0, 3.0,
-    4.0, 5.0, 6.0,
-    7.0, 8.0, 9.0,
-    10.0, 11.0, 12.0
-  };
-  double batch_b_values[24] = {
-    1.0, 0.0, 0.0, 1.0, 1.0, 1.0,
-    2.0, 0.0, 0.0, 2.0, 1.0, 0.0,
-    0.0, 1.0, 1.0, 0.0, 0.0, 2.0,
-    1.0, 1.0, 2.0, 0.0, 0.0, 2.0
-  };
-  double value = 0.0;
-  double scalar = 2.0;
-
-  test_section("cf_tensor cpu api");
-
-  test_check(cf_tensor_init_many_cpu(pair, 2, vec_dim, 1, CF_TENSOR_DOUBLE) == CF_OK, "tensor cpu init many succeeds");
-  test_check(cf_tensor_is_valid(&a) == CF_TRUE, "tensor cpu object is valid");
-  test_check(a.device == CF_TENSOR_DEVICE_CPU, "tensor cpu init marks CPU device");
-  test_check(a.metadata.len == 4, "tensor cpu len stores element count");
-  test_check(a.metadata.capacity == 4, "tensor cpu capacity starts at element count");
-  test_check(a.metadata.stride[0] == 1, "tensor cpu vector stride is one");
-
-  for(cf_usize i = 0; i < 4; i++)
-  {
-    idx[0] = i;
-    value = a_values[i];
-    test_check(cf_tensor_set_cpu(&a, idx, &value) == CF_OK, "tensor set cpu writes a value");
-    value = b_values[i];
-    test_check(cf_tensor_set_cpu(&b, idx, &value) == CF_OK, "tensor set cpu writes b value");
-  }
-
-  idx[0] = 2;
-  value = 0.0;
-  test_check(cf_tensor_get_cpu(&value, &a, idx) == CF_OK && value == 3.0, "tensor get cpu reads by logical index");
-  idx[0] = 4;
-  test_check(cf_tensor_get_cpu(&value, &a, idx) == CF_ERR_BOUNDS, "tensor get cpu rejects out-of-bounds index");
-
-  test_check(cf_tensor_add_cpu(&a, &b) == CF_OK, "tensor add cpu succeeds in-place");
-  test_check(((double *)a.data)[0] == 11.0 && ((double *)a.data)[3] == 44.0, "tensor add cpu mutates op1");
-
-  test_check(cf_tensor_copy_from_array_cpu(&a, a_values, 4) == CF_OK, "tensor cpu copies from array");
-  test_check(cf_tensor_mul_cpu(&a, &b) == CF_OK, "tensor elementwise mul cpu succeeds in-place");
-  test_check(((double *)a.data)[0] == 10.0 && ((double *)a.data)[3] == 160.0, "tensor elementwise mul cpu mutates op1");
-
-  test_check(cf_tensor_copy_from_array_cpu(&a, a_values, 4) == CF_OK, "tensor cpu resets from array");
-  test_check(cf_tensor_scalar_mul_cpu(&a, &scalar) == CF_OK, "tensor scalar mul cpu succeeds in-place");
-  test_check(((double *)a.data)[0] == 2.0 && ((double *)a.data)[3] == 8.0, "tensor scalar mul cpu mutates op1");
-
-  test_check(cf_tensor_reshape_cpu(&a, square_dim, 2) == CF_OK, "tensor reshape cpu changes metadata only");
-  test_check(a.rank == 2 && a.dim[0] == 2 && a.dim[1] == 2 && a.metadata.capacity == 4, "tensor reshape keeps capacity");
-  test_check(cf_tensor_resize_cpu(&a, grow_dim, 1) == CF_OK, "tensor resize cpu grows storage");
-  test_check(a.rank == 1 && a.dim[0] == 8 && a.metadata.capacity >= 8, "tensor resize updates shape and capacity");
-
-  test_check(cf_tensor_copy_cpu(&copy, &b) == CF_OK, "tensor copy cpu initializes empty destination");
-  test_check(copy.rank == 1 && copy.dim[0] == 4 && ((double *)copy.data)[3] == 40.0, "tensor copy cpu copies shape and data");
-
-  test_check(cf_tensor_init_cpu(&mat_a, mat_a_dim, 2, CF_TENSOR_DOUBLE) == CF_OK, "matrix tensor a init succeeds");
-  test_check(cf_tensor_init_cpu(&mat_b, mat_b_dim, 2, CF_TENSOR_DOUBLE) == CF_OK, "matrix tensor b init succeeds");
-
-  ((double *)mat_a.data)[0] = 1.0;
-  ((double *)mat_a.data)[1] = 2.0;
-  ((double *)mat_a.data)[2] = 3.0;
-  ((double *)mat_a.data)[3] = 4.0;
-  ((double *)mat_a.data)[4] = 5.0;
-  ((double *)mat_a.data)[5] = 6.0;
-
-  ((double *)mat_b.data)[0] = 7.0;
-  ((double *)mat_b.data)[1] = 8.0;
-  ((double *)mat_b.data)[2] = 9.0;
-  ((double *)mat_b.data)[3] = 10.0;
-  ((double *)mat_b.data)[4] = 11.0;
-  ((double *)mat_b.data)[5] = 12.0;
-
-  test_check(cf_tensor_matrix_mul_cpu(&mat_a, &mat_b) == CF_OK, "matrix multiplication cpu succeeds in-place");
-  test_check(mat_a.rank == 2 && mat_a.dim[0] == 2 && mat_a.dim[1] == 2, "matrix multiplication cpu reshapes op1");
-  test_check(((double *)mat_a.data)[0] == 58.0 && ((double *)mat_a.data)[1] == 64.0 && ((double *)mat_a.data)[2] == 139.0 && ((double *)mat_a.data)[3] == 154.0, "matrix multiplication cpu mutates op1 with expected values");
-
-  test_check(cf_tensor_init_cpu(&batch_a, batch_a_dim, 4, CF_TENSOR_DOUBLE) == CF_OK, "batch matrix tensor a init succeeds");
-  test_check(cf_tensor_init_cpu(&batch_b, batch_b_dim, 4, CF_TENSOR_DOUBLE) == CF_OK, "batch matrix tensor b init succeeds");
-  memcpy(batch_a.data, batch_a_values, sizeof(batch_a_values));
-  memcpy(batch_b.data, batch_b_values, sizeof(batch_b_values));
-
-  test_check(cf_tensor_batch_mul_cpu(&batch_a, &batch_b) == CF_OK, "rank-4 batch multiplication cpu succeeds");
-  test_check(batch_a.rank == 4 && batch_a.dim[0] == 2 && batch_a.dim[1] == 4 && batch_a.dim[2] == 2 && batch_a.dim[3] == 2, "rank-4 batch multiplication cpu broadcasts output shape");
-  test_check(((double *)batch_a.data)[0] == 4.0 && ((double *)batch_a.data)[1] == 5.0 && ((double *)batch_a.data)[15] == 16.0 && ((double *)batch_a.data)[31] == 34.0, "rank-4 batch multiplication cpu computes broadcasted values");
-
-#ifndef CF_CUDA_AVAILABLE
-  {
-    cf_tensor macro_tensor = {0};
-    test_check(cf_tensor_init(&macro_tensor, vec_dim, 1, CF_TENSOR_DOUBLE) == CF_OK, "tensor macro init maps to cpu without CUDA");
-    test_check(macro_tensor.device == CF_TENSOR_DEVICE_CPU && macro_tensor.data != CF_NULL, "tensor macro cpu init allocates host storage");
-    test_check(cf_tensor_add(&macro_tensor, &macro_tensor) == CF_OK, "tensor macro add maps to in-place cpu add without CUDA");
-    cf_tensor_destroy(&macro_tensor);
-  }
+#else
+  printf("CUDA runtime headers are not available in this build; GPU math tests skipped.\n");
 #endif
-
-  cf_tensor_destroy_many_cpu(cleanup, 7);
 }
 
-#ifdef CF_CUDA_AVAILABLE
-static void test_cf_tensor_cuda_api(void)
-{
-  cf_tensor a = {0};
-  cf_tensor b = {0};
-  cf_tensor mat_a = {0};
-  cf_tensor mat_b = {0};
-  cf_tensor unsupported = {0};
-  cf_tensor *pair[2] = {&a, &b};
-  cf_tensor *cleanup[4] = {&a, &b, &mat_a, &mat_b};
-  cf_usize dim[CF_TENSOR_HIGHEST_RANK] = {4, 0, 0, 0, 0, 0, 0, 0};
-  cf_usize mat_a_dim[CF_TENSOR_HIGHEST_RANK] = {2, 3, 0, 0, 0, 0, 0, 0};
-  cf_usize mat_b_dim[CF_TENSOR_HIGHEST_RANK] = {3, 2, 0, 0, 0, 0, 0, 0};
-  cf_usize idx[CF_TENSOR_HIGHEST_RANK] = {0};
-  double a_values[4] = {1.0, 2.0, 3.0, 4.0};
-  double b_values[4] = {10.0, 20.0, 30.0, 40.0};
-  double value = 0.0;
-  double read = 0.0;
-
-  test_section("cf_tensor cuda api");
-
-  test_check(cf_tensor_init_many_gpu(pair, 2, dim, 1, CF_TENSOR_DOUBLE) == CF_OK, "tensor gpu init many succeeds");
-  test_check(a.device == CF_TENSOR_DEVICE_CUDA && a.device_data != CF_NULL && a.data == CF_NULL, "tensor gpu init creates device-only storage");
-  test_check(cf_tensor_init_gpu(&unsupported, dim, 1, CF_TENSOR_LD) == CF_ERR_UNSUPPORTED, "tensor gpu init rejects unsupported long double");
-
-  for(cf_usize i = 0; i < 4; i++)
-  {
-    idx[0] = i;
-    value = a_values[i];
-    test_check(cf_tensor_set_gpu(&a, idx, &value) == CF_OK, "tensor set gpu writes a value");
-    value = b_values[i];
-    test_check(cf_tensor_set_gpu(&b, idx, &value) == CF_OK, "tensor set gpu writes b value");
-  }
-
-  idx[0] = 2;
-  test_check(cf_tensor_get_gpu(&read, &a, idx) == CF_OK && read == 3.0, "tensor get gpu reads a value");
-  test_check(cf_tensor_add_gpu(&a, &b) == CF_OK, "tensor add gpu succeeds in-place");
-  test_check(cf_tensor_to_cpu(&a) == CF_OK, "tensor gpu op1 copies to cpu");
-  test_check(((double *)a.data)[0] == 11.0 && ((double *)a.data)[3] == 44.0, "tensor add gpu mutates op1");
-  test_check(cf_tensor_copy_from_array_gpu(&a, a_values, 4) == CF_OK, "tensor gpu resets from host array");
-  test_check(cf_tensor_mul_gpu(&a, &b) == CF_OK, "tensor mul gpu succeeds in-place");
-  test_check(cf_tensor_to_cpu(&a) == CF_OK, "tensor gpu mul op1 copies to cpu");
-  test_check(((double *)a.data)[0] == 10.0 && ((double *)a.data)[3] == 160.0, "tensor mul gpu mutates op1");
-  value = 2.0;
-  test_check(cf_tensor_copy_from_array_gpu(&a, a_values, 4) == CF_OK, "tensor gpu resets before scalar");
-  test_check(cf_tensor_scalar_mul_gpu(&a, &value) == CF_OK, "tensor scalar mul gpu succeeds in-place");
-  test_check(cf_tensor_to_cpu(&a) == CF_OK, "tensor scalar mul gpu op1 copies to cpu");
-  test_check(((double *)a.data)[0] == 2.0 && ((double *)a.data)[3] == 8.0, "tensor scalar mul gpu mutates op1");
-
-  test_check(cf_tensor_init_gpu(&mat_a, mat_a_dim, 2, CF_TENSOR_DOUBLE) == CF_OK, "matrix tensor gpu a init succeeds");
-  test_check(cf_tensor_init_gpu(&mat_b, mat_b_dim, 2, CF_TENSOR_DOUBLE) == CF_OK, "matrix tensor gpu b init succeeds");
-
-  for(cf_usize i = 0; i < 6; i++)
-  {
-    idx[0] = i / 3;
-    idx[1] = i % 3;
-    value = (double)(i + 1);
-    test_check(cf_tensor_set_gpu(&mat_a, idx, &value) == CF_OK, "matrix tensor gpu set a value");
-
-    idx[0] = i / 2;
-    idx[1] = i % 2;
-    value = (double)(i + 7);
-    test_check(cf_tensor_set_gpu(&mat_b, idx, &value) == CF_OK, "matrix tensor gpu set b value");
-  }
-
-  test_check(cf_tensor_matrix_mul_gpu(&mat_a, &mat_b) == CF_OK, "matrix multiplication gpu succeeds in-place");
-  test_check(cf_tensor_to_cpu(&mat_a) == CF_OK, "matrix multiplication gpu op1 copies to cpu");
-  test_check(mat_a.rank == 2 && mat_a.dim[0] == 2 && mat_a.dim[1] == 2, "matrix multiplication gpu reshapes op1");
-  test_check(((double *)mat_a.data)[0] == 58.0 && ((double *)mat_a.data)[1] == 64.0 && ((double *)mat_a.data)[2] == 139.0 && ((double *)mat_a.data)[3] == 154.0, "matrix multiplication gpu mutates op1 with expected values");
-
-  cf_tensor_destroy_many_gpu(cleanup, 4);
-}
-#endif
-
-/*******************************************************************************
- * Runtime Type Tests
- ******************************************************************************/
-static void test_cf_types_native_groups(void)
-{
-  test_section("cf_types native groups");
-
-  test_check(cf_types_type_size(sizeof(cf_u8)) == CF_NATIVE_1_BYTE, "1-byte values map to CF_NATIVE_1_BYTE");
-  test_check(cf_types_type_size(sizeof(cf_u16)) == CF_NATIVE_2_BYTE, "2-byte values map to CF_NATIVE_2_BYTE");
-  test_check(cf_types_type_size(sizeof(cf_u32)) == CF_NATIVE_4_BYTE, "4-byte values map to CF_NATIVE_4_BYTE");
-  test_check(cf_types_type_size(sizeof(cf_u64)) == CF_NATIVE_8_BYTE, "8-byte values map to CF_NATIVE_8_BYTE");
-  test_check(cf_types_type_size(sizeof(cf_u128)) == CF_NATIVE_16_BYTE, "16-byte values map to CF_NATIVE_16_BYTE");
-  test_check(cf_types_type_size(3) == CF_NATIVE_UNKNOWN, "non-native size maps to unknown");
-  test_check(strcmp(cf_types_as_char(sizeof(cf_u8)), "1 byte: char/bool-sized primitive value or struct with 1-byte total size.") == 0, "1-byte description is stable");
-  test_check(strcmp(cf_types_as_char(sizeof(cf_u64)), "8 bytes: long/pointer/double-sized primitive value or struct with 8-byte total size.") == 0, "8-byte description is stable");
-  test_check(strcmp(cf_types_as_char(24), "Not a primitive type size or a struct with a native primitive-sized total width.") == 0, "non-native description is stable");
-}
-
-/*******************************************************************************
- * Security AES Test Helpers
- ******************************************************************************/
-static void test_cf_aes_known_vector(const char *label, const cf_u8 *key, cf_aes_key_size key_size, const cf_u8 plaintext[CF_AES_BLOCK_SIZE], const cf_u8 expected_ciphertext[CF_AES_BLOCK_SIZE])
-{
-  cf_aes aes = {0};
-  cf_u8 ciphertext[CF_AES_BLOCK_SIZE] = {0};
-  cf_u8 decrypted[CF_AES_BLOCK_SIZE] = {0};
-  cf_status status = cf_aes_init(&aes, key, key_size);
-  char message[128];
-
-  snprintf(message, sizeof(message), "%s init succeeds", label);
-  test_check(status == CF_OK, message);
-  if(status != CF_OK) return;
-
-  cf_aes_encrypt_block(&aes, ciphertext, plaintext);
-  snprintf(message, sizeof(message), "%s encrypt matches known ciphertext", label);
-  test_check(memcmp(ciphertext, expected_ciphertext, CF_AES_BLOCK_SIZE) == 0, message);
-
-  cf_aes_decrypt_block(&aes, decrypted, expected_ciphertext);
-  snprintf(message, sizeof(message), "%s decrypt restores plaintext", label);
-  test_check(memcmp(decrypted, plaintext, CF_AES_BLOCK_SIZE) == 0, message);
-}
-
-/*******************************************************************************
- * Security AES Tests
- ******************************************************************************/
-static void test_cf_aes_block_vectors(void)
-{
-  static const cf_u8 plaintext[CF_AES_BLOCK_SIZE] =
-  {
-    0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77,
-    0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF
-  };
-  static const cf_u8 key_128[CF_AES_MAX_ROUND_KEYS * 4] =
-  {
-    0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
-    0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F
-  };
-  static const cf_u8 key_192[CF_AES_MAX_ROUND_KEYS * 4] =
-  {
-    0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
-    0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
-    0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17
-  };
-  static const cf_u8 key_256[CF_AES_MAX_ROUND_KEYS * 4] =
-  {
-    0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
-    0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
-    0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
-    0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F
-  };
-  static const cf_u8 ciphertext_128[CF_AES_BLOCK_SIZE] =
-  {
-    0x69, 0xC4, 0xE0, 0xD8, 0x6A, 0x7B, 0x04, 0x30,
-    0xD8, 0xCD, 0xB7, 0x80, 0x70, 0xB4, 0xC5, 0x5A
-  };
-  static const cf_u8 ciphertext_192[CF_AES_BLOCK_SIZE] =
-  {
-    0xDD, 0xA9, 0x7C, 0xA4, 0x86, 0x4C, 0xDF, 0xE0,
-    0x6E, 0xAF, 0x70, 0xA0, 0xEC, 0x0D, 0x71, 0x91
-  };
-  static const cf_u8 ciphertext_256[CF_AES_BLOCK_SIZE] =
-  {
-    0x8E, 0xA2, 0xB7, 0xCA, 0x51, 0x67, 0x45, 0xBF,
-    0xEA, 0xFC, 0x49, 0x90, 0x4B, 0x49, 0x60, 0x89
-  };
-
-  test_section("cf_aes block vectors");
-
-  test_cf_aes_known_vector("AES-128", key_128, CF_AES_KEY_128, plaintext, ciphertext_128);
-  test_cf_aes_known_vector("AES-192", key_192, CF_AES_KEY_192, plaintext, ciphertext_192);
-  test_cf_aes_known_vector("AES-256", key_256, CF_AES_KEY_256, plaintext, ciphertext_256);
-}
-
-/*******************************************************************************
- * Security AES Padding Tests
- ******************************************************************************/
-static void test_cf_aes_pkcs7_padding(void)
-{
-  static const cf_u8 partial_plain[] =
-  {
-    'p', 'a', 'd', 'd', 'i', 'n', 'g', '-', 'o', 'k', '!', 0x03, 0x03
-  };
-  static const cf_u8 full_plain[] =
-  {
-    's', 'i', 'x', 't', 'e', 'e', 'n', ' ', 'b', 'y', 't', 'e', ' ', 't', 'x', 't'
-  };
-  cf_buffer partial = {0};
-  cf_buffer full = {0};
-  cf_buffer invalid = {0};
-  cf_status status = CF_OK;
-
-  test_section("cf_aes pkcs7 padding");
-
-  status = cf_buffer_init(&partial, 0);
-  test_check(status == CF_OK, "partial padding buffer init succeeds");
-  status = cf_buffer_append_bytes(&partial, (cf_bytes){.data = (void *)partial_plain, .elem_size = 1, .len = sizeof(partial_plain)});
-  test_check(status == CF_OK, "partial plaintext append succeeds");
-  status = cf_aes_pkcs7_pad(&partial);
-  test_check(status == CF_OK, "partial plaintext padding succeeds");
-  test_check(partial.len == CF_AES_BLOCK_SIZE, "partial plaintext pads to one block");
-  test_check(partial.data[13] == 0x03 && partial.data[14] == 0x03 && partial.data[15] == 0x03, "partial padding writes three padding bytes");
-  status = cf_aes_pkcs7_unpad(&partial);
-  test_check(status == CF_OK, "partial plaintext unpadding succeeds");
-  test_check(partial.len == sizeof(partial_plain), "partial unpadding restores original length");
-  test_check(memcmp(partial.data, partial_plain, sizeof(partial_plain)) == 0, "partial unpadding preserves real bytes that look like padding");
-
-  status = cf_buffer_init(&full, 0);
-  test_check(status == CF_OK, "full-block padding buffer init succeeds");
-  status = cf_buffer_append_bytes(&full, (cf_bytes){.data = (void *)full_plain, .elem_size = 1, .len = sizeof(full_plain)});
-  test_check(status == CF_OK, "full-block plaintext append succeeds");
-  status = cf_aes_pkcs7_pad(&full);
-  test_check(status == CF_OK, "full-block plaintext padding succeeds");
-  test_check(full.len == CF_AES_BLOCK_SIZE * 2, "full-block plaintext gets an extra padding block");
-  test_check(full.data[full.len - 1] == CF_AES_BLOCK_SIZE, "full-block padding stores block-size byte value");
-  status = cf_aes_pkcs7_unpad(&full);
-  test_check(status == CF_OK, "full-block plaintext unpadding succeeds");
-  test_check(full.len == sizeof(full_plain), "full-block unpadding restores original length");
-  test_check(memcmp(full.data, full_plain, sizeof(full_plain)) == 0, "full-block unpadding preserves original bytes");
-
-  status = cf_buffer_init(&invalid, 0);
-  test_check(status == CF_OK, "invalid padding buffer init succeeds");
-  status = cf_buffer_append_bytes(&invalid, (cf_bytes){.data = (cf_u8[CF_AES_BLOCK_SIZE]){0}, .elem_size = 1, .len = CF_AES_BLOCK_SIZE});
-  test_check(status == CF_OK, "invalid padding block append succeeds");
-  invalid.data[CF_AES_BLOCK_SIZE - 1] = 5;
-  test_check(cf_aes_pkcs7_unpad(&invalid) == CF_ERR_INVALID_PADDING, "unpad rejects mismatched padding bytes");
-  invalid.data[CF_AES_BLOCK_SIZE - 1] = 0;
-  test_check(cf_aes_pkcs7_unpad(&invalid) == CF_ERR_INVALID_PADDING, "unpad rejects zero padding byte");
-
-  cf_buffer_destroy(&invalid);
-  cf_buffer_destroy(&full);
-  cf_buffer_destroy(&partial);
-}
-
-/*******************************************************************************
- * Security AES Padding File Tests
- ******************************************************************************/
-static void test_cf_aes_pkcs7_file_roundtrip(void)
-{
-  static const char *plain_path = "public/doc/crypt/test_padding_plain.bin";
-  static const char *encrypted_path = "public/doc/crypt/test_padding_encrypted.bin";
-  static const char *decrypted_path = "public/doc/crypt/test_padding_decrypted.bin";
-  static const cf_u8 plain[] =
-  {
-    'f', 'i', 'l', 'e', '-', 'p', 'a', 'd', 'd', 'i', 'n', 'g', 0x04, 0x04
-  };
-  cf_buffer buffer = {0};
-  cf_aes aes = {0};
-  cf_u8 key[CF_AES_MAX_ROUND_KEYS * 4] = {0};
-  cf_usize blocks = 0;
-  cf_status status = CF_OK;
-
-  test_section("cf_aes pkcs7 file roundtrip");
-
-  status = cf_io_write_file(plain_path, (cf_bytes){.data = (void *)plain, .elem_size = 1, .len = sizeof(plain)});
-  test_check(status == CF_OK, "padding test plaintext artifact write succeeds");
-  status = cf_io_read_file(&buffer, plain_path);
-  test_check(status == CF_OK, "padding test plaintext artifact read succeeds");
-  test_check(buffer.len == sizeof(plain) && memcmp(buffer.data, plain, sizeof(plain)) == 0, "padding test plaintext artifact content is stable");
-
-  status = cf_aes_pkcs7_pad(&buffer);
-  test_check(status == CF_OK, "file plaintext padding succeeds");
-  test_check(buffer.len % CF_AES_BLOCK_SIZE == 0, "file padded length is block aligned");
-
-  status = cf_aes_init(&aes, key, CF_AES_KEY_128);
-  test_check(status == CF_OK, "file roundtrip AES init succeeds");
-  blocks = buffer.len / CF_AES_BLOCK_SIZE;
-  for(cf_usize i = 0; i < blocks; i++)
-    cf_aes_encrypt_block(&aes, buffer.data + CF_AES_BLOCK_SIZE * i, buffer.data + CF_AES_BLOCK_SIZE * i);
-
-  status = cf_io_write_file(encrypted_path, (cf_bytes){.data = buffer.data, .elem_size = 1, .len = buffer.len});
-  test_check(status == CF_OK, "padding test encrypted artifact write succeeds");
-  test_check(memcmp(buffer.data, plain, sizeof(plain)) != 0, "encrypted artifact differs from plaintext prefix");
-
-  for(cf_usize i = 0; i < blocks; i++)
-    cf_aes_decrypt_block(&aes, buffer.data + CF_AES_BLOCK_SIZE * i, buffer.data + CF_AES_BLOCK_SIZE * i);
-
-  status = cf_aes_pkcs7_unpad(&buffer);
-  test_check(status == CF_OK, "file decrypted buffer unpadding succeeds");
-  test_check(buffer.len == sizeof(plain) && memcmp(buffer.data, plain, sizeof(plain)) == 0, "file roundtrip restores original plaintext");
-
-  status = cf_io_write_file(decrypted_path, (cf_bytes){.data = buffer.data, .elem_size = 1, .len = buffer.len});
-  test_check(status == CF_OK, "padding test decrypted artifact write succeeds");
-
-  cf_buffer_destroy(&buffer);
-}
-
-/*******************************************************************************
- * Test Runner
- ******************************************************************************/
 int main(void)
 {
-  printf("cf allocator capability-model test suite\n");
-  test_cf_alloc_debug_new_model();
-  test_cf_alloc_debug_callbacks();
-  test_cf_alloc_debug_log_fn();
-  test_cf_alloc_debug_ratio_switch();
-  test_cf_array_basic_flow();
-  test_cf_array_accessors();
-  test_cf_array_state_and_diagnostics();
-  test_cf_ascii_helpers();
-  test_cf_string_build_and_lifecycle();
-  test_cf_string_queries_and_slices();
-  test_cf_string_mutation_helpers();
-  test_cf_string_invalid_state();
-  test_cf_hex_encode_decode();
-  test_cf_base64_encode_decode();
-  test_cf_random_api();
-  test_cf_log_api();
-  test_cf_runtime_error_checks();
-  test_cf_math_primitives();
-  test_cf_tensor_cpu_api();
-#ifdef CF_CUDA_AVAILABLE
-  test_cf_tensor_cuda_api();
-#endif
-  test_cf_aes_block_vectors();
-  test_cf_aes_pkcs7_padding();
-  test_cf_aes_pkcs7_file_roundtrip();
-  test_cf_types_native_groups();
-  printf("\n================ Test Summary ================\n" "  Passed : %-6d    Failed : %-6d\n" "==============================================\n", g_test_passed, g_test_failed);
+  test_primitives();
+  test_lifecycle_views_and_shape();
+  test_elementwise_and_reductions();
+  test_linalg_activation_and_loss();
+  test_dropout_embedding_sparse_and_unsupported();
+  test_cuda_guard();
 
-  return g_test_failed == 0 ? 0 : 1;
+  if(g_failures != 0)
+  {
+    printf("math tests failed: %d\n", g_failures);
+    return 1;
+  }
+
+  printf("math tests passed\n");
+  return 0;
 }

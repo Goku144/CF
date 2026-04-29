@@ -19,12 +19,17 @@ hand-written public documentation lives in `public/doc`.
   - What each function does.
   - Critical usage rules and failure modes.
 
+- [CF Math Layer Guide](cf-math-layer.md)
+  - Main `cf_math` tensor hierarchy.
+  - Every public math enum and struct.
+  - Every public `cf_math_*` function grouped by operation family.
+  - CPU reference behavior, CUDA dispatch intent, and current unsupported
+    training surfaces.
+
 - [Tensor And CUDA Backend](tensor-cuda.md)
-  - CPU tensor behavior.
-  - CUDA tensor behavior.
-  - Supported GPU types.
-  - CPU/GPU comparison app behavior.
-  - Important ownership and performance notes.
+  - Legacy `cf_tensor` backend notes.
+  - Older CPU/CUDA tensor behavior.
+  - Historical GPU type support and smoke-test notes.
 
 - [Extension Guide](extension-guide.md)
   - How to add modules without breaking the framework shape.
@@ -42,14 +47,16 @@ make app
 make test
 ```
 
-CUDA is optional. The Makefile uses CUDA only when `nvcc` is available on
-`PATH`. If CUDA is installed outside `PATH`, direct compilation can still work:
+CUDA is optional. The active math implementation is `cf_math` in
+`lib/src/MATH/cf_math.cu`. With `nvcc`, the Makefile compiles `.cu` sources as
+CUDA sources. Without `nvcc`, it compiles the same CPU-compatible `.cu` source
+with `gcc -x c`, so machines without a CUDA toolkit can still build the
+library. A physical GPU is not required for compilation.
 
-```sh
-/usr/local/cuda-13.2/bin/nvcc -O3 -Ipublic/inc -c lib/src/MATH/cf_tensor_cuda.cu -o /tmp/cf_tensor_cuda.o
-```
+`make app` runs CPU `cf_math` examples and only attempts its CUDA roundtrip
+example when CUDA runtime headers and a usable CUDA device are both available.
+`make test` runs the math-focused test entry point and skips GPU checks unless
+CUDA is truly available at build and runtime.
 
-`make app` runs the tensor smoke-test application. CUDA builds compare CPU and
-GPU results for add, elementwise multiply, scalar multiply, matrix multiply,
-and batched matrix multiply. CPU-only builds report that GPU comparison was
-skipped.
+For the current math tensor design, start with
+[CF Math Layer Guide](cf-math-layer.md).

@@ -1,15 +1,22 @@
 # Tensor And CUDA Backend
 
-The tensor module is the most performance-sensitive part of the current
-framework. It has a CPU backend and a CUDA backend.
+This page documents the older `cf_tensor` backend design and is kept for
+historical context while the active math layer moves to `cf_math`.
 
-Header:
+For the current tensor hierarchy, dtype/layout/device model, operation map, and
+function-by-function math reference, read
+[CF Math Layer Guide](cf-math-layer.md).
+
+This page describes the previous tensor backend shape. These file names are
+historical, not active files in the current tree.
+
+Historical header:
 
 ```text
 public/inc/MATH/cf_tensor.h
 ```
 
-Implementations:
+Historical implementations:
 
 ```text
 lib/src/MATH/cf_tensor.c
@@ -634,9 +641,11 @@ Critical point:
 
 ## App Smoke Test
 
-`app/src/app.c` is a small CPU/GPU tensor comparison program.
+Historically, `app/src/app.c` was a small CPU/GPU tensor comparison program.
+That file is not part of the active tree in this math-layer update.
 
-When the framework is built with CUDA support, `make app` runs these
+When that legacy app source is present and the framework is built with CUDA
+support, `make app` runs these
 operations on deterministic double-precision inputs:
 
 ```text
@@ -660,11 +669,11 @@ The comparison expects exact or near-exact agreement. The current threshold is:
 1e-9
 ```
 
-CPU-only builds still compile the same app entry point, but print that GPU tests
-were skipped because `CF_CUDA_AVAILABLE` is not enabled.
+CPU-only builds of that historical app compiled the same entry point, but
+printed that GPU tests were skipped because `CF_CUDA_AVAILABLE` was not enabled.
 
-This app is meant as a quick backend sanity check, not a replacement for
-`tests/src/test.c`.
+That app was meant as a quick backend sanity check, not a replacement for
+`tests/src/test.c` when a test entry point exists.
 
 ## Performance Rules
 

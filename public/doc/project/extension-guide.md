@@ -125,6 +125,10 @@ This keeps strict ISO C builds happy without pretending the module is ready.
 
 ## Adding Tensor CPU Operations
 
+For new math-layer tensor work, prefer the `cf_math` API documented in
+[CF Math Layer Guide](cf-math-layer.md). The older `cf_tensor` guidance below
+is useful historical context for the previous backend shape.
+
 CPU tensor operations should:
 
 1. Use `op1` as both input and destination.
@@ -150,6 +154,11 @@ Critical point:
 > checks out of their hot path and document the caller contract clearly.
 
 ## Adding Tensor CUDA Operations
+
+For new CUDA math work, wire kernels and vendor-library calls behind the
+existing `cf_math_*` operation names whenever possible. Keep dtype, layout,
+device, workspace, and descriptor-cache metadata in sync with
+[CF Math Layer Guide](cf-math-layer.md).
 
 CUDA tensor operations should:
 
@@ -208,7 +217,8 @@ When adding a public function:
 1. Add header documentation near the declaration.
 2. Add implementation comment above the function in `.c` or `.cu`.
 3. Add the function to `public/doc/project/implemented-api.md`.
-4. Add critical ownership/performance notes.
+4. If it belongs to `cf_math`, add it to `public/doc/project/cf-math-layer.md`.
+5. Add critical ownership/performance notes.
 
 ## Testing Requirement
 
@@ -228,8 +238,8 @@ Tests should cover:
 
 Before changing a public struct layout or macro dispatch behavior, check:
 
-- `app/src/app.c`
-- `tests/src/test.c`
+- `app/src/app.c` when present
+- `tests/src/test.c` when present
 - `README.md`
 - `public/doc`
 
