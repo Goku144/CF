@@ -28,7 +28,7 @@ INC := public/inc
 
 CC ?= $(shell command -v gcc 2>&1)
 CC_AVAILABLE := $(if $(CC),1,0)
-FLAG_C := -Wall -Wextra -Wpedantic -Werror -O3
+FLAG_C := -Wall -Wextra -Wpedantic -Werror -O3 -Wno-error=deprecated-declarations -Wno-deprecated-declarations
 LIBS_C := -lm
 SRCS_C :=
 OBJS_C :=
@@ -78,7 +78,7 @@ endif
 ifeq ($(CUDA_AVAILABLE),1)
 FLAG_C += -DCF_CUDA_AVAILABLE=1
 FLAG_CUDA += -DCF_CUDA_AVAILABLE=1
-LIBS_CUDA := -lcublasLt -lcublas
+LIBS_CUDA := -lcudnn -lcusparse -lcusolver -lcurand -lcublasLt -lcublas -lcudart
 LINK := $(NVCC)
 CU_BACKEND := nvcc
 else
