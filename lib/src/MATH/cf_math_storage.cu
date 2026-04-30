@@ -18,6 +18,7 @@
 
 #include "MATH/cf_math_storage.h"
 
+#include <stdlib.h>
 #include <string.h>
 
 static cf_status cf_math_storage_validate(cf_math_device device, cf_math_mem_flags flags);
@@ -48,20 +49,40 @@ static cf_status cf_math_storage_validate(cf_math_device device, cf_math_mem_fla
     return CF_ERR_UNSUPPORTED;
   if((flags & CF_MATH_MEM_PINNED) != 0)
     return device == CF_MATH_DEVICE_CPU ? CF_OK : CF_ERR_INVALID;
+  if(device == CF_MATH_DEVICE_CPU)
+    return (flags & (CF_MATH_MEM_MANAGED | CF_MATH_MEM_POOLED)) == 0 ? CF_OK : CF_ERR_INVALID;
   return device == CF_MATH_DEVICE_CUDA ? CF_OK : CF_ERR_UNSUPPORTED;
 }
 
 static cf_status cf_math_storage_backend_alloc(cf_math_cuda_context *ctx, cf_math_device device, cf_math_mem_flags flags, cf_usize bytes, void **ptr)
 {
-#if defined(CF_CUDA_AVAILABLE)
   cf_status status = CF_OK;
 
-  if(ctx == CF_NULL || ptr == CF_NULL) return CF_ERR_NULL;
+  if(ptr == CF_NULL) return CF_ERR_NULL;
   *ptr = CF_NULL;
   if(bytes == 0) return CF_OK;
 
   status = cf_math_storage_validate(device, flags);
   if(status != CF_OK) return status;
+
+  if(device == CF_MATH_DEVICE_CPU && (flags & CF_MATH_MEM_PINNED) == 0)
+  {
+    if((flags & CF_MATH_MEM_ALIGNED128) != 0)
+    {
+      cf_usize aligned_bytes = 0;
+      if(bytes > (cf_usize)-1 - 127U) return CF_ERR_OVERFLOW;
+      aligned_bytes = (bytes + 127U) & ~((cf_usize)127U);
+      *ptr = aligned_alloc(128U, (size_t)aligned_bytes);
+    }
+    else
+    {
+      *ptr = malloc((size_t)bytes);
+    }
+    return *ptr != CF_NULL ? CF_OK : CF_ERR_OOM;
+  }
+
+#if defined(CF_CUDA_AVAILABLE)
+  if(ctx == CF_NULL) return CF_ERR_NULL;
   if(cudaSetDevice(ctx->device_id) != cudaSuccess) return CF_ERR_CUDA_DEVICE;
 
   if((flags & CF_MATH_MEM_PINNED) != 0)
@@ -112,16 +133,16 @@ static cf_status cf_math_storage_backend_alloc(cf_math_cuda_context *ctx, cf_mat
 
 static cf_status cf_math_storage_backend_copy(cf_math_cuda_context *ctx, cf_math_mem_flags flags, void *dst, const void *src, cf_usize bytes)
 {
-#if defined(CF_CUDA_AVAILABLE)
   if(bytes == 0) return CF_OK;
-  if(ctx == CF_NULL || dst == CF_NULL || src == CF_NULL) return CF_ERR_NULL;
+  if(dst == CF_NULL || src == CF_NULL) return CF_ERR_NULL;
 
-  if((flags & CF_MATH_MEM_PINNED) != 0)
+  if(ctx == CF_NULL || (flags & CF_MATH_MEM_PINNED) != 0)
   {
     memcpy(dst, src, bytes);
     return CF_OK;
   }
 
+#if defined(CF_CUDA_AVAILABLE)
   if((flags & CF_MATH_MEM_POOLED) != 0)
   {
     if(cudaMemcpyAsync(dst, src, bytes, cudaMemcpyDefault, ctx->stream) != cudaSuccess) return CF_ERR_CUDA_COPY;
@@ -140,8 +161,15 @@ static cf_status cf_math_storage_backend_copy(cf_math_cuda_context *ctx, cf_math
 
 static cf_status cf_math_storage_backend_free(cf_math_cuda_context *ctx, cf_math_device device, cf_math_mem_flags flags, void *ptr)
 {
-#if defined(CF_CUDA_AVAILABLE)
   if(ptr == CF_NULL) return CF_OK;
+
+  if(device == CF_MATH_DEVICE_CPU && (flags & CF_MATH_MEM_PINNED) == 0)
+  {
+    free(ptr);
+    return CF_OK;
+  }
+
+#if defined(CF_CUDA_AVAILABLE)
   if(ctx == CF_NULL) return CF_ERR_NULL;
   if(device == CF_MATH_DEVICE_CUDA && cudaSetDevice(ctx->device_id) != cudaSuccess) return CF_ERR_CUDA_DEVICE;
 
@@ -500,7 +528,9 @@ cf_status cf_math_handle_init(cf_math_handle_t *handler, cf_math_cuda_context *c
 {
   cf_status status = CF_OK;
 
-  if(handler == CF_NULL || ctx == CF_NULL) return CF_ERR_NULL;
+  if(handler == CF_NULL) return CF_ERR_NULL;
+  if(device == CF_MATH_DEVICE_CUDA && ctx == CF_NULL) return CF_ERR_NULL;
+  if(device == CF_MATH_DEVICE_CPU && (flags & CF_MATH_MEM_PINNED) != 0 && ctx == CF_NULL) return CF_ERR_NULL;
   status = cf_math_storage_validate(device, flags);
   if(status != CF_OK) return status;
 
@@ -613,7 +643,8 @@ cf_status cf_math_handle_reserve(cf_math_handle_t *handler, cf_usize bytes)
   cf_status status = CF_OK;
 
   if(handler == CF_NULL) return CF_ERR_NULL;
-  if(handler->cuda_ctx == CF_NULL) return CF_ERR_STATE;
+  if(handler->storage.device == CF_MATH_DEVICE_CUDA && handler->cuda_ctx == CF_NULL) return CF_ERR_STATE;
+  if(handler->storage.device == CF_MATH_DEVICE_CPU && (handler->storage.allocator.mem_flag & CF_MATH_MEM_PINNED) != 0 && handler->cuda_ctx == CF_NULL) return CF_ERR_STATE;
   if(bytes == 0 || handler->storage.arena.capacity >= bytes) return CF_OK;
 
   status = cf_math_storage_backend_alloc(handler->cuda_ctx, handler->storage.device, handler->storage.allocator.mem_flag, bytes, &ptr);

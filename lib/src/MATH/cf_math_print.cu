@@ -20,7 +20,6 @@
 
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
 
 static const char *cf_math_shape_name(cf_math_shape shape)
 {
@@ -117,30 +116,6 @@ static void cf_math_print_data_values(const cf_math *x, const void *host_data)
   printf("]\n");
 }
 
-static cf_status cf_math_print_copy_data(const cf_math *x, void *host_data)
-{
-  cf_math_mem_flags flags = x->handler->storage.allocator.mem_flag;
-
-  if(x->byte_size == 0) return CF_OK;
-  if(x->data == CF_NULL || host_data == CF_NULL) return CF_ERR_NULL;
-
-  if((flags & CF_MATH_MEM_PINNED) != 0 || x->handler->storage.device == CF_MATH_DEVICE_CPU)
-  {
-    memcpy(host_data, x->data, x->byte_size);
-    return CF_OK;
-  }
-
-#if defined(CF_CUDA_AVAILABLE)
-  if(cudaMemcpy(host_data, x->data, x->byte_size, cudaMemcpyDefault) != cudaSuccess)
-    return CF_ERR_CUDA_COPY;
-  if(x->handler->cuda_ctx != CF_NULL && x->handler->cuda_ctx->stream != CF_NULL)
-    return cudaStreamSynchronize(x->handler->cuda_ctx->stream) == cudaSuccess ? CF_OK : CF_ERR_CUDA_SYNC;
-  return cudaDeviceSynchronize() == cudaSuccess ? CF_OK : CF_ERR_CUDA_SYNC;
-#else
-  return CF_ERR_UNSUPPORTED;
-#endif
-}
-
 cf_status cf_math_print_shape(const cf_math *x)
 {
   const cf_math_metadata *metadata = CF_NULL;
@@ -181,7 +156,7 @@ cf_status cf_math_print_shape(const cf_math *x)
     host_data = malloc((size_t)x->byte_size);
     if(host_data == CF_NULL) return CF_ERR_OOM;
 
-    status = cf_math_print_copy_data(x, host_data);
+    status = cf_math_cpy_d2h(x, host_data, x->metadata->len);
     if(status != CF_OK)
     {
       free(host_data);

@@ -216,11 +216,11 @@ cf_status cf_math_cuda_context_reserve(cf_math_cuda_context *ctx, cf_usize bytes
 cf_status cf_math_cuda_context_destroy(cf_math_cuda_context *ctx);
 
 /**
- * @brief Initialize a CUDA-backed math handler and optionally reserve storage.
+ * @brief Initialize a math handler and optionally reserve storage.
  * @param handler Handler to initialize.
- * @param ctx Shared CUDA context used by the handler; it must outlive handler.
+ * @param ctx Shared CUDA context used by CUDA or pinned CPU handlers; it must outlive handler.
  * @param dtype Storage element dtype.
- * @param device Storage device; currently `CF_MATH_DEVICE_CUDA`.
+ * @param device Storage device.
  * @param flags Allocation flags.
  * @param optimized_for Operation classes this handler is optimized for.
  * @param capacity Initial storage capacity in bytes.
