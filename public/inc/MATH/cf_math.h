@@ -28,8 +28,6 @@
 #define CF_MATH_MAX_FREE_BLOCKS 64
 #define CF_MATH_MAX_ACTIVE_BLOCKS 256
 
-#define CF_CUDA_AVAILABLE
-
 #if defined(CF_CUDA_AVAILABLE)
   #include <cuda_runtime.h>
   #include <cublas_v2.h>
