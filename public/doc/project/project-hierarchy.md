@@ -32,7 +32,7 @@ public/inc/
   AI/                   Future AI graph/model/runtime/tokenizer APIs.
   ALLOCATOR/            Allocator interfaces and allocator placeholders.
   CONFIG/               Future config format APIs.
-  MATH/                 Math primitives and the cf_math tensor API.
+  MATH/                 Math primitives, cf_math tensor API, storage helpers.
   MEMORY/               Buffer and generic array containers.
   RUNTIME/              Status, types, time, IO, logging, random.
   SECURITY/             AES, hex, base64, future hash/HMAC/secure memory.
@@ -47,7 +47,7 @@ lib/src/
   ALLOCATOR/            Default allocator, debug allocator, placeholders.
   ASM/                  Assembly support files.
   CONFIG/               Placeholder implementations.
-  MATH/                 CUDA-source cf_math implementation with CPU fallback.
+  MATH/                 CUDA-source cf_math and storage implementations with CPU fallback.
   MEMORY/               Buffer and array implementation.
   RUNTIME/              Runtime support implementation.
   SECURITY/             AES, hex, base64, placeholders.
@@ -104,15 +104,15 @@ used by tests and diagnostics.
 ### Math
 
 - `cf_math`
-- `cf_math.cu` as the active implementation file, compiled by `nvcc` when CUDA
-  is available and by `gcc -x c` as a CPU fallback otherwise
+- `cf_math.cu` and `cf_math_storage.cu` as active implementation files,
+  compiled by `nvcc` when CUDA is available and by `gcc -x c` as a CPU fallback otherwise
 - legacy `cf_tensor` documentation retained for historical context
 
 Math now centers on the `cf_math` tensor layer:
 
 - non-owning `cf_math` views,
 - reusable dtype-aware shape metadata,
-- handler-owned CUDA storage arenas,
+- handler-owned `cf_math_arena` storage,
 - shared CUDA context handles instead of per-handler context copies,
 - free-list reuse for unbound slices,
 - automatic unbind/rebind slice lifecycle,

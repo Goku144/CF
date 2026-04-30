@@ -33,7 +33,8 @@ TEXT/
 
 The project uses `gcc`, `make`, `libm`, and `nasm`. CUDA is optional.
 
-The active math implementation is `cf_math` in `lib/src/MATH/cf_math.cu`.
+The active math implementation is split across `lib/src/MATH/cf_math.cu` and
+`lib/src/MATH/cf_math_storage.cu`.
 When `nvcc` is available, the Makefile compiles `.cu` sources with `nvcc` and
 enables CUDA headers. When `nvcc` is not available, the same file is compiled
 with `gcc -x c`, so CPU-only machines can still build the library.
@@ -132,13 +133,13 @@ Implemented math module:
 - `cf_math` is now a non-owning math view over handler-managed storage.
 - `cf_math_metadata` stores reusable shape, stride, length, shape-kind, and
   layout descriptions.
-- `cf_math_handle` owns descriptor/cache state and a CUDA storage arena, while
-  pointing to a shared `cf_math_cuda_context` instead of copying CUDA handles.
+- `cf_math_handle` owns descriptor/cache state and `cf_math_arena` storage,
+  while pointing to a shared `cf_math_cuda_context` instead of copying CUDA handles.
 - Primitive helpers remain available: `cf_math_g8_mul_mod`, rotate helpers, and
   `cf_usize` min/max helpers.
 - The active lifecycle supports CUDA context init/destroy, workspace reserve,
   metadata init, handler init/reserve/alloc/reset/destroy, and bind/unbind/rebind.
-- Handler storage uses an arena cursor plus free/active block tables so unbound
+- Handler storage uses `cf_math_arena` plus free/active block tables so unbound
   slices can be reused safely.
 - Operation APIs are being rebuilt on top of this handler model.
 
@@ -244,9 +245,9 @@ grow without changing layout later. These placeholders compile but do not expose
 real public APIs yet.
 
 The `cf_math` layer is currently focused on the handler foundation: shared CUDA
-contexts, reusable metadata, handler-owned storage arenas, and non-owning math
-views. Tensor operations, training kernels, graph execution, and multi-GPU
-coordination will be rebuilt on top of this model.
+contexts, reusable metadata, handler-owned `cf_math_arena` storage, and
+non-owning math views. Tensor operations, training kernels, graph execution,
+and multi-GPU coordination will be rebuilt on top of this model.
 
 ## Not Implemented Yet
 
