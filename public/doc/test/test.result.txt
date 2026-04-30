@@ -1,0 +1,2 @@
+cf_math lifecycle tests moved to app/src/app.c for the CUDA handler redesign.
+basic helper: rotl8(0x12, 4) = 0x21

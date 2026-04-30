@@ -22,8 +22,6 @@
 #include "RUNTIME/cf_status.h"
 #include "RUNTIME/cf_types.h"
 
-#define CF_CUDA_AVAILABLE
-
 #if defined(CF_CUDA_AVAILABLE)
   #include <cuda_runtime.h>
   #include <cublas_v2.h>
@@ -114,7 +112,7 @@ struct cf_math_cuda_workspace
 struct cf_math_cuda_context
 {
   int device_id;
-  
+
   cudaStream_t stream;
 
   cublasHandle_t      cublas;

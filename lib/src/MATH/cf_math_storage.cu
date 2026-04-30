@@ -288,6 +288,7 @@ cf_status cf_math_cuda_context_init(cf_math_cuda_context *ctx, cf_usize bytes, i
   ctx->device_id = device_id;
 
 #if !defined(CF_CUDA_AVAILABLE)
+  CF_UNUSED(bytes);
   return CF_ERR_UNSUPPORTED;
 #else
   if(cudaSetDevice(device_id) != cudaSuccess)
@@ -363,18 +364,21 @@ cf_status cf_math_cuda_context_init(cf_math_cuda_context *ctx, cf_usize bytes, i
     return CF_ERR_CUDA;
   }
 
-  void *ptr = CF_NULL;
-  if(cudaMalloc(&ptr, bytes) != cudaSuccess) return CF_ERR_CUDA_MEMORY;
-
-  if(ctx->cuda_workspace.ptr != CF_NULL)
+  if(bytes != 0)
   {
-    cudaFree(ptr);
-    return CF_ERR_CUDA_MEMORY;
-  }
+    void *ptr = CF_NULL;
+    if(cudaMalloc(&ptr, bytes) != cudaSuccess) return CF_ERR_CUDA_MEMORY;
 
-  ctx->cuda_workspace.ptr = ptr;
-  ctx->cuda_workspace.size = bytes;
-  if(bytes > ctx->cuda_workspace.high_water) ctx->cuda_workspace.high_water = bytes;
+    if(ctx->cuda_workspace.ptr != CF_NULL)
+    {
+      cudaFree(ptr);
+      return CF_ERR_CUDA_MEMORY;
+    }
+
+    ctx->cuda_workspace.ptr = ptr;
+    ctx->cuda_workspace.size = bytes;
+    if(bytes > ctx->cuda_workspace.high_water) ctx->cuda_workspace.high_water = bytes;
+  }
 
   return CF_OK;
 #endif
@@ -483,8 +487,6 @@ cf_status cf_math_cuda_context_destroy(cf_math_cuda_context *ctx)
     ctx->stream = CF_NULL;
   }
 
-  if(cudaFree(ctx->cuda_workspace.ptr) != cudaSuccess)return CF_ERR_CUDA_MEMORY;
-
   ctx->device_id = 0;
   ctx->cuda_workspace.ptr = CF_NULL;
   ctx->cuda_workspace.size = 0;
@@ -507,7 +509,7 @@ cf_status cf_math_handle_init(cf_math_handle_t *handler, cf_math_cuda_context *c
   handler->cuda_ctx = ctx;
   handler->storage.dtype = dtype;
   handler->storage.device = device;
-  handler->storage.allocator.backend = ctx;
+  handler->storage.allocator.backend = CF_NULL;
   handler->storage.allocator.mem_flag = flags;
 
   if(capacity != 0)

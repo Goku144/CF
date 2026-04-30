@@ -37,8 +37,8 @@ setup becomes pointer binding and offset arithmetic.
 ```text
 public/inc/MATH/cf_math.h          public API and struct layout
 public/inc/MATH/cf_math_storage.h  storage helper API
-lib/src/MATH/cf_math.cu            CUDA context lifecycle and binding helpers
-lib/src/MATH/cf_math_storage.cu    handler storage allocation and arena tracking
+lib/src/MATH/cf_math.cu            metadata, printing, and binding helpers
+lib/src/MATH/cf_math_storage.cu    CUDA context lifecycle, allocation, and arena tracking
 ```
 
 ## Core Objects
@@ -111,7 +111,6 @@ for.
 ```c
 struct cf_math_arena
 {
-  void *data_ptr;
   cf_usize offset;
   cf_usize capacity;
   cf_math_memory_block free_blocks[CF_MATH_MAX_FREE_BLOCKS];
@@ -121,9 +120,9 @@ struct cf_math_arena
 };
 ```
 
-The math arena tracks byte slices inside a handler allocation:
+The math arena tracks byte slices inside the base allocation stored in
+`storage.allocator.backend`:
 
-- `data_ptr`: base allocation.
 - `offset`: next arena byte offset.
 - `capacity`: allocated bytes.
 - `free_blocks`: reusable released slices.
@@ -143,7 +142,9 @@ struct cf_math_storage
 
 Storage combines the arena with its allocation interpretation:
 
-- `dtype`, `device`, `allocator`: allocation interpretation and policy.
+- `allocator.backend`: base allocation pointer owned by the handler.
+- `allocator.mem_flag`: allocation policy.
+- `dtype`, `device`: element and backend interpretation.
 
 ### `cf_math_memory_block`
 
@@ -197,9 +198,9 @@ being silently ignored.
 ## Lifecycle API
 
 ```c
-cf_status cf_math_cuda_context_init(cf_math_cuda_context *ctx, int device_id);
+cf_status cf_math_cuda_context_init(cf_math_cuda_context *ctx, cf_usize bytes, int device_id);
 cf_status cf_math_cuda_context_destroy(cf_math_cuda_context *ctx);
-cf_status cf_math_cuda_workspace_reserve(cf_math_cuda_context *ctx, cf_usize bytes);
+cf_status cf_math_cuda_context_reserve(cf_math_cuda_context *ctx, cf_usize bytes);
 
 cf_status cf_math_metadata_init(
   cf_math_metadata *metadata,
@@ -208,6 +209,8 @@ cf_status cf_math_metadata_init(
   cf_math_shape shape,
   cf_math_layout layout
 );
+
+cf_status cf_math_print_shape(const cf_math *x);
 
 cf_status cf_math_handle_init(
   cf_math_handle_t *handler,
@@ -242,6 +245,9 @@ active block reference count is only decremented.
 `cf_math_rebind` unbinds automatically and then binds to the new handler and
 metadata. No manual `free_current` flag is needed.
 
+`cf_math_print_shape` prints a readable summary of a math view: shape kind,
+rank, dimensions, strides, length, layout, dtype, device, and byte slice.
+
 ## Example
 
 ```c
@@ -251,7 +257,7 @@ cf_math_metadata meta = {0};
 cf_math x = {0};
 cf_usize dim[CF_MATH_MAX_RANK] = {2, 2};
 
-cf_math_cuda_context_init(&ctx, 0);
+cf_math_cuda_context_init(&ctx, 0, 0);
 cf_math_metadata_init(&meta, dim, 2, CF_MATH_SHAPE_MATRIX, CF_MATH_LAYOUT_ROW_MAJOR);
 cf_math_handle_init(
   &handler,
@@ -264,6 +270,7 @@ cf_math_handle_init(
 );
 
 cf_math_bind(&x, &handler, &meta);
+cf_math_print_shape(&x);
 cf_math_unbind(&x);
 
 cf_math_handle_destroy(&handler);

@@ -24,7 +24,6 @@
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
-#include <stdio.h>
 
 cf_u8 cf_math_g8_mul_mod(cf_u8 p, cf_u8 q)
 {
