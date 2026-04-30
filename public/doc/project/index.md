@@ -20,11 +20,9 @@ hand-written public documentation lives in `public/doc`.
   - Critical usage rules and failure modes.
 
 - [CF Math Layer Guide](cf-math-layer.md)
-  - Main `cf_math` tensor hierarchy.
-  - Every public math enum and struct.
-  - Every public `cf_math_*` function grouped by operation family.
-  - CPU reference behavior, CUDA dispatch intent, and current unsupported
-    training surfaces.
+  - Non-owning `cf_math` view model.
+  - Metadata, handler, storage, and CUDA context lifecycle.
+  - Why handler arenas and pointer rebinding make the new direction faster.
 
 - [Tensor And CUDA Backend](tensor-cuda.md)
   - Legacy `cf_tensor` backend notes.
@@ -53,10 +51,9 @@ CUDA sources. Without `nvcc`, it compiles the same CPU-compatible `.cu` source
 with `gcc -x c`, so machines without a CUDA toolkit can still build the
 library. A physical GPU is not required for compilation.
 
-`make app` runs CPU `cf_math` examples and only attempts its CUDA roundtrip
-example when CUDA runtime headers and a usable CUDA device are both available.
-`make test` runs the math-focused test entry point and skips GPU checks unless
-CUDA is truly available at build and runtime.
+`app/src/app.c` contains a CUDA handler lifecycle smoke example. Do not run it
+on machines without a usable CUDA device. The old broad math benchmark test has
+been removed while the handler-based math layer is rebuilt.
 
 For the current math tensor design, start with
 [CF Math Layer Guide](cf-math-layer.md).
