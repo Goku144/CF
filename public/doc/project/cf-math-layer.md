@@ -6,6 +6,7 @@ The current `cf_math` layer is built around a small split:
 cf_math          non-owning math view
 cf_math_metadata reusable shape/stride/layout description
 cf_math_handle   runtime/storage handler
+cf_math_arena    handler storage slice tracker
 cf_math_node     optional graph lineage node
 ```
 
@@ -34,8 +35,10 @@ setup becomes pointer binding and offset arithmetic.
 ## Files
 
 ```text
-public/inc/MATH/cf_math.h  public API and struct layout
-lib/src/MATH/cf_math.cu    CUDA lifecycle, handler storage, binding helpers
+public/inc/MATH/cf_math.h          public API and struct layout
+public/inc/MATH/cf_math_storage.h  storage helper API
+lib/src/MATH/cf_math.cu            CUDA context lifecycle and binding helpers
+lib/src/MATH/cf_math_storage.cu    handler storage allocation and arena tracking
 ```
 
 ## Core Objects
@@ -103,10 +106,10 @@ CUDA context; `cuda_ctx` points to shared runtime state that must outlive the
 handler. `optimized_for` marks which operation classes the handler is prepared
 for.
 
-### `cf_math_storage`
+### `cf_math_arena`
 
 ```c
-struct cf_math_storage
+struct cf_math_arena
 {
   void *data_ptr;
   cf_usize offset;
@@ -115,19 +118,31 @@ struct cf_math_storage
   cf_usize free_count;
   cf_math_memory_block active_blocks[CF_MATH_MAX_ACTIVE_BLOCKS];
   cf_usize active_count;
-  cf_math_dtype dtype;
-  cf_math_device device;
-  cf_math_allocator allocator;
 };
 ```
 
-Storage is a CUDA-aware arena:
+The math arena tracks byte slices inside a handler allocation:
 
 - `data_ptr`: base allocation.
 - `offset`: next arena byte offset.
 - `capacity`: allocated bytes.
 - `free_blocks`: reusable released slices.
 - `active_blocks`: slices currently used by one or more views.
+
+### `cf_math_storage`
+
+```c
+struct cf_math_storage
+{
+  cf_math_arena arena;
+  cf_math_dtype dtype;
+  cf_math_device device;
+  cf_math_allocator allocator;
+};
+```
+
+Storage combines the arena with its allocation interpretation:
+
 - `dtype`, `device`, `allocator`: allocation interpretation and policy.
 
 ### `cf_math_memory_block`

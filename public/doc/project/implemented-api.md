@@ -721,7 +721,7 @@ Critical points:
 
 ## Math
 
-Header: `public/inc/MATH/cf_math.h`
+Headers: `public/inc/MATH/cf_math.h`, `public/inc/MATH/cf_math_storage.h`
 
 The current math layer is documented in detail in
 [CF Math Layer Guide](cf-math-layer.md). That page is the complete
@@ -734,7 +734,7 @@ At a high level, the public math API now includes:
 - non-owning `cf_math` views,
 - reusable `cf_math_metadata` shape descriptions,
 - shared CUDA context and workspace lifecycle,
-- handler-backed CUDA storage arenas,
+- handler-backed `cf_math_arena` storage,
 - bind, unbind, and rebind lifecycle helpers.
 
 The current implementation is focused on the runtime foundation. Operation
@@ -776,10 +776,10 @@ cf_status cf_math_rebind(cf_math *x, cf_math_handle_t *handler, cf_math_metadata
 ```
 
 These functions create CUDA runtime state, reusable metadata, and handler-owned
-storage arenas. A handler points at a shared CUDA context instead of copying
-backend handles. `cf_math` itself is a non-owning view over a handler slice.
-Unbinding automatically returns a slice to the handler free-list when no other
-view references it.
+`cf_math_arena` storage. A handler points at a shared CUDA context instead of
+copying backend handles. `cf_math` itself is a non-owning view over a handler
+slice. Unbinding automatically returns a slice to the handler free-list when no
+other view references it.
 
 ### Operation Families
 

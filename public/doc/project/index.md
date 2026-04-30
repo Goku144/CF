@@ -45,11 +45,12 @@ make app
 make test
 ```
 
-CUDA is optional. The active math implementation is `cf_math` in
-`lib/src/MATH/cf_math.cu`. With `nvcc`, the Makefile compiles `.cu` sources as
-CUDA sources. Without `nvcc`, it compiles the same CPU-compatible `.cu` source
-with `gcc -x c`, so machines without a CUDA toolkit can still build the
-library. A physical GPU is not required for compilation.
+CUDA is optional. The active math implementation is split across
+`lib/src/MATH/cf_math.cu` and `lib/src/MATH/cf_math_storage.cu`. With `nvcc`,
+the Makefile compiles `.cu` sources as CUDA sources. Without `nvcc`, it compiles
+the same CPU-compatible `.cu` sources with `gcc -x c`, so machines without a
+CUDA toolkit can still build the library. A physical GPU is not required for
+compilation.
 
 `app/src/app.c` contains a CUDA handler lifecycle smoke example. Do not run it
 on machines without a usable CUDA device. The old broad math benchmark test has
