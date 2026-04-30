@@ -19,6 +19,8 @@
 #include "MATH/cf_math_print.h"
 
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 static const char *cf_math_shape_name(cf_math_shape shape)
 {
@@ -73,9 +75,77 @@ static const char *cf_math_device_name(cf_math_device device)
   return "unknown";
 }
 
+static void cf_math_print_data_values(const cf_math *x, const void *host_data)
+{
+  const cf_math_metadata *metadata = x->metadata;
+  cf_math_dtype dtype = x->handler->storage.dtype;
+  cf_usize count = metadata->len < 16 ? metadata->len : 16;
+
+  printf("  data: [");
+  for(cf_usize i = 0; i < count; ++i)
+  {
+    printf("%s", i == 0 ? "" : ", ");
+    switch(dtype)
+    {
+      case CF_MATH_DTYPE_BOOL:
+        printf("%s", ((const cf_bool *)host_data)[i] == CF_TRUE ? "true" : "false");
+        break;
+      case CF_MATH_DTYPE_I8:
+        printf("%d", (int)((const cf_i8 *)host_data)[i]);
+        break;
+      case CF_MATH_DTYPE_U8:
+      case CF_MATH_DTYPE_FP8E4M3:
+      case CF_MATH_DTYPE_FP8E5M2:
+        printf("%u", (unsigned)((const cf_u8 *)host_data)[i]);
+        break;
+      case CF_MATH_DTYPE_I32:
+        printf("%d", ((const cf_i32 *)host_data)[i]);
+        break;
+      case CF_MATH_DTYPE_F64:
+        printf("%g", ((const double *)host_data)[i]);
+        break;
+      case CF_MATH_DTYPE_F32:
+        printf("%g", (double)((const float *)host_data)[i]);
+        break;
+      case CF_MATH_DTYPE_F16:
+      case CF_MATH_DTYPE_BF16:
+        printf("0x%04x", (unsigned)((const cf_u16 *)host_data)[i]);
+        break;
+    }
+  }
+  if(metadata->len > count) printf(", ...");
+  printf("]\n");
+}
+
+static cf_status cf_math_print_copy_data(const cf_math *x, void *host_data)
+{
+  cf_math_mem_flags flags = x->handler->storage.allocator.mem_flag;
+
+  if(x->byte_size == 0) return CF_OK;
+  if(x->data == CF_NULL || host_data == CF_NULL) return CF_ERR_NULL;
+
+  if((flags & CF_MATH_MEM_PINNED) != 0 || x->handler->storage.device == CF_MATH_DEVICE_CPU)
+  {
+    memcpy(host_data, x->data, x->byte_size);
+    return CF_OK;
+  }
+
+#if defined(CF_CUDA_AVAILABLE)
+  if(cudaMemcpy(host_data, x->data, x->byte_size, cudaMemcpyDefault) != cudaSuccess)
+    return CF_ERR_CUDA_COPY;
+  if(x->handler->cuda_ctx != CF_NULL && x->handler->cuda_ctx->stream != CF_NULL)
+    return cudaStreamSynchronize(x->handler->cuda_ctx->stream) == cudaSuccess ? CF_OK : CF_ERR_CUDA_SYNC;
+  return cudaDeviceSynchronize() == cudaSuccess ? CF_OK : CF_ERR_CUDA_SYNC;
+#else
+  return CF_ERR_UNSUPPORTED;
+#endif
+}
+
 cf_status cf_math_print_shape(const cf_math *x)
 {
   const cf_math_metadata *metadata = CF_NULL;
+  void *host_data = CF_NULL;
+  cf_status status = CF_OK;
 
   if(x == CF_NULL) return CF_ERR_NULL;
   if(x->metadata == CF_NULL) return CF_ERR_STATE;
@@ -106,6 +176,21 @@ cf_status cf_math_print_shape(const cf_math *x)
     printf("  device: unknown\n");
   }
   printf("  bytes: offset=%zu size=%zu\n", (size_t)x->byte_offset, (size_t)x->byte_size);
+  if(x->handler != CF_NULL && x->data != CF_NULL && x->byte_size != 0)
+  {
+    host_data = malloc((size_t)x->byte_size);
+    if(host_data == CF_NULL) return CF_ERR_OOM;
+
+    status = cf_math_print_copy_data(x, host_data);
+    if(status != CF_OK)
+    {
+      free(host_data);
+      return status;
+    }
+
+    cf_math_print_data_values(x, host_data);
+    free(host_data);
+  }
   printf("}\n");
 
   return CF_OK;
