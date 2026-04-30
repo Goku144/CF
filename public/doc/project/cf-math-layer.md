@@ -93,14 +93,15 @@ struct cf_math_handle
 {
   cf_math_handle_opt optimized_for;
   cf_math_desc_cache desc_cache;
-  cf_math_cuda_context cuda_ctx;
+  cf_math_cuda_context *cuda_ctx;
   cf_math_storage storage;
 };
 ```
 
-The handler owns the runtime side: CUDA context snapshot, descriptor cache, and
-storage arena. `optimized_for` marks which operation classes the handler is
-prepared for.
+The handler owns descriptor cache and storage arena state. It does not own the
+CUDA context; `cuda_ctx` points to shared runtime state that must outlive the
+handler. `optimized_for` marks which operation classes the handler is prepared
+for.
 
 ### `cf_math_storage`
 
