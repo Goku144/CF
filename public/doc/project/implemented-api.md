@@ -733,7 +733,7 @@ At a high level, the public math API now includes:
 - dtype/layout/device metadata,
 - non-owning `cf_math` views,
 - reusable `cf_math_metadata` shape descriptions,
-- CUDA context and workspace lifecycle,
+- shared CUDA context and workspace lifecycle,
 - handler-backed CUDA storage arenas,
 - bind, unbind, and rebind lifecycle helpers.
 
@@ -776,7 +776,8 @@ cf_status cf_math_rebind(cf_math *x, cf_math_handle_t *handler, cf_math_metadata
 ```
 
 These functions create CUDA runtime state, reusable metadata, and handler-owned
-storage arenas. `cf_math` itself is a non-owning view over a handler slice.
+storage arenas. A handler points at a shared CUDA context instead of copying
+backend handles. `cf_math` itself is a non-owning view over a handler slice.
 Unbinding automatically returns a slice to the handler free-list when no other
 view references it.
 

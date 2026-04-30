@@ -42,6 +42,7 @@ int main(void)
     0
   );
   if(app_status("handle_init", status) != 0) goto cleanup_ctx;
+  printf("%-32s %s\n", "shared cuda context", handler.cuda_ctx == &ctx ? "yes" : "no");
 
   status = cf_math_bind(&a, &handler, &matrix_meta);
   if(app_status("bind a", status) != 0) goto cleanup_handler;

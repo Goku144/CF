@@ -52,8 +52,8 @@ Build and run the example app:
 make app
 ```
 
-The app runs CPU `cf_math` examples and only attempts the CUDA roundtrip
-example when CUDA runtime headers and a usable CUDA device are both available.
+The app is a CUDA handler lifecycle smoke example. Do not run it on machines
+without a usable CUDA device.
 
 Build and run the tests:
 
@@ -61,8 +61,8 @@ Build and run the tests:
 make test
 ```
 
-The tests exercise the `cf_math` CPU reference surface and skip GPU checks
-unless CUDA is truly available at build and runtime.
+The old broad math benchmark tests have been removed while the handler-based
+math layer is rebuilt. Current tests keep a small smoke entry point.
 
 Clean generated build outputs:
 
@@ -129,43 +129,50 @@ Implemented allocator modules:
 
 Implemented math module:
 
-- `cf_math` now contains the main tensor object, dtype/layout/device metadata,
-  reference-counted shared storage, CUDA context fields, descriptor caches,
-  sparse sidecars, dropout sidecars, RNN sidecars, and the public operation map.
+- `cf_math` is now a non-owning math view over handler-managed storage.
+- `cf_math_metadata` stores reusable shape, stride, length, shape-kind, and
+  layout descriptions.
+- `cf_math_handle` owns descriptor/cache state and a CUDA storage arena, while
+  pointing to a shared `cf_math_cuda_context` instead of copying CUDA handles.
 - Primitive helpers remain available: `cf_math_g8_mul_mod`, rotate helpers, and
   `cf_usize` min/max helpers.
-- CPU reference paths exist for lifecycle, views, initialization, random
-  filling, elementwise arithmetic, reductions, dense linear algebra,
-  activations, softmax/losses, attention pieces, dropout, embedding,
-  optimizers, sparse CSR conversion/ops, shape manipulation, and several
-  convolution/normalization paths.
-- CUDA-aware context/allocation/copy hooks are guarded by CUDA availability.
-  High-performance CUDA kernels and vendor-library dispatch are intended to
-  live behind the same `cf_math_*` API surface.
+- The active lifecycle supports CUDA context init/destroy, workspace reserve,
+  metadata init, handler init/reserve/alloc/reset/destroy, and bind/unbind/rebind.
+- Handler storage uses an arena cursor plus free/active block tables so unbound
+  slices can be reused safely.
+- Operation APIs are being rebuilt on top of this handler model.
 
 Basic example:
 
 ```c
-cf_math a = {0};
-cf_math b = {0};
-cf_math out = {0};
-cf_usize dim[CF_MATH_HIGHEST_RANK] = {2, 3};
+cf_math_cuda_context ctx = {0};
+cf_math_handle_t handler = {0};
+cf_math_metadata meta = {0};
+cf_math x = {0};
+cf_usize dim[CF_MATH_MAX_RANK] = {2, 2};
 
-cf_math_alloc(&a, dim, 2, CF_DTYPE_F64, CF_DEVICE_CPU, CF_MEM_DEFAULT, CF_NULL);
-cf_math_alloc(&b, dim, 2, CF_DTYPE_F64, CF_DEVICE_CPU, CF_MEM_DEFAULT, CF_NULL);
+cf_math_cuda_context_init(&ctx, 0);
+cf_math_metadata_init(&meta, dim, 2, CF_MATH_SHAPE_MATRIX, CF_MATH_LAYOUT_ROW_MAJOR);
+cf_math_handle_init(
+  &handler,
+  &ctx,
+  CF_MATH_DTYPE_F32,
+  CF_MATH_DEVICE_CUDA,
+  CF_MATH_MEM_MANAGED,
+  CF_MATH_HANDLE_OPT_MATMUL,
+  0
+);
 
-cf_math_ones(&a, CF_NULL);
-cf_math_fill(&b, 2.0, CF_NULL);
-cf_math_add(&out, &a, &b, CF_NULL); /* out = a + b */
+cf_math_bind(&x, &handler, &meta);
+cf_math_unbind(&x);
 
-cf_math_free(&out, CF_NULL);
-cf_math_free(&b, CF_NULL);
-cf_math_free(&a, CF_NULL);
+cf_math_handle_destroy(&handler);
+cf_math_cuda_context_destroy(&ctx);
 ```
 
 The detailed math reference is in
 `public/doc/project/cf-math-layer.md`. It explains every public math struct and
-every public `cf_math_*` function.
+the active `cf_math_*` lifecycle functions.
 
 ## Documentation
 
@@ -186,7 +193,7 @@ Available pages:
 - `project-hierarchy.md`: repository layout, implemented modules, placeholders,
   and dependency direction.
 - `implemented-api.md`: function-by-function reference for implemented APIs.
-- `cf-math-layer.md`: complete `cf_math` tensor/lifecycle/operation reference.
+- `cf-math-layer.md`: current `cf_math` view/metadata/handler lifecycle guide.
 - `tensor-cuda.md`: legacy `cf_tensor` layout, CPU/GPU setup, CUDA behavior,
   and performance notes.
 - `extension-guide.md`: how to add modules, functions, tests, and CUDA tensor
@@ -194,23 +201,8 @@ Available pages:
 
 ## Tests
 
-The test suite currently covers allocator, array, ASCII, string, hex, Base64,
-random, log, runtime error checks, math primitives, tensor CPU behavior, tensor
-CUDA declarations when compiled with CUDA support, AES block vectors, AES
-PKCS#7 padding, file roundtrips, and type helpers.
-
-Latest local test result:
-
-```text
-Passed : 484
-Failed : 0
-```
-
-The test report is written to:
-
-```text
-public/doc/test/test.result.txt
-```
+The current test entry point is intentionally small while the math layer is
+being rebuilt around handlers. Do not rely on old generated benchmark reports.
 
 AES padding file artifacts are written under:
 
@@ -251,10 +243,10 @@ The codebase still contains placeholder modules so the project structure can
 grow without changing layout later. These placeholders compile but do not expose
 real public APIs yet.
 
-The `cf_math` layer has a broad public tensor operation map with CPU reference
-paths and CUDA-aware context/allocation hooks. RNN/LSTM/GRU, complete MHA
-backward, and multi-GPU all-reduce still need their full CUDA/library-backed
-training implementations.
+The `cf_math` layer is currently focused on the handler foundation: shared CUDA
+contexts, reusable metadata, handler-owned storage arenas, and non-owning math
+views. Tensor operations, training kernels, graph execution, and multi-GPU
+coordination will be rebuilt on top of this model.
 
 ## Not Implemented Yet
 

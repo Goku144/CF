@@ -51,7 +51,6 @@
   typedef void *cudnnConvolutionDescriptor_t;
   typedef void *cudnnRNNDataDescriptor_t;
   typedef void *cublasLtMatrixLayout_t;
-  typedef void *ncclComm_t;
 #endif
 
 typedef struct cf_math_cuda_workspace cf_math_cuda_workspace;
@@ -102,7 +101,7 @@ typedef enum cf_math_mem_flags
   CF_MATH_MEM_POOLED      = 1 << 2,
   CF_MATH_MEM_ALIGNED128  = 1 << 3,
   CF_MATH_MEM_READ_ONLY   = 1 << 4,
-  CF_MATH_MEM_PEER_MAPPED = 1 << 5
+  CF_MATH_MEM_PEER_MAPPED = 1 << 5,
 } cf_math_mem_flags;
 
 typedef enum cf_math_shape
@@ -222,11 +221,18 @@ struct cf_math_desc_cache
   cublasLtMatrixLayout_t  lt_layout;
 };
 
+/**
+ * @brief Runtime/storage handler shared by one or more non-owning math views.
+ *
+ * The handler owns storage and descriptor state, but it does not own the CUDA
+ * context. `cuda_ctx` points to a context whose lifetime must outlive the
+ * handler.
+ */
 struct cf_math_handle
 {
   cf_math_handle_opt optimized_for;
   cf_math_desc_cache desc_cache;
-  cf_math_cuda_context cuda_ctx;
+  cf_math_cuda_context *cuda_ctx;
   cf_math_storage storage;
 };
 
@@ -322,7 +328,19 @@ cf_usize cf_math_min_usize(cf_usize a, cf_usize b);
  */
 cf_usize cf_math_max_usize(cf_usize a, cf_usize b);
 
+/**
+ * @brief Initialize CUDA runtime handles for a device.
+ * @param ctx Context object to initialize.
+ * @param device_id CUDA device index.
+ * @return `CF_OK`, `CF_ERR_NULL`, `CF_ERR_INVALID`, `CF_ERR_UNSUPPORTED`, or a CUDA init error.
+ */
 cf_status cf_math_cuda_context_init(cf_math_cuda_context *ctx, int device_id);
+
+/**
+ * @brief Destroy CUDA runtime handles and workspace owned by a context.
+ * @param ctx Context object to destroy.
+ * @return `CF_OK`, `CF_ERR_NULL`, or a CUDA cleanup error.
+ */
 cf_status cf_math_cuda_context_destroy(cf_math_cuda_context *ctx);
 
 /**
@@ -332,7 +350,7 @@ cf_status cf_math_cuda_context_destroy(cf_math_cuda_context *ctx);
  * @param rank Number of active dimensions.
  * @param shape Coarse shape kind.
  * @param layout Memory layout interpretation.
- * @return `CF_OK`, `CF_ERR_NULL`, or `CF_ERR_INVALID`.
+ * @return `CF_OK`, `CF_ERR_NULL`, `CF_ERR_INVALID`, or `CF_ERR_OVERFLOW`.
  */
 cf_status cf_math_metadata_init(cf_math_metadata *metadata, cf_usize dim[CF_MATH_MAX_RANK], cf_usize rank, cf_math_shape shape, cf_math_layout layout);
 
@@ -340,14 +358,14 @@ cf_status cf_math_metadata_init(cf_math_metadata *metadata, cf_usize dim[CF_MATH
  * @brief Reserve reusable CUDA operation workspace.
  * @param ctx CUDA context that owns the workspace.
  * @param bytes Minimum workspace capacity in bytes.
- * @return `CF_OK`, `CF_ERR_NULL`, or `CF_ERR_CUDA_MEMORY`.
+ * @return `CF_OK`, `CF_ERR_NULL`, `CF_ERR_UNSUPPORTED`, or a CUDA memory error.
  */
 cf_status cf_math_cuda_workspace_reserve(cf_math_cuda_context *ctx, cf_usize bytes);
 
 /**
  * @brief Initialize a CUDA-backed math handler and optionally reserve storage.
  * @param handler Handler to initialize.
- * @param ctx Initialized CUDA context used by the handler.
+ * @param ctx Shared CUDA context used by the handler; it must outlive handler.
  * @param dtype Storage element dtype.
  * @param device Storage device; currently `CF_MATH_DEVICE_CUDA`.
  * @param flags Allocation flags.
@@ -361,7 +379,7 @@ cf_status cf_math_handle_init(cf_math_handle_t *handler, cf_math_cuda_context *c
  * @brief Ensure handler storage has at least the requested byte capacity.
  * @param handler Handler whose storage should grow.
  * @param bytes Required storage capacity in bytes.
- * @return `CF_OK`, `CF_ERR_NULL`, `CF_ERR_UNSUPPORTED`, or CUDA memory errors.
+ * @return `CF_OK`, `CF_ERR_NULL`, `CF_ERR_STATE`, `CF_ERR_UNSUPPORTED`, or CUDA memory errors.
  */
 cf_status cf_math_handle_reserve(cf_math_handle_t *handler, cf_usize bytes);
 
@@ -383,7 +401,7 @@ void cf_math_handle_reset(cf_math_handle_t *handler);
 /**
  * @brief Destroy handler-owned storage and descriptor cache.
  * @param handler Handler to destroy.
- * @return `CF_OK`, `CF_ERR_NULL`, or a CUDA cleanup error.
+ * @return `CF_OK`, `CF_ERR_NULL`, `CF_ERR_STATE`, `CF_ERR_UNSUPPORTED`, or a CUDA cleanup error.
  */
 cf_status cf_math_handle_destroy(cf_math_handle_t *handler);
 
@@ -392,7 +410,7 @@ cf_status cf_math_handle_destroy(cf_math_handle_t *handler);
  * @param x Math view to bind.
  * @param handler Runtime/storage handler.
  * @param metadata Shape/layout metadata.
- * @return `CF_OK` or `CF_ERR_NULL`.
+ * @return `CF_OK`, `CF_ERR_NULL`, `CF_ERR_INVALID`, `CF_ERR_BOUNDS`, `CF_ERR_OVERFLOW`, or CUDA memory errors.
  */
 cf_status cf_math_bind(cf_math *x, cf_math_handle_t *handler, cf_math_metadata *metadata);
 

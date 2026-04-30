@@ -113,9 +113,10 @@ Math now centers on the `cf_math` tensor layer:
 - non-owning `cf_math` views,
 - reusable dtype-aware shape metadata,
 - handler-owned CUDA storage arenas,
+- shared CUDA context handles instead of per-handler context copies,
 - free-list reuse for unbound slices,
 - automatic unbind/rebind slice lifecycle,
-- CUDA context handles, workspace metadata, and descriptor caches.
+- reusable workspace metadata and descriptor caches.
 
 The detailed math hierarchy and function reference is documented in
 [CF Math Layer Guide](cf-math-layer.md).
