@@ -735,6 +735,7 @@ At a high level, the public math API now includes:
 - reusable `cf_math_metadata` shape descriptions,
 - shared CUDA context and workspace lifecycle,
 - handler-backed `cf_math_arena` storage,
+- readable `cf_math` shape printing,
 - bind, unbind, and rebind lifecycle helpers.
 
 The current implementation is focused on the runtime foundation. Operation
@@ -759,11 +760,12 @@ min/max.
 ### Metadata, Handler, And Context Lifecycle
 
 ```c
-cf_status cf_math_cuda_context_init(cf_math_cuda_context *ctx, int device_id);
+cf_status cf_math_cuda_context_init(cf_math_cuda_context *ctx, cf_usize bytes, int device_id);
 cf_status cf_math_cuda_context_destroy(cf_math_cuda_context *ctx);
-cf_status cf_math_cuda_workspace_reserve(cf_math_cuda_context *ctx, cf_usize bytes);
+cf_status cf_math_cuda_context_reserve(cf_math_cuda_context *ctx, cf_usize bytes);
 
 cf_status cf_math_metadata_init(...);
+cf_status cf_math_print_shape(const cf_math *x);
 cf_status cf_math_handle_init(...);
 cf_status cf_math_handle_reserve(cf_math_handle_t *handler, cf_usize bytes);
 cf_status cf_math_handle_alloc(cf_math_handle_t *handler, cf_usize bytes, void **ptr);

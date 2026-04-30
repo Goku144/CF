@@ -23,7 +23,7 @@ int main(void)
   cf_status status = CF_OK;
   cf_usize first_offset = 0;
 
-  status = cf_math_cuda_context_init(&ctx, 0);
+  status = cf_math_cuda_context_init(&ctx, 0, 0);
   if(app_status("cuda_context_init", status) != 0) return 0;
 
   status = cf_math_metadata_init(&matrix_meta, matrix_dim, 2, CF_MATH_SHAPE_MATRIX, CF_MATH_LAYOUT_ROW_MAJOR);
