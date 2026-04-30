@@ -186,6 +186,24 @@ cf_status cf_math_metadata_init(cf_math_metadata *metadata, cf_usize dim[CF_MATH
 cf_status cf_math_print_shape(const cf_math *x);
 
 /**
+ * @brief Copy host data into a bound math view.
+ * @param dst Bound math view that receives the data.
+ * @param host_data CPU-readable source buffer.
+ * @param count Number of elements to copy.
+ * @return `CF_OK`, `CF_ERR_NULL`, `CF_ERR_STATE`, `CF_ERR_BOUNDS`, `CF_ERR_OVERFLOW`, or a copy/sync error.
+ */
+cf_status cf_math_cpy_h2d(cf_math *dst, const void *host_data, cf_usize count);
+
+/**
+ * @brief Copy data from a bound math view into host memory.
+ * @param src Bound math view to read.
+ * @param host_data CPU-writeable destination buffer.
+ * @param count Number of elements to copy.
+ * @return `CF_OK`, `CF_ERR_NULL`, `CF_ERR_STATE`, `CF_ERR_BOUNDS`, `CF_ERR_OVERFLOW`, or a copy/sync error.
+ */
+cf_status cf_math_cpy_d2h(const cf_math *src, void *host_data, cf_usize count);
+
+/**
  * @brief Bind a non-owning math view to a handler and metadata.
  * @param x Math view to bind.
  * @param handler Runtime/storage handler.

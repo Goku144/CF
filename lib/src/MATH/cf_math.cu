@@ -186,6 +186,74 @@ cf_status cf_math_bind(cf_math *x, cf_math_handle_t *handler, cf_math_metadata *
   return CF_OK;
 }
 
+#if defined(CF_CUDA_AVAILABLE)
+static cf_status cf_math_copy_sync(const cf_math_handle_t *handler)
+{
+  if(handler != CF_NULL && handler->cuda_ctx != CF_NULL && handler->cuda_ctx->stream != CF_NULL)
+    return cudaStreamSynchronize(handler->cuda_ctx->stream) == cudaSuccess ? CF_OK : CF_ERR_CUDA_SYNC;
+  return cudaDeviceSynchronize() == cudaSuccess ? CF_OK : CF_ERR_CUDA_SYNC;
+}
+#endif
+
+static cf_status cf_math_copy_bytes(const cf_math *x, void *dst, const void *src, cf_usize bytes)
+{
+  if(bytes == 0) return CF_OK;
+  if(x == CF_NULL || dst == CF_NULL || src == CF_NULL) return CF_ERR_NULL;
+  if(x->handler == CF_NULL) return CF_ERR_STATE;
+
+  if(x->handler->storage.device == CF_MATH_DEVICE_CPU || (x->handler->storage.allocator.mem_flag & CF_MATH_MEM_PINNED) != 0)
+  {
+    memcpy(dst, src, bytes);
+    return CF_OK;
+  }
+
+#if defined(CF_CUDA_AVAILABLE)
+  if(cudaMemcpy(dst, src, (size_t)bytes, cudaMemcpyDefault) != cudaSuccess)
+    return CF_ERR_CUDA_COPY;
+  return cf_math_copy_sync(x->handler);
+#else
+  return CF_ERR_UNSUPPORTED;
+#endif
+}
+
+cf_status cf_math_cpy_h2d(cf_math *dst, const void *host_data, cf_usize count)
+{
+  cf_usize elem_size = 0;
+  cf_usize bytes = 0;
+
+  if(dst == CF_NULL || host_data == CF_NULL) return CF_ERR_NULL;
+  if(dst->handler == CF_NULL || dst->metadata == CF_NULL || dst->data == CF_NULL) return CF_ERR_STATE;
+  if(count > dst->metadata->len) return CF_ERR_BOUNDS;
+
+  elem_size = cf_math_dtype_size(dst->handler->storage.dtype);
+  if(elem_size == 0) return CF_ERR_INVALID;
+  if(count > (cf_usize)-1 / elem_size) return CF_ERR_OVERFLOW;
+
+  bytes = count * elem_size;
+  if(bytes > dst->byte_size) return CF_ERR_BOUNDS;
+
+  return cf_math_copy_bytes(dst, dst->data, host_data, bytes);
+}
+
+cf_status cf_math_cpy_d2h(const cf_math *src, void *host_data, cf_usize count)
+{
+  cf_usize elem_size = 0;
+  cf_usize bytes = 0;
+
+  if(src == CF_NULL || host_data == CF_NULL) return CF_ERR_NULL;
+  if(src->handler == CF_NULL || src->metadata == CF_NULL || src->data == CF_NULL) return CF_ERR_STATE;
+  if(count > src->metadata->len) return CF_ERR_BOUNDS;
+
+  elem_size = cf_math_dtype_size(src->handler->storage.dtype);
+  if(elem_size == 0) return CF_ERR_INVALID;
+  if(count > (cf_usize)-1 / elem_size) return CF_ERR_OVERFLOW;
+
+  bytes = count * elem_size;
+  if(bytes > src->byte_size) return CF_ERR_BOUNDS;
+
+  return cf_math_copy_bytes(src, host_data, src->data, bytes);
+}
+
 cf_status cf_math_rebind(cf_math *x, cf_math_handle_t *handler, cf_math_metadata *metadata)
 {
   cf_status status = CF_OK;
