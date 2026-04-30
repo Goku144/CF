@@ -731,26 +731,15 @@ At a high level, the public math API now includes:
 
 - primitive AES/rotate/size helpers,
 - dtype/layout/device metadata,
-- `cf_math` tensor storage and view lifecycle,
-- CUDA context and workspace management,
-- initialization and random functions,
-- elementwise arithmetic,
-- reductions,
-- dense linear algebra,
-- convolution surfaces,
-- normalization surfaces,
-- activation functions,
-- softmax and losses,
-- attention helpers,
-- dropout,
-- embedding,
-- RNN/LSTM/GRU surfaces,
-- sparse CSR operations,
-- optimizer math,
-- shape manipulation.
+- non-owning `cf_math` views,
+- reusable `cf_math_metadata` shape descriptions,
+- CUDA context and workspace lifecycle,
+- handler-backed CUDA storage arenas,
+- bind, unbind, and rebind lifecycle helpers.
 
-The broad operation surface lets CPU reference paths and later CUDA library
-dispatch share stable function names.
+The current implementation is focused on the runtime foundation. Operation
+families will be layered on top of handlers after allocation, binding, and
+metadata are stable.
 
 ### Primitive Math Helpers
 
@@ -762,75 +751,39 @@ cf_u32 cf_math_rotl32(cf_u32 x, cf_u8 n);
 cf_u32 cf_math_rotr32(cf_u32 x, cf_u8 n);
 cf_usize cf_math_min_usize(cf_usize a, cf_usize b);
 cf_usize cf_math_max_usize(cf_usize a, cf_usize b);
-cf_usize cf_math_dtype_size(cf_math_dtype dtype);
 ```
 
-These helpers cover AES finite-field multiplication, bit rotation, size min/max,
-and dtype byte-size lookup.
+These helpers cover AES finite-field multiplication, bit rotation, and size
+min/max.
 
-### Tensor Lifecycle And Context
+### Metadata, Handler, And Context Lifecycle
 
 ```c
-cf_status cf_math_context_init(cf_math_cuda_context *ctx, int device_id);
-cf_status cf_math_context_destroy(cf_math_cuda_context *ctx);
-cf_status cf_math_workspace_reserve(cf_math_cuda_context *ctx, cf_usize bytes);
+cf_status cf_math_cuda_context_init(cf_math_cuda_context *ctx, int device_id);
+cf_status cf_math_cuda_context_destroy(cf_math_cuda_context *ctx);
+cf_status cf_math_cuda_workspace_reserve(cf_math_cuda_context *ctx, cf_usize bytes);
 
-cf_status cf_math_alloc(...);
-cf_status cf_math_free(cf_math *x, cf_math_cuda_context *ctx);
-cf_status cf_math_alloc_pinned(...);
-cf_status cf_math_alloc_managed(...);
-cf_status cf_math_view(...);
-cf_status cf_math_contiguous(...);
-cf_status cf_math_to_device(...);
-cf_status cf_math_to_host(...);
-cf_status cf_math_clone(...);
+cf_status cf_math_metadata_init(...);
+cf_status cf_math_handle_init(...);
+cf_status cf_math_handle_reserve(cf_math_handle_t *handler, cf_usize bytes);
+cf_status cf_math_handle_alloc(cf_math_handle_t *handler, cf_usize bytes, void **ptr);
+void cf_math_handle_reset(cf_math_handle_t *handler);
+cf_status cf_math_handle_destroy(cf_math_handle_t *handler);
+
+cf_status cf_math_bind(cf_math *x, cf_math_handle_t *handler, cf_math_metadata *metadata);
+cf_status cf_math_unbind(cf_math *x);
+cf_status cf_math_rebind(cf_math *x, cf_math_handle_t *handler, cf_math_metadata *metadata);
 ```
 
-These functions create, move, clone, view, and free `cf_math` tensors. They are
-the foundation for every higher-level operation.
+These functions create CUDA runtime state, reusable metadata, and handler-owned
+storage arenas. `cf_math` itself is a non-owning view over a handler slice.
+Unbinding automatically returns a slice to the handler free-list when no other
+view references it.
 
 ### Operation Families
 
-The complete list is intentionally large. See
-[CF Math Layer Guide](cf-math-layer.md) for detailed behavior and
-`public/inc/MATH/cf_math.h` for exact signatures.
-
-```text
-Initialization/random:
-  cf_math_fill, cf_math_zeros, cf_math_ones, cf_math_rand_uniform,
-  cf_math_rand_normal, cf_math_rand_bernoulli, Xavier/Kaiming/orthogonal/eye.
-
-Elementwise:
-  add, sub, mul, div, scalar variants, pow, sqrt, rsqrt, exp, log, abs, neg,
-  clamp, sign.
-
-Reductions:
-  sum, mean, var, std, norms, min/max, argmin/argmax, dot, cumsum.
-
-Linear algebra:
-  matmul, transposed matmul, batched matmul, linear layers, backward helpers,
-  outer, matvec, transpose, scale.
-
-Convolution:
-  conv1d, conv2d, conv3d, depthwise, dilated, transpose, backward data/filter/bias.
-
-Normalization:
-  batch norm, layer norm, instance norm, group norm, RMS norm.
-
-Activations:
-  ReLU, leaky ReLU, ELU, sigmoid, tanh, GELU, Swish, SiLU, softplus, Mish.
-
-Softmax/loss:
-  softmax, log-softmax, cross entropy, NLL, MSE, BCE, Huber, focal.
-
-Attention:
-  scores, mask add, softmax, context, projection, MHA forward/backward surface,
-  attention dropout, RoPE, causal mask.
-
-Dropout/embedding/RNN/sparse/optimizer/shape:
-  dropout forward/backward, embedding forward/backward, RNN/LSTM/GRU surfaces,
-  CSR sparse ops, SGD/Adam/RMSProp/gradient utilities, reshape/permute/slice/etc.
-```
+Operation APIs are intentionally not documented as implemented until they are
+rebuilt against the new handler model.
 
 ## Legacy Tensor
 

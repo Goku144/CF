@@ -110,15 +110,12 @@ used by tests and diagnostics.
 
 Math now centers on the `cf_math` tensor layer:
 
-- dtype-aware tensor metadata,
-- CPU/CUDA device metadata,
-- row-major, column-major, NCHW, NHWC, and strided layout metadata,
-- reference-counted shared storage for views and slices,
-- CUDA context handles and workspace metadata,
-- descriptor caches for cuDNN/cuBLASLt,
-- dense arithmetic, reductions, linear algebra, activations, losses, attention
-  pieces, dropout, embedding, optimizer math, sparse operations, and shape
-  manipulation.
+- non-owning `cf_math` views,
+- reusable dtype-aware shape metadata,
+- handler-owned CUDA storage arenas,
+- free-list reuse for unbound slices,
+- automatic unbind/rebind slice lifecycle,
+- CUDA context handles, workspace metadata, and descriptor caches.
 
 The detailed math hierarchy and function reference is documented in
 [CF Math Layer Guide](cf-math-layer.md).
