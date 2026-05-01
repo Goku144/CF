@@ -19,11 +19,68 @@
 #if !defined(CF_ARENA_H)
 #define CF_ARENA_H
 
-/*
- * Public arena allocator API placeholder.
- *
- * Monotonic region-allocation declarations should be added here when the arena
- * allocator is implemented.
+#include "ALLOCATOR/cf_alloc.h"
+#include "RUNTIME/cf_status.h"
+#include "RUNTIME/cf_types.h"
+
+typedef struct cf_arena
+{
+  void *data;
+
+  cf_usize capacity;
+  cf_usize offset;
+  cf_usize high_water;
+
+  cf_alloc allocator;
+  cf_bool owns_data;
+} cf_arena;
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/**
+ * @brief Initialize an owning monotonic arena.
+ * @param arena Arena object to initialize.
+ * @param capacity Number of bytes to reserve.
+ * @param allocator Optional backing allocator; `CF_NULL` uses `cf_alloc_new`.
+ * @return `CF_OK`, `CF_ERR_NULL`, `CF_ERR_STATE`, or `CF_ERR_OOM`.
  */
+cf_status cf_arena_init(cf_arena *arena, cf_usize capacity, cf_alloc *allocator);
+
+/**
+ * @brief Initialize a non-owning arena over caller-provided storage.
+ * @param arena Arena object to initialize.
+ * @param buffer Caller-owned byte buffer.
+ * @param capacity Number of usable bytes in `buffer`.
+ * @return `CF_OK` or `CF_ERR_NULL`.
+ */
+cf_status cf_arena_init_with_buffer(cf_arena *arena, void *buffer, cf_usize capacity);
+
+/**
+ * @brief Allocate a byte slice from the arena.
+ * @param arena Arena to allocate from.
+ * @param size Requested byte count.
+ * @param alignment Power-of-two alignment; zero uses pointer alignment.
+ * @param ptr Receives the allocated slice or `CF_NULL` for zero-size requests.
+ * @return `CF_OK`, `CF_ERR_NULL`, `CF_ERR_STATE`, `CF_ERR_INVALID`, `CF_ERR_OVERFLOW`, or `CF_ERR_BOUNDS`.
+ */
+cf_status cf_arena_alloc(cf_arena *arena, cf_usize size, cf_usize alignment, void **ptr);
+
+/**
+ * @brief Reset the arena offset without releasing backing storage.
+ * @param arena Arena to reset.
+ */
+void cf_arena_reset(cf_arena *arena);
+
+/**
+ * @brief Release arena-owned storage and clear the object.
+ * @param arena Arena to destroy.
+ */
+void cf_arena_destroy(cf_arena *arena);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* CF_ARENA_H */

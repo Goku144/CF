@@ -381,6 +381,53 @@ void cf_alloc_debug_log(cf_alloc_debug *debug, int line);
 
 Prints debug allocator counters and latest state.
 
+### Arena Allocator
+
+Header: `public/inc/ALLOCATOR/cf_arena.h`
+
+```c
+cf_status cf_arena_init(cf_arena *arena, cf_usize capacity, cf_alloc *allocator);
+cf_status cf_arena_init_with_buffer(cf_arena *arena, void *buffer, cf_usize capacity);
+cf_status cf_arena_alloc(cf_arena *arena, cf_usize size, cf_usize alignment, void **ptr);
+void cf_arena_reset(cf_arena *arena);
+void cf_arena_destroy(cf_arena *arena);
+```
+
+Provides monotonic byte-slice allocation for bulk-lifetime memory.
+
+Critical points:
+
+- `cf_arena_init` owns its backing storage and uses the supplied allocator or
+  the default allocator.
+- `cf_arena_init_with_buffer` wraps caller-owned storage and never frees it.
+- `cf_arena_alloc` supports power-of-two alignment; zero alignment means
+  pointer alignment.
+- `cf_arena_reset` only rewinds the offset. It does not clear memory.
+- `high_water` records the largest allocation offset observed.
+
+### Pool Allocator
+
+Header: `public/inc/ALLOCATOR/cf_pool.h`
+
+```c
+cf_status cf_pool_init(cf_pool *pool, cf_usize block_size, cf_usize block_count, cf_alloc *allocator);
+cf_status cf_pool_init_with_buffer(cf_pool *pool, void *buffer, cf_usize block_size, cf_usize block_count);
+cf_status cf_pool_alloc(cf_pool *pool, void **ptr);
+cf_status cf_pool_free(cf_pool *pool, void *ptr);
+void cf_pool_reset(cf_pool *pool);
+void cf_pool_destroy(cf_pool *pool);
+```
+
+Provides fixed-size block reuse with O(1) allocate/free operations.
+
+Critical points:
+
+- Small blocks are internally rounded up enough to store the free-list link.
+- `cf_pool_alloc` returns `CF_ERR_OOM` when no blocks are available.
+- `cf_pool_free` validates that the pointer belongs to a block boundary.
+- `cf_pool_reset` restores every block to the free list.
+- `cf_pool_init_with_buffer` uses caller-owned storage and does not release it.
+
 ## Memory
 
 ### `cf_buffer_is_valid`
@@ -735,12 +782,14 @@ At a high level, the public math API now includes:
 - reusable `cf_math_metadata` shape descriptions,
 - shared CUDA context and workspace lifecycle,
 - handler-backed `cf_math_arena` storage,
+- CPU arena-backed pooled storage,
+- hot-path in-place elementwise operations,
+- unary, scalar, reduction, and matmul operation families,
 - readable `cf_math` shape printing,
 - bind, unbind, and rebind lifecycle helpers.
 
-The current implementation is focused on the runtime foundation. Operation
-families will be layered on top of handlers after allocation, binding, and
-metadata are stable.
+The current implementation is the Layer 0 math foundation used by AI dense
+layers, forward losses, and future manual gradients.
 
 ### Primitive Math Helpers
 
@@ -785,8 +834,131 @@ other view references it.
 
 ### Operation Families
 
-Operation APIs are intentionally not documented as implemented until they are
-rebuilt against the new handler model.
+```c
+cf_status cf_math_op(cf_math_op_kind op, cf_math *op1, const cf_math *op2);
+cf_status cf_math_op_check(cf_math_op_kind op, const cf_math *op1, const cf_math *op2);
+cf_status cf_math_op_out(cf_math_op_kind op, cf_math *out, const cf_math *a, const cf_math *b);
+cf_status cf_math_unary(cf_math_op_kind op, cf_math *x);
+cf_status cf_math_unary_out(cf_math_op_kind op, cf_math *out, const cf_math *x);
+cf_status cf_math_scalar(cf_math_op_kind op, cf_math *x, double scalar);
+cf_status cf_math_scalar_out(cf_math_op_kind op, cf_math *out, const cf_math *x, double scalar);
+cf_status cf_math_reduce_sum(cf_math *out, const cf_math *x);
+cf_status cf_math_reduce_mean(cf_math *out, const cf_math *x);
+cf_status cf_math_matmul(cf_math *out, const cf_math *a, const cf_math *b);
+```
+
+Core V1 forward math operations over bound `cf_math` views.
+
+Implemented v1 operation families:
+
+- In-place and out-of-place binary add/sub/mul/div.
+- Unary neg/relu/gelu/exp/log/sqrt/sigmoid/tanh.
+- Scalar add/sub/mul/div.
+- Sum and mean reductions into one-element outputs.
+- 2D row-major matmul.
+
+Implemented v1 dtypes:
+
+- Binary/scalar/reduction: `F32`, `F64`, `I32`.
+- Unary activations/math: `F32`, `F64`.
+- Matmul: `F32`, `F64`.
+
+Critical points:
+
+- `cf_math_op` is the hot in-place API. The caller owns compatibility checks
+  for dtype, device, binding, length, and lifetime.
+- `cf_math_op_check` is the explicit preflight helper for graph/layer setup.
+- CPU storage uses flat typed loops.
+- CUDA storage uses custom kernels for elementwise/unary/scalar/reduction and
+  cuBLAS for matmul when CUDA is available.
+- There are no hidden allocations or host/device copies inside operations.
+- Unsupported operations or dtypes return `CF_ERR_UNSUPPORTED`.
+
+## AI
+
+Headers: `public/inc/AI/cf_model.h`, `public/inc/AI/cf_gradient.h`
+
+The current AI layer is forward-only and built directly on `cf_math`.
+
+### Dense Layers
+
+```c
+cf_status cf_ai_dense_init(
+  cf_ai_dense *layer,
+  cf_math_handle_t *parameter_handler,
+  cf_math_handle_t *activation_handler,
+  cf_usize batch,
+  cf_usize in_features,
+  cf_usize out_features,
+  cf_ai_activation activation
+);
+cf_status cf_ai_dense_forward(cf_ai_dense *layer, const cf_math *input);
+cf_status cf_ai_dense_destroy(cf_ai_dense *layer);
+```
+
+Critical points:
+
+- Weights are `[in_features, out_features]`.
+- Bias is `[out_features]`.
+- Output is `[batch, out_features]`.
+- Forward computes `input @ weights`, adds row-wise bias, then applies optional
+  `NONE`, `RELU`, `GELU`, `SIGMOID`, or `TANH`.
+- V1 supports `F32` and `F64` through the math matmul/activation layer.
+- The layer binds storage during init from caller-provided handlers; forward
+  does not allocate output storage.
+
+### Sequential Models
+
+```c
+cf_status cf_ai_model_init(
+  cf_ai_model *model,
+  cf_ai_dense *layers,
+  cf_usize layer_count,
+  cf_math_handle_t *parameter_handler,
+  cf_math_handle_t *activation_handler,
+  cf_math_device device
+);
+cf_status cf_ai_model_forward(cf_ai_model *model, const cf_math *input, cf_math **output);
+cf_status cf_ai_model_destroy(cf_ai_model *model);
+```
+
+Critical points:
+
+- The layer array is caller-owned.
+- Forward feeds each layer output into the next layer.
+- The final output pointer aliases the last layer's `output` view.
+
+### Loss Forward
+
+```c
+cf_status cf_ai_loss_forward(
+  cf_ai_loss_kind loss,
+  cf_math *out,
+  const cf_math *prediction,
+  const cf_math *target
+);
+```
+
+Implemented losses:
+
+- `CF_AI_LOSS_MSE`
+- `CF_AI_LOSS_BINARY_CROSS_ENTROPY`
+
+Critical points:
+
+- `out` must already be bound as a one-element view.
+- Prediction and target must have matching dtype, device, and element count.
+- No hidden allocation or hidden host/device copy occurs.
+
+### Gradient Boundary
+
+```c
+cf_status cf_ai_dense_backward(cf_ai_dense *layer, const cf_math *input, const cf_math *grad_output);
+cf_status cf_ai_loss_backward(cf_ai_loss_kind loss, cf_math *grad_prediction, const cf_math *prediction, const cf_math *target);
+```
+
+These functions reserve the manual-backward API shape and currently return
+`CF_ERR_UNSUPPORTED`.
 
 ## Legacy Tensor
 

@@ -144,6 +144,7 @@ Storage combines the arena with its allocation interpretation:
 
 - `allocator.backend`: base allocation pointer owned by the handler.
 - `allocator.mem_flag`: allocation policy.
+- `allocator.cpu_arena`: CPU-side arena wrapper over the handler backing store.
 - `dtype`, `device`: element and backend interpretation.
 
 ### `cf_math_memory_block`
@@ -187,13 +188,25 @@ It is initialized once and reused by handlers.
 - `CF_MATH_MEM_DEFAULT`: device allocation through `cudaMalloc`.
 - `CF_MATH_MEM_PINNED`: pinned host allocation through `cudaHostAlloc`.
 - `CF_MATH_MEM_MANAGED`: managed allocation through `cudaMallocManaged`.
-- `CF_MATH_MEM_POOLED`: async stream allocation through `cudaMallocAsync`.
+- `CF_MATH_MEM_POOLED`: CUDA uses async stream allocation through
+  `cudaMallocAsync`; CPU uses the handler arena/free-list over host memory.
 - `CF_MATH_MEM_ALIGNED128`: requires base and slice offsets to be 128-byte aligned.
 - `CF_MATH_MEM_READ_ONLY`: marks managed memory read-mostly when possible.
 - `CF_MATH_MEM_PEER_MAPPED`: reserved for future multi-GPU peer mapping.
 
 Unsupported or invalid flag combinations return a `cf_status` error instead of
 being silently ignored.
+
+CPU flag behavior:
+
+- `CF_MATH_MEM_DEFAULT`: host heap backing plus CPU arena slice tracking.
+- `CF_MATH_MEM_POOLED`: host backing plus math arena/free-list reuse.
+- `CF_MATH_MEM_PINNED`: pinned host backing through CUDA; unsupported in
+  CPU-only builds and requires a CUDA context.
+- `CF_MATH_MEM_ALIGNED128`: aligns CPU backing storage and tensor slices.
+- `CF_MATH_MEM_READ_ONLY`: accepted on CPU as a no-op hint.
+- `CF_MATH_MEM_MANAGED`: invalid for CPU handlers.
+- `CF_MATH_MEM_PEER_MAPPED`: unsupported until peer mapping is implemented.
 
 ## Lifecycle API
 
@@ -230,6 +243,8 @@ cf_status cf_math_handle_destroy(cf_math_handle_t *handler);
 cf_status cf_math_bind(cf_math *x, cf_math_handle_t *handler, cf_math_metadata *metadata);
 cf_status cf_math_unbind(cf_math *x);
 cf_status cf_math_rebind(cf_math *x, cf_math_handle_t *handler, cf_math_metadata *metadata);
+
+cf_status cf_math_op(cf_math_op_kind op, cf_math *op1, const cf_math *op2);
 ```
 
 ## Binding Rules
@@ -247,6 +262,32 @@ metadata. No manual `free_current` flag is needed.
 
 `cf_math_print_shape` prints a readable summary of a math view: shape kind,
 rank, dimensions, strides, length, layout, dtype, device, and byte slice.
+
+## Operation Rules
+
+Core V1 exposes small operation families:
+
+```c
+cf_math_op(CF_MATH_OP_ADD, &a, &b);        /* a += b */
+cf_math_op_out(CF_MATH_OP_ADD, &c, &a, &b);/* c = a + b */
+cf_math_unary(CF_MATH_OP_RELU, &a);        /* a = relu(a) */
+cf_math_scalar(CF_MATH_OP_MUL, &a, 0.1);   /* a *= 0.1 */
+cf_math_reduce_mean(&m, &a);               /* m[0] = mean(a) */
+cf_math_matmul(&c, &a, &b);                /* c = a @ b */
+```
+
+`cf_math_op` remains the hot in-place binary path. Use `cf_math_op_check`
+during graph or layer setup when compatibility diagnostics are needed.
+
+Supported v1 dtype coverage:
+
+- Binary/scalar/reduction: `F32`, `F64`, `I32`.
+- Unary math/activations: `F32`, `F64`.
+- Matmul: 2D row-major `F32`, `F64`.
+
+Operations perform no allocation and no hidden host/device transfer. CPU uses
+flat typed loops. CUDA uses custom kernels for elementwise/unary/scalar/reduce
+and cuBLAS for matmul when compiled with CUDA.
 
 ## Example
 

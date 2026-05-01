@@ -29,8 +29,8 @@ LICENSE                GPLv3 license.
 
 ```text
 public/inc/
-  AI/                   Future AI graph/model/runtime/tokenizer APIs.
-  ALLOCATOR/            Allocator interfaces and allocator placeholders.
+  AI/                   Dense model/loss APIs plus future graph/runtime/tokenizer APIs.
+  ALLOCATOR/            Allocator interfaces, arena, pool, and placeholders.
   CONFIG/               Future config format APIs.
   MATH/                 Math primitives, cf_math tensor API, storage helpers.
   MEMORY/               Buffer and generic array containers.
@@ -43,8 +43,8 @@ public/inc/
 
 ```text
 lib/src/
-  AI/                   Placeholder implementations.
-  ALLOCATOR/            Default allocator, debug allocator, placeholders.
+  AI/                   Dense model/loss implementation, gradient boundary, placeholders.
+  ALLOCATOR/            Default allocator, debug allocator, arena, pool, placeholders.
   ASM/                  Assembly support files.
   CONFIG/               Placeholder implementations.
   MATH/                 CUDA-source cf_math and storage implementations with CPU fallback.
@@ -97,9 +97,11 @@ PKCS#7 padding helpers.
 
 - `cf_alloc`
 - `cf_alloc_debug`
+- `cf_arena`
+- `cf_pool`
 
-Allocator modules provide the framework allocator interface and a debug wrapper
-used by tests and diagnostics.
+Allocator modules provide the framework allocator interface, a debug wrapper,
+monotonic arena allocation, and fixed-size block pooling.
 
 ### Math
 
@@ -121,6 +123,22 @@ Math now centers on the `cf_math` tensor layer:
 The detailed math hierarchy and function reference is documented in
 [CF Math Layer Guide](cf-math-layer.md).
 
+### AI
+
+- `cf_model`
+- `cf_gradient` boundary
+
+AI currently provides the first layer above `cf_math`:
+
+- dense layer init/forward/destroy,
+- sequential model init/forward/destroy,
+- MSE and binary cross entropy forward loss,
+- manual-backward function declarations and stubs returning
+  `CF_ERR_UNSUPPORTED`.
+
+Dense/model/loss forward calls do not allocate hidden tensors and do not perform
+hidden host/device copies. Callers provide handlers and bound storage.
+
 ## Placeholder Modules
 
 These modules compile and reserve public boundaries, but do not expose real
@@ -128,16 +146,14 @@ APIs yet:
 
 ```text
 AI/cf_graph
-AI/cf_model
 AI/cf_runtime
 AI/cf_tokenizer
+AI/cf_gradient backward math
 
 CONFIG/cf_config
 CONFIG/cf_json
 CONFIG/cf_cbor
 
-ALLOCATOR/cf_arena
-ALLOCATOR/cf_pool
 ALLOCATOR/cf_slab
 
 SECURITY/cf_hash

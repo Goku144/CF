@@ -19,11 +19,78 @@
 #if !defined(CF_POOL_H)
 #define CF_POOL_H
 
-/*
- * Public pool allocator API placeholder.
- *
- * Fixed-size object pool declarations should be added here when pooled
- * allocation becomes part of the framework.
+#include "ALLOCATOR/cf_alloc.h"
+#include "RUNTIME/cf_status.h"
+#include "RUNTIME/cf_types.h"
+
+typedef struct cf_pool
+{
+  void *data;
+
+  cf_usize block_size;
+  cf_usize block_count;
+
+  cf_usize free_head;
+  cf_usize free_count;
+  cf_alloc allocator;
+
+  cf_bool owns_data;
+} cf_pool;
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/**
+ * @brief Initialize an owning fixed-size block pool.
+ * @param pool Pool object to initialize.
+ * @param block_size User-visible bytes per block.
+ * @param block_count Number of blocks to reserve.
+ * @param allocator Optional backing allocator; `CF_NULL` uses `cf_alloc_new`.
+ * @return `CF_OK`, `CF_ERR_NULL`, `CF_ERR_INVALID`, `CF_ERR_STATE`, `CF_ERR_OVERFLOW`, or `CF_ERR_OOM`.
  */
+cf_status cf_pool_init(cf_pool *pool, cf_usize block_size, cf_usize block_count, cf_alloc *allocator);
+
+/**
+ * @brief Initialize a non-owning fixed-size block pool over caller storage.
+ * @param pool Pool object to initialize.
+ * @param buffer Caller-owned storage.
+ * @param block_size User-visible bytes per block.
+ * @param block_count Number of blocks in `buffer`.
+ * @return `CF_OK`, `CF_ERR_NULL`, `CF_ERR_INVALID`, or `CF_ERR_STATE`.
+ */
+cf_status cf_pool_init_with_buffer(cf_pool *pool, void *buffer, cf_usize block_size, cf_usize block_count);
+
+/**
+ * @brief Allocate one block from the pool.
+ * @param pool Pool to allocate from.
+ * @param ptr Receives the block pointer.
+ * @return `CF_OK`, `CF_ERR_NULL`, or `CF_ERR_OOM`.
+ */
+cf_status cf_pool_alloc(cf_pool *pool, void **ptr);
+
+/**
+ * @brief Return one block to the pool.
+ * @param pool Pool that owns the block.
+ * @param ptr Block pointer returned by `cf_pool_alloc`.
+ * @return `CF_OK`, `CF_ERR_NULL`, `CF_ERR_STATE`, `CF_ERR_BOUNDS`, or `CF_ERR_INVALID`.
+ */
+cf_status cf_pool_free(cf_pool *pool, void *ptr);
+
+/**
+ * @brief Restore every block to the free list.
+ * @param pool Pool to reset.
+ */
+void cf_pool_reset(cf_pool *pool);
+
+/**
+ * @brief Release pool-owned storage and clear the object.
+ * @param pool Pool to destroy.
+ */
+void cf_pool_destroy(cf_pool *pool);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* CF_POOL_H */

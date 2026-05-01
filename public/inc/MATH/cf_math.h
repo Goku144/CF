@@ -62,14 +62,22 @@ typedef enum cf_math_op_kind
   CF_MATH_OP_SUB,
   CF_MATH_OP_MUL,
   CF_MATH_OP_DIV,
+  CF_MATH_OP_NEG,
+  CF_MATH_OP_EXP,
+  CF_MATH_OP_LOG,
+  CF_MATH_OP_SQRT,
 
   CF_MATH_OP_MATMUL,
   CF_MATH_OP_LINEAR,
 
   CF_MATH_OP_RELU,
   CF_MATH_OP_GELU,
+  CF_MATH_OP_SIGMOID,
+  CF_MATH_OP_TANH,
   CF_MATH_OP_SOFTMAX,
   CF_MATH_OP_CROSS_ENTROPY,
+  CF_MATH_OP_SUM,
+  CF_MATH_OP_MEAN,
 
   CF_MATH_OP_LAYER_NORM,
   CF_MATH_OP_ATTENTION
@@ -95,7 +103,6 @@ struct cf_math_node
 
 struct cf_math
 {
-  void *data;
   cf_usize byte_offset;
   cf_usize byte_size;
 
@@ -166,6 +173,103 @@ cf_usize cf_math_min_usize(cf_usize a, cf_usize b);
  * @return Computed size value.
  */
 cf_usize cf_math_max_usize(cf_usize a, cf_usize b);
+
+/**
+ * @brief Apply an in-place elementwise math operation.
+ *
+ * `op1` is both input and destination; `op2` is read-only. This is a hot-path
+ * operation: callers are responsible for ensuring both views are bound,
+ * compatible, and have matching dtype/device/length.
+ *
+ * Supported v1 ops are `CF_MATH_OP_ADD`, `CF_MATH_OP_SUB`,
+ * `CF_MATH_OP_MUL`, and `CF_MATH_OP_DIV` for `F32`, `F64`, and `I32`.
+ *
+ * @param op Operation kind.
+ * @param op1 Destination and first input.
+ * @param op2 Read-only second input.
+ * @return `CF_OK`, `CF_ERR_NULL`, `CF_ERR_STATE`, `CF_ERR_UNSUPPORTED`, or a CUDA runtime error.
+ */
+cf_status cf_math_op(cf_math_op_kind op, cf_math *op1, const cf_math *op2);
+
+/**
+ * @brief Validate compatibility for an in-place binary math operation.
+ * @param op Operation kind.
+ * @param op1 Destination and first input.
+ * @param op2 Read-only second input.
+ * @return `CF_OK`, `CF_ERR_NULL`, `CF_ERR_STATE`, `CF_ERR_INVALID`, or `CF_ERR_UNSUPPORTED`.
+ */
+cf_status cf_math_op_check(cf_math_op_kind op, const cf_math *op1, const cf_math *op2);
+
+/**
+ * @brief Apply an out-of-place elementwise math operation.
+ * @param op Operation kind.
+ * @param out Bound destination view.
+ * @param a Read-only first input.
+ * @param b Read-only second input.
+ * @return Status from compatibility checks, copy, or `cf_math_op`.
+ */
+cf_status cf_math_op_out(cf_math_op_kind op, cf_math *out, const cf_math *a, const cf_math *b);
+
+/**
+ * @brief Apply an in-place unary math operation.
+ * @param op Unary operation kind.
+ * @param x Bound input/output view.
+ * @return `CF_OK`, `CF_ERR_NULL`, `CF_ERR_STATE`, `CF_ERR_UNSUPPORTED`, or a CUDA runtime error.
+ */
+cf_status cf_math_unary(cf_math_op_kind op, cf_math *x);
+
+/**
+ * @brief Apply an out-of-place unary math operation.
+ * @param op Unary operation kind.
+ * @param out Bound destination view.
+ * @param x Read-only input view.
+ * @return Status from compatibility checks, copy, or `cf_math_unary`.
+ */
+cf_status cf_math_unary_out(cf_math_op_kind op, cf_math *out, const cf_math *x);
+
+/**
+ * @brief Apply an in-place scalar math operation.
+ * @param op Binary operation kind applied with a scalar right operand.
+ * @param x Bound input/output view.
+ * @param scalar Scalar value; cast to destination dtype where needed.
+ * @return `CF_OK`, `CF_ERR_NULL`, `CF_ERR_STATE`, `CF_ERR_UNSUPPORTED`, or a CUDA runtime error.
+ */
+cf_status cf_math_scalar(cf_math_op_kind op, cf_math *x, double scalar);
+
+/**
+ * @brief Apply an out-of-place scalar math operation.
+ * @param op Binary operation kind applied with a scalar right operand.
+ * @param out Bound destination view.
+ * @param x Read-only input view.
+ * @param scalar Scalar value.
+ * @return Status from compatibility checks, copy, or `cf_math_scalar`.
+ */
+cf_status cf_math_scalar_out(cf_math_op_kind op, cf_math *out, const cf_math *x, double scalar);
+
+/**
+ * @brief Reduce all elements into a one-element sum output.
+ * @param out Bound one-element destination view.
+ * @param x Bound input view.
+ * @return `CF_OK`, `CF_ERR_NULL`, `CF_ERR_STATE`, `CF_ERR_INVALID`, `CF_ERR_UNSUPPORTED`, or a CUDA runtime error.
+ */
+cf_status cf_math_reduce_sum(cf_math *out, const cf_math *x);
+
+/**
+ * @brief Reduce all elements into a one-element mean output.
+ * @param out Bound one-element destination view.
+ * @param x Bound input view.
+ * @return `CF_OK`, `CF_ERR_NULL`, `CF_ERR_STATE`, `CF_ERR_INVALID`, `CF_ERR_UNSUPPORTED`, or a CUDA runtime error.
+ */
+cf_status cf_math_reduce_mean(cf_math *out, const cf_math *x);
+
+/**
+ * @brief Multiply two row-major 2D matrices into a bound output view.
+ * @param out Bound output matrix with shape `[M, N]`.
+ * @param a Bound left matrix with shape `[M, K]`.
+ * @param b Bound right matrix with shape `[K, N]`.
+ * @return `CF_OK`, `CF_ERR_NULL`, `CF_ERR_STATE`, `CF_ERR_INVALID`, `CF_ERR_UNSUPPORTED`, or a CUDA runtime error.
+ */
+cf_status cf_math_matmul(cf_math *out, const cf_math *a, const cf_math *b);
 
 /**
  * @brief Initialize reusable shape metadata.

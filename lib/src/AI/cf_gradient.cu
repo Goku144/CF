@@ -16,14 +16,21 @@
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
-#if !defined(CF_SLAB_H)
-#define CF_SLAB_H
+#include "AI/cf_gradient.h"
 
-/*
- * Public slab allocator API placeholder.
- *
- * Size-class/slab allocation declarations should be added here when that
- * allocator backend is implemented.
- */
+cf_status cf_ai_dense_backward(cf_ai_dense *layer, const cf_math *input, const cf_math *grad_output)
+{
+  CF_UNUSED(layer);
+  CF_UNUSED(input);
+  CF_UNUSED(grad_output);
+  return CF_ERR_UNSUPPORTED;
+}
 
-#endif /* CF_SLAB_H */
+cf_status cf_ai_loss_backward(cf_ai_loss_kind loss, cf_math *grad_prediction, const cf_math *prediction, const cf_math *target)
+{
+  CF_UNUSED(loss);
+  CF_UNUSED(grad_prediction);
+  CF_UNUSED(prediction);
+  CF_UNUSED(target);
+  return CF_ERR_UNSUPPORTED;
+}

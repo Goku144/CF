@@ -19,6 +19,7 @@
 #if !defined(CF_MATH_STORAGE_H)
 #define CF_MATH_STORAGE_H
 
+#include "ALLOCATOR/cf_arena.h"
 #include "RUNTIME/cf_status.h"
 #include "RUNTIME/cf_types.h"
 
@@ -79,12 +80,25 @@ typedef enum cf_math_device
 } cf_math_device;
 typedef enum cf_math_mem_flags
 {
+  /** Default storage: host heap on CPU, cudaMalloc on CUDA. */
   CF_MATH_MEM_DEFAULT     = 0,
+
+  /** CUDA pinned host storage for CPU handlers; requires CUDA support. */
   CF_MATH_MEM_PINNED      = 1 << 0,
+
+  /** CUDA managed storage; invalid for CPU handlers. */
   CF_MATH_MEM_MANAGED     = 1 << 1,
+
+  /** Pooled storage: arena/free-list on CPU, cudaMallocAsync on CUDA. */
   CF_MATH_MEM_POOLED      = 1 << 2,
+
+  /** Align base storage and slices to 128-byte boundaries where supported. */
   CF_MATH_MEM_ALIGNED128  = 1 << 3,
+
+  /** Read-mostly hint for CUDA managed memory; accepted as a no-op on CPU. */
   CF_MATH_MEM_READ_ONLY   = 1 << 4,
+
+  /** Reserved for future peer-mapped storage. */
   CF_MATH_MEM_PEER_MAPPED = 1 << 5,
 } cf_math_mem_flags;
 
@@ -129,6 +143,7 @@ struct cf_math_allocator
 {
   void *backend;
   cf_math_mem_flags mem_flag;
+  cf_arena cpu_arena;
 };
 
 struct cf_math_memory_block
@@ -247,6 +262,9 @@ cf_status cf_math_handle_reserve(cf_math_handle_t *handler, cf_usize bytes);
 
 /**
  * @brief Reset handler arena slice tracking without freeing the base allocation.
+ *
+ * The reset is ignored while views are still bound to the handler.
+ *
  * @param handler Handler whose storage arena should reset.
  */
 void cf_math_handle_reset(cf_math_handle_t *handler);
@@ -254,7 +272,7 @@ void cf_math_handle_reset(cf_math_handle_t *handler);
 /**
  * @brief Destroy handler-owned storage and descriptor cache.
  * @param handler Handler to destroy.
- * @return `CF_OK`, `CF_ERR_NULL`, `CF_ERR_STATE`, `CF_ERR_UNSUPPORTED`, or a CUDA cleanup error.
+ * @return `CF_OK`, `CF_ERR_NULL`, `CF_ERR_STATE` when views are still bound, `CF_ERR_UNSUPPORTED`, or a CUDA cleanup error.
  */
 cf_status cf_math_handle_destroy(cf_math_handle_t *handler);
 
