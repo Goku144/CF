@@ -125,6 +125,8 @@ Implemented allocator modules:
 
 - `cf_alloc`: default allocation interface wrapping `malloc`, `realloc`, and `free`.
 - `cf_alloc_debug`: debug allocator wrapper that tracks allocation events and invalid operations.
+- `cf_arena`: monotonic byte arena with owning and caller-buffer modes.
+- `cf_pool`: fixed-size block pool with O(1) allocate/free reuse.
 
 ### Math
 
@@ -141,7 +143,8 @@ Implemented math module:
   metadata init, handler init/reserve/alloc/reset/destroy, and bind/unbind/rebind.
 - Handler storage uses `cf_math_arena` plus free/active block tables so unbound
   slices can be reused safely.
-- Operation APIs are being rebuilt on top of this handler model.
+- Core V1 math operations include checked/out-of-place binary ops, unary
+  activations, scalar ops, reductions, and 2D row-major matmul.
 
 Basic example:
 
@@ -152,7 +155,7 @@ cf_math_metadata meta = {0};
 cf_math x = {0};
 cf_usize dim[CF_MATH_MAX_RANK] = {2, 2};
 
-cf_math_cuda_context_init(&ctx, 0);
+cf_math_cuda_context_init(&ctx, 0, 0);
 cf_math_metadata_init(&meta, dim, 2, CF_MATH_SHAPE_MATRIX, CF_MATH_LAYOUT_ROW_MAJOR);
 cf_math_handle_init(
   &handler,
@@ -174,6 +177,21 @@ cf_math_cuda_context_destroy(&ctx);
 The detailed math reference is in
 `public/doc/project/cf-math-layer.md`. It explains every public math struct and
 the active `cf_math_*` lifecycle functions.
+
+### AI
+
+Implemented AI model boundary:
+
+- `cf_ai_dense`: bound dense layer views for weights, bias, and output.
+- `cf_ai_model`: sequential dense-layer forward over caller-owned layers.
+- `cf_ai_loss_forward`: MSE and binary cross entropy forward loss into a
+  caller-bound one-element output.
+- `cf_ai_dense_backward` and `cf_ai_loss_backward`: manual-backward API
+  boundary, currently returning `CF_ERR_UNSUPPORTED`.
+
+AI forward follows the math-layer rule: no hidden output allocation and no
+hidden host/device copies. Tokenizer, graph execution, and real backward
+gradient math remain separate future batches.
 
 ## Documentation
 
@@ -244,24 +262,23 @@ The codebase still contains placeholder modules so the project structure can
 grow without changing layout later. These placeholders compile but do not expose
 real public APIs yet.
 
-The `cf_math` layer is currently focused on the handler foundation: shared CUDA
-contexts, reusable metadata, handler-owned `cf_math_arena` storage, and
-non-owning math views. Tensor operations, training kernels, graph execution,
-and multi-GPU coordination will be rebuilt on top of this model.
+The `cf_math` layer provides the handler foundation, operation families,
+reductions, and matmul. The first AI layer on top now provides dense forward,
+sequential model forward, and forward losses. Higher-level graph execution,
+manual gradients, and multi-GPU coordination will be rebuilt on top of this
+model.
 
 ## Not Implemented Yet
 
 The following modules are still placeholders or incomplete:
 
 - `AI/cf_graph`
-- `AI/cf_model`
 - `AI/cf_runtime`
 - `AI/cf_tokenizer`
+- `AI/cf_gradient` backward implementations
 - `CONFIG/cf_config`
 - `CONFIG/cf_json`
 - `CONFIG/cf_cbor`
-- `ALLOCATOR/cf_arena`
-- `ALLOCATOR/cf_pool`
 - `ALLOCATOR/cf_slab`
 - `SECURITY/cf_hash`
 - `SECURITY/cf_hmac`
@@ -282,7 +299,7 @@ CUDA tensor work still needed:
 - More efficient strided-batched cuBLASLt path for large batch counts.
 - Broader CUDA matrix multiplication types when their output contract is clear.
 - cuTENSOR-backed tensor contraction/reduction paths.
-- CUDA kernels and vendor-library dispatch behind the new `cf_math_*` public
+- Broader CUDA runtime validation and benchmarks for the Core V1 `cf_math_*`
   operation map.
 
 Infrastructure work still needed:

@@ -29,6 +29,8 @@ static cf_status cf_math_storage_backend_copy(cf_math_cuda_context *ctx, cf_math
 
 static cf_status cf_math_storage_backend_free(cf_math_cuda_context *ctx, cf_math_device device, cf_math_mem_flags flags, void *ptr);
 
+static cf_status cf_math_storage_bind_cpu_arena(cf_math_allocator *allocator, void *ptr, cf_usize bytes);
+
 static cf_status cf_math_arena_add_free_block(cf_math_arena *arena, cf_usize offset, cf_usize size);
 
 static void cf_math_arena_remove_free_block(cf_math_arena *arena, cf_usize index);
@@ -41,17 +43,27 @@ static void cf_math_arena_remove_active_block(cf_math_arena *arena, cf_usize ind
 
 static cf_status cf_math_storage_validate(cf_math_device device, cf_math_mem_flags flags)
 {
-  if((flags & CF_MATH_MEM_PINNED) != 0 && (flags & (CF_MATH_MEM_MANAGED | CF_MATH_MEM_POOLED)) != 0)
+  if(device != CF_MATH_DEVICE_CPU && device != CF_MATH_DEVICE_CUDA)
+    return CF_ERR_INVALID;
+  if((flags & CF_MATH_MEM_PINNED) != 0 && (flags & CF_MATH_MEM_MANAGED) != 0)
     return CF_ERR_INVALID;
   if((flags & CF_MATH_MEM_MANAGED) != 0 && (flags & CF_MATH_MEM_POOLED) != 0)
     return CF_ERR_INVALID;
   if((flags & CF_MATH_MEM_PEER_MAPPED) != 0)
     return CF_ERR_UNSUPPORTED;
-  if((flags & CF_MATH_MEM_PINNED) != 0)
-    return device == CF_MATH_DEVICE_CPU ? CF_OK : CF_ERR_INVALID;
+#if !defined(CF_CUDA_AVAILABLE)
+  if(device == CF_MATH_DEVICE_CUDA || (flags & CF_MATH_MEM_PINNED) != 0)
+    return CF_ERR_UNSUPPORTED;
+#endif
+
   if(device == CF_MATH_DEVICE_CPU)
-    return (flags & (CF_MATH_MEM_MANAGED | CF_MATH_MEM_POOLED)) == 0 ? CF_OK : CF_ERR_INVALID;
-  return device == CF_MATH_DEVICE_CUDA ? CF_OK : CF_ERR_UNSUPPORTED;
+  {
+    if((flags & CF_MATH_MEM_MANAGED) != 0) return CF_ERR_INVALID;
+    return CF_OK;
+  }
+
+  if((flags & CF_MATH_MEM_PINNED) != 0) return CF_ERR_INVALID;
+  return CF_OK;
 }
 
 static cf_status cf_math_storage_backend_alloc(cf_math_cuda_context *ctx, cf_math_device device, cf_math_mem_flags flags, cf_usize bytes, void **ptr)
@@ -129,6 +141,21 @@ static cf_status cf_math_storage_backend_alloc(cf_math_cuda_context *ctx, cf_mat
   *ptr = CF_NULL;
   return bytes == 0 ? CF_OK : CF_ERR_UNSUPPORTED;
 #endif
+}
+
+static cf_status cf_math_storage_bind_cpu_arena(cf_math_allocator *allocator, void *ptr, cf_usize bytes)
+{
+  cf_status status = CF_OK;
+
+  if(allocator == CF_NULL) return CF_ERR_NULL;
+  cf_arena_destroy(&allocator->cpu_arena);
+
+  if(ptr == CF_NULL || bytes == 0) return CF_OK;
+
+  status = cf_arena_init_with_buffer(&allocator->cpu_arena, ptr, bytes);
+  if(status != CF_OK) return status;
+  allocator->backend = ptr;
+  return CF_OK;
 }
 
 static cf_status cf_math_storage_backend_copy(cf_math_cuda_context *ctx, cf_math_mem_flags flags, void *dst, const void *src, cf_usize bytes)
@@ -415,24 +442,26 @@ cf_status cf_math_cuda_context_init(cf_math_cuda_context *ctx, cf_usize bytes, i
 cf_status cf_math_cuda_context_reserve(cf_math_cuda_context *ctx, cf_usize bytes)
 {
 #if defined(CF_CUDA_AVAILABLE)
-  void* new_ptr = nullptr;
+  void *new_ptr = CF_NULL;
 
   if(ctx == CF_NULL) return CF_ERR_NULL;
   if(bytes == 0 || ctx->cuda_workspace.size >= bytes) return CF_OK;
   if(cudaSetDevice(ctx->device_id) != cudaSuccess) return CF_ERR_CUDA_DEVICE;
   if(cudaMalloc(&new_ptr, bytes) != cudaSuccess) return CF_ERR_CUDA_MEMORY;
     
-  if (ctx->cuda_workspace.ptr != CF_NULL)
+  if(ctx->cuda_workspace.ptr != CF_NULL)
   {
-    cudaMemcpy(new_ptr, ctx->cuda_workspace.ptr, ctx->cuda_workspace.size < bytes ? ctx->cuda_workspace.size : bytes, cudaMemcpyDeviceToDevice);
+    if(cudaMemcpy(new_ptr, ctx->cuda_workspace.ptr, ctx->cuda_workspace.size < bytes ? ctx->cuda_workspace.size : bytes, cudaMemcpyDeviceToDevice) != cudaSuccess)
+    {
+      cudaFree(new_ptr);
+      return CF_ERR_CUDA_COPY;
+    }
     if(cudaFree(ctx->cuda_workspace.ptr) != cudaSuccess)
     {
       cudaFree(new_ptr);
       return CF_ERR_CUDA_MEMORY;
     }
   }
-  else 
-    return cf_math_cuda_context_init(ctx, bytes, 0);
 
   ctx->cuda_workspace.ptr = new_ptr;
   ctx->cuda_workspace.size = bytes;
@@ -554,6 +583,7 @@ cf_status cf_math_handle_alloc(cf_math_handle_t *handler, cf_usize bytes, void *
 {
   cf_math_arena *arena = CF_NULL;
   cf_usize offset = 0;
+  cf_usize alignment = 0;
   cf_status status = CF_OK;
 
   if(handler == CF_NULL || ptr == CF_NULL) return CF_ERR_NULL;
@@ -622,10 +652,24 @@ cf_status cf_math_handle_alloc(cf_math_handle_t *handler, cf_usize bytes, void *
   {
     if(offset > (cf_usize)-1 - 127U) return CF_ERR_OVERFLOW;
     offset = (offset + 127U) & ~((cf_usize)127U);
+    alignment = 128U;
+  }
+  else
+  {
+    alignment = sizeof(void *);
   }
 
   if(offset > (cf_usize)-1 - bytes) return CF_ERR_OVERFLOW;
   if(offset + bytes > arena->capacity) return CF_ERR_BOUNDS;
+
+  if(handler->storage.device == CF_MATH_DEVICE_CPU)
+  {
+    void *cpu_ptr = CF_NULL;
+    handler->storage.allocator.cpu_arena.offset = arena->offset;
+    status = cf_arena_alloc(&handler->storage.allocator.cpu_arena, bytes, alignment, &cpu_ptr);
+    if(status != CF_OK) return status;
+    offset = (cf_usize)((cf_u8 *)cpu_ptr - (cf_u8 *)handler->storage.allocator.backend);
+  }
 
   status = cf_math_arena_add_active_block(arena, offset, bytes);
   if(status != CF_OK) return status;
@@ -669,6 +713,18 @@ cf_status cf_math_handle_reserve(cf_math_handle_t *handler, cf_usize bytes)
 
   handler->storage.allocator.backend = ptr;
   handler->storage.arena.capacity = bytes;
+  if(handler->storage.device == CF_MATH_DEVICE_CPU)
+  {
+    status = cf_math_storage_bind_cpu_arena(&handler->storage.allocator, ptr, bytes);
+    if(status != CF_OK)
+    {
+      handler->storage.allocator.backend = CF_NULL;
+      handler->storage.arena.capacity = 0;
+      CF_UNUSED(cf_math_storage_backend_free(handler->cuda_ctx, handler->storage.device, handler->storage.allocator.mem_flag, ptr));
+      return status;
+    }
+    handler->storage.allocator.cpu_arena.offset = handler->storage.arena.offset;
+  }
 
   return CF_OK;
 }
@@ -676,9 +732,12 @@ cf_status cf_math_handle_reserve(cf_math_handle_t *handler, cf_usize bytes)
 void cf_math_handle_reset(cf_math_handle_t *handler)
 {
   if(handler == CF_NULL) return;
+  if(handler->storage.arena.active_count != 0) return;
   handler->storage.arena.offset = 0;
   handler->storage.arena.free_count = 0;
   handler->storage.arena.active_count = 0;
+  if(handler->storage.device == CF_MATH_DEVICE_CPU)
+    cf_arena_reset(&handler->storage.allocator.cpu_arena);
 }
 
 cf_status cf_math_handle_destroy(cf_math_handle_t *handler)
@@ -686,6 +745,7 @@ cf_status cf_math_handle_destroy(cf_math_handle_t *handler)
   cf_status status = CF_OK;
 
   if(handler == CF_NULL) return CF_ERR_NULL;
+  if(handler->storage.arena.active_count != 0) return CF_ERR_STATE;
 
 #if defined(CF_CUDA_AVAILABLE)
   if(handler->storage.device == CF_MATH_DEVICE_CUDA && handler->cuda_ctx == CF_NULL)

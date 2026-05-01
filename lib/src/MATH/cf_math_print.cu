@@ -226,7 +226,7 @@ cf_status cf_math_print_shape(const cf_math *x)
     printf("  device: unknown\n");
   }
   printf("  bytes: offset=%zu size=%zu\n", (size_t)x->byte_offset, (size_t)x->byte_size);
-  if(x->handler != CF_NULL && x->data != CF_NULL && x->byte_size != 0)
+  if(x->handler != CF_NULL && x->byte_size != 0)
   {
     host_data = malloc((size_t)x->byte_size);
     if(host_data == CF_NULL) return CF_ERR_OOM;
@@ -252,7 +252,7 @@ cf_status cf_math_print_tensor(const cf_math *x)
   cf_status status = CF_OK;
 
   if(x == CF_NULL) return CF_ERR_NULL;
-  if(x->metadata == CF_NULL || x->handler == CF_NULL || x->data == CF_NULL) return CF_ERR_STATE;
+  if(x->metadata == CF_NULL || x->handler == CF_NULL) return CF_ERR_STATE;
 
   if(x->metadata->rank == 0 || x->metadata->len == 0 || x->byte_size == 0)
   {
