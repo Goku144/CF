@@ -263,6 +263,15 @@ cf_status cf_math_reduce_sum(cf_math *out, const cf_math *x);
 cf_status cf_math_reduce_mean(cf_math *out, const cf_math *x);
 
 /**
+ * @brief Dot two equal-length vectors into a one-element output view.
+ * @param out Bound scalar/vector output with length 1.
+ * @param a Bound first input vector.
+ * @param b Bound second input vector.
+ * @return `CF_OK`, `CF_ERR_NULL`, `CF_ERR_STATE`, `CF_ERR_INVALID`, `CF_ERR_UNSUPPORTED`, or a backend error.
+ */
+cf_status cf_math_dot(cf_math *out, const cf_math *a, const cf_math *b);
+
+/**
  * @brief Multiply two row-major 2D matrices into a bound output view.
  * @param out Bound output matrix with shape `[M, N]`.
  * @param a Bound left matrix with shape `[M, K]`.
@@ -270,6 +279,24 @@ cf_status cf_math_reduce_mean(cf_math *out, const cf_math *x);
  * @return `CF_OK`, `CF_ERR_NULL`, `CF_ERR_STATE`, `CF_ERR_INVALID`, `CF_ERR_UNSUPPORTED`, or a CUDA runtime error.
  */
 cf_status cf_math_matmul(cf_math *out, const cf_math *a, const cf_math *b);
+
+/**
+ * @brief Multiply a row-major matrix by a vector: `out = a @ x`.
+ * @param out Bound output vector with shape `[M]`.
+ * @param a Bound matrix with shape `[M, N]`.
+ * @param x Bound input vector with shape `[N]`.
+ * @return `CF_OK`, `CF_ERR_NULL`, `CF_ERR_STATE`, `CF_ERR_INVALID`, `CF_ERR_UNSUPPORTED`, or a backend error.
+ */
+cf_status cf_math_matvec(cf_math *out, const cf_math *a, const cf_math *x);
+
+/**
+ * @brief Batched row-major matrix multiplication.
+ * @param out Bound output tensor with shape `[B, M, N]`.
+ * @param a Bound left tensor with shape `[B, M, K]`.
+ * @param b Bound right tensor with shape `[B, K, N]`.
+ * @return `CF_OK`, `CF_ERR_NULL`, `CF_ERR_STATE`, `CF_ERR_INVALID`, `CF_ERR_UNSUPPORTED`, or a backend error.
+ */
+cf_status cf_math_batched_matmul(cf_math *out, const cf_math *a, const cf_math *b);
 
 /**
  * @brief Initialize reusable shape metadata.

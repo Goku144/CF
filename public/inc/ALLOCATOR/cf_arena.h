@@ -23,6 +23,17 @@
 #include "RUNTIME/cf_status.h"
 #include "RUNTIME/cf_types.h"
 
+typedef struct cf_arena_chunk cf_arena_chunk;
+
+struct cf_arena_chunk
+{
+  void *data;
+  cf_usize capacity;
+  cf_usize offset;
+  cf_usize high_water;
+  cf_arena_chunk *next;
+};
+
 typedef struct cf_arena
 {
   void *data;
@@ -30,9 +41,15 @@ typedef struct cf_arena
   cf_usize capacity;
   cf_usize offset;
   cf_usize high_water;
+  cf_usize default_alignment;
+  cf_usize next_capacity;
+
+  cf_arena_chunk *chunks;
+  cf_arena_chunk *current;
 
   cf_alloc allocator;
   cf_bool owns_data;
+  cf_bool growable;
 } cf_arena;
 
 #ifdef __cplusplus
@@ -47,6 +64,17 @@ extern "C" {
  * @return `CF_OK`, `CF_ERR_NULL`, `CF_ERR_STATE`, or `CF_ERR_OOM`.
  */
 cf_status cf_arena_init(cf_arena *arena, cf_usize capacity, cf_alloc *allocator);
+
+/**
+ * @brief Initialize an owning arena with explicit alignment/growth policy.
+ * @param arena Arena object to initialize.
+ * @param capacity Initial bytes to reserve.
+ * @param alignment Default power-of-two alignment; zero uses 64 bytes.
+ * @param growable Whether the arena may allocate new chunks when full.
+ * @param allocator Optional backing allocator; `CF_NULL` uses `cf_alloc_new`.
+ * @return `CF_OK`, `CF_ERR_NULL`, `CF_ERR_STATE`, `CF_ERR_INVALID`, or `CF_ERR_OOM`.
+ */
+cf_status cf_arena_init_ex(cf_arena *arena, cf_usize capacity, cf_usize alignment, cf_bool growable, cf_alloc *allocator);
 
 /**
  * @brief Initialize a non-owning arena over caller-provided storage.

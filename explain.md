@@ -54,7 +54,11 @@ while building the layer, then call hot operations during training/inference.
 | `cf_math_scalar_out` | Out-of-place scalar op. |
 | `cf_math_reduce_sum` | Reduce all elements into a one-element sum output. |
 | `cf_math_reduce_mean` | Reduce all elements into a one-element mean output. |
+| `cf_math_dot` | Dot two compact vectors into a one-element output. |
 | `cf_math_matmul` | 2D row-major matrix multiplication. |
+| `cf_math_matvec` | Row-major matrix-vector multiplication. |
+| `cf_math_batched_matmul` | Batched row-major matrix multiplication. |
+| `cf_math_handle_sync` | Explicit backend synchronization for timing/host boundaries. |
 | `cf_math_print_shape` | Print shape, dtype, device, and byte-slice summary. |
 | `cf_math_print_tensor` | Print tensor values through explicit host copy when needed. |
 
@@ -71,18 +75,25 @@ Unary operations use `CF_MATH_OP_NEG`, `CF_MATH_OP_RELU`, `CF_MATH_OP_GELU`,
 `CF_MATH_OP_SIGMOID`, and `CF_MATH_OP_TANH`. They support `F32` and `F64`.
 
 Reductions write to an already-bound one-element view. `I32` mean uses integer
-division. Matmul V1 supports 2D row-major `F32` and `F64`.
+division. Matmul, matvec, dot, and batched matmul support compact row-major
+`F32` and `F64` views.
 
 ## CPU And CUDA Dispatch
 
-CPU handlers execute flat typed loops. This keeps reference behavior simple and
-easy to test.
+Production CPU handlers use OpenBLAS CBLAS for matmul, matvec, batched matmul,
+and dot products. Elementwise, scalar, unary, bias, and reduction work uses
+typed SIMD/OpenMP loops with no heap temporaries in the hot path. Development
+builds can opt into `CF_ENABLE_CPU_FALLBACK=1` when OpenBLAS/mimalloc are not
+installed.
 
 CUDA handlers dispatch to custom kernels for elementwise, unary, and scalar
 operations. Reductions use CUB `DeviceReduce::Sum`, with a tiny finalization
 kernel for mean. Matmul uses cuBLAS with the row-major contract mapped onto
-cuBLAS' column-major interface. CUDA code is compiled only when
-`CF_CUDA_AVAILABLE` is set.
+cuBLAS' column-major interface. CUDA math is asynchronous by default; call
+`cf_math_handle_sync` or copy device data to host when completion is required.
+
+See `public/doc/project/cpu-backend.md` for the function-by-function CPU backend
+and memory explanation.
 
 ## Gradients
 
@@ -141,9 +152,9 @@ binds views into caller-provided handlers, but no forward or loss call allocates
 temporary tensors. Host/device transfers remain explicit through the math copy
 APIs.
 
-CPU execution uses the `cf_math` CPU kernels plus small typed loops for bias and
-loss. CUDA execution uses `cf_math` CUDA matmul/unary kernels, a small
-compile-gated bias kernel, and CUB-backed reductions for loss forward.
+CPU execution uses the `cf_math` OpenBLAS/SIMD backend plus small OpenMP loops
+for bias and loss. CUDA execution uses `cf_math` CUDA matmul/unary kernels, a
+small compile-gated bias kernel, and CUB-backed reductions for loss forward.
 
 Gradients are now a named boundary, not an automatic tape. Manual backward will
 come next so layer code can own its cached forward values and call Layer 0 math

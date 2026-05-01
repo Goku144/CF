@@ -24,6 +24,11 @@ hand-written public documentation lives in `public/doc`.
   - Metadata, handler, storage, and CUDA context lifecycle.
   - Why handler arenas and pointer rebinding make the new direction faster.
 
+- [CPU Backend And Memory Upgrade](cpu-backend.md)
+  - OpenBLAS, SIMD/OpenMP, and mimalloc dispatch rules.
+  - Function-by-function CPU backend behavior.
+  - CUDA asynchronous execution and explicit sync rules.
+
 - [Tensor And CUDA Backend](tensor-cuda.md)
   - Legacy `cf_tensor` backend notes.
   - Older CPU/CUDA tensor behavior.
@@ -44,6 +49,10 @@ make lib
 make app
 make test
 ```
+
+The production CPU math backend requires OpenBLAS, mimalloc, and OpenMP. Use
+`CF_ENABLE_CPU_FALLBACK=1` only for development machines that need the internal
+reference loops.
 
 CUDA is optional. The active math implementation is split across
 `lib/src/MATH/cf_math.cu` and `lib/src/MATH/cf_math_storage.cu`. With `nvcc`,

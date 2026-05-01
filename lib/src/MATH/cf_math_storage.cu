@@ -79,17 +79,10 @@ static cf_status cf_math_storage_backend_alloc(cf_math_cuda_context *ctx, cf_mat
 
   if(device == CF_MATH_DEVICE_CPU && (flags & CF_MATH_MEM_PINNED) == 0)
   {
-    if((flags & CF_MATH_MEM_ALIGNED128) != 0)
-    {
-      cf_usize aligned_bytes = 0;
-      if(bytes > (cf_usize)-1 - 127U) return CF_ERR_OVERFLOW;
-      aligned_bytes = (bytes + 127U) & ~((cf_usize)127U);
-      *ptr = aligned_alloc(128U, (size_t)aligned_bytes);
-    }
-    else
-    {
-      *ptr = malloc((size_t)bytes);
-    }
+    cf_alloc allocator;
+    cf_usize alignment = (flags & CF_MATH_MEM_ALIGNED128) != 0 ? 128U : 64U;
+    cf_alloc_new(&allocator);
+    *ptr = cf_alloc_aligned(&allocator, alignment, bytes);
     return *ptr != CF_NULL ? CF_OK : CF_ERR_OOM;
   }
 
@@ -113,12 +106,6 @@ static cf_status cf_math_storage_backend_alloc(cf_math_cuda_context *ctx, cf_mat
   else if((flags & CF_MATH_MEM_POOLED) != 0)
   {
     if(cudaMallocAsync(ptr, bytes, ctx->stream) != cudaSuccess) return CF_ERR_CUDA_MEMORY;
-    if(cudaStreamSynchronize(ctx->stream) != cudaSuccess)
-    {
-      CF_UNUSED(cudaFreeAsync(*ptr, ctx->stream));
-      *ptr = CF_NULL;
-      return CF_ERR_CUDA_SYNC;
-    }
   }
   else
   {
@@ -173,7 +160,7 @@ static cf_status cf_math_storage_backend_copy(cf_math_cuda_context *ctx, cf_math
   if((flags & CF_MATH_MEM_POOLED) != 0)
   {
     if(cudaMemcpyAsync(dst, src, bytes, cudaMemcpyDefault, ctx->stream) != cudaSuccess) return CF_ERR_CUDA_COPY;
-    return cudaStreamSynchronize(ctx->stream) == cudaSuccess ? CF_OK : CF_ERR_CUDA_SYNC;
+    return CF_OK;
   }
 
   return cudaMemcpy(dst, src, bytes, cudaMemcpyDefault) == cudaSuccess ? CF_OK : CF_ERR_CUDA_COPY;
@@ -192,7 +179,9 @@ static cf_status cf_math_storage_backend_free(cf_math_cuda_context *ctx, cf_math
 
   if(device == CF_MATH_DEVICE_CPU && (flags & CF_MATH_MEM_PINNED) == 0)
   {
-    free(ptr);
+    cf_alloc allocator;
+    cf_alloc_new(&allocator);
+    cf_alloc_aligned_free(&allocator, ptr);
     return CF_OK;
   }
 
@@ -206,7 +195,7 @@ static cf_status cf_math_storage_backend_free(cf_math_cuda_context *ctx, cf_math
   if((flags & CF_MATH_MEM_POOLED) != 0)
   {
     if(cudaFreeAsync(ptr, ctx->stream) != cudaSuccess) return CF_ERR_CUDA_MEMORY;
-    return cudaStreamSynchronize(ctx->stream) == cudaSuccess ? CF_OK : CF_ERR_CUDA_SYNC;
+    return CF_OK;
   }
 
   return cudaFree(ptr) == cudaSuccess ? CF_OK : CF_ERR_CUDA_MEMORY;
@@ -474,6 +463,20 @@ cf_status cf_math_cuda_context_reserve(cf_math_cuda_context *ctx, cf_usize bytes
 #endif
 }
 
+cf_status cf_math_cuda_context_sync(cf_math_cuda_context *ctx)
+{
+#if defined(CF_CUDA_AVAILABLE)
+  if(ctx == CF_NULL) return CF_ERR_NULL;
+  if(cudaSetDevice(ctx->device_id) != cudaSuccess) return CF_ERR_CUDA_DEVICE;
+  if(ctx->stream != CF_NULL)
+    return cudaStreamSynchronize(ctx->stream) == cudaSuccess ? CF_OK : CF_ERR_CUDA_SYNC;
+  return cudaDeviceSynchronize() == cudaSuccess ? CF_OK : CF_ERR_CUDA_SYNC;
+#else
+  if(ctx == CF_NULL) return CF_ERR_NULL;
+  return CF_ERR_UNSUPPORTED;
+#endif
+}
+
 
 cf_status cf_math_cuda_context_destroy(cf_math_cuda_context *ctx)
 {
@@ -487,6 +490,9 @@ cf_status cf_math_cuda_context_destroy(cf_math_cuda_context *ctx)
 
   if(ctx->device_id >= 0 && cudaSetDevice(ctx->device_id) != cudaSuccess)
     status = CF_ERR_CUDA_DEVICE;
+
+  if(ctx->stream != CF_NULL && cudaStreamSynchronize(ctx->stream) != cudaSuccess && status == CF_OK)
+    status = CF_ERR_CUDA_SYNC;
 
   if(ctx->cuda_workspace.ptr != CF_NULL)
   {
@@ -678,6 +684,13 @@ cf_status cf_math_handle_alloc(cf_math_handle_t *handler, cf_usize bytes, void *
   arena->offset = offset + bytes;
 
   return CF_OK;
+}
+
+cf_status cf_math_handle_sync(cf_math_handle_t *handler)
+{
+  if(handler == CF_NULL) return CF_ERR_NULL;
+  if(handler->storage.device == CF_MATH_DEVICE_CPU) return CF_OK;
+  return cf_math_cuda_context_sync(handler->cuda_ctx);
 }
 
 cf_status cf_math_handle_reserve(cf_math_handle_t *handler, cf_usize bytes)

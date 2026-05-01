@@ -32,6 +32,10 @@ typedef struct cf_alloc
   void *(* realloc) (void *ctx, void *ptr, cf_usize size);
   /* Releases a block previously returned by alloc or realloc. */
   void  (* free)    (void *ctx, void *ptr);
+  /* Optional aligned allocation callback. */
+  void *(* alloc_aligned)(void *ctx, cf_usize alignment, cf_usize size);
+  /* Optional aligned free callback. */
+  void  (* free_aligned)(void *ctx, void *ptr);
 } 
 cf_alloc;
 
@@ -45,5 +49,26 @@ cf_alloc;
  * @return void
  */
 void cf_alloc_new(cf_alloc *alloc);
+
+/**
+ * @brief Allocate aligned memory through an allocator.
+ *
+ * If the allocator exposes aligned callbacks, they are used directly. Otherwise
+ * the framework over-allocates, aligns the returned address, and stores the
+ * original pointer for `cf_alloc_aligned_free`.
+ *
+ * @param alloc Allocator to use; `CF_NULL` uses the framework default.
+ * @param alignment Power-of-two byte alignment; zero uses pointer alignment.
+ * @param size Requested bytes.
+ * @return Aligned pointer or `CF_NULL` on invalid input/OOM.
+ */
+void *cf_alloc_aligned(cf_alloc *alloc, cf_usize alignment, cf_usize size);
+
+/**
+ * @brief Release a pointer returned by `cf_alloc_aligned`.
+ * @param alloc Allocator used for allocation; `CF_NULL` uses the framework default.
+ * @param ptr Pointer returned by `cf_alloc_aligned`.
+ */
+void cf_alloc_aligned_free(cf_alloc *alloc, void *ptr);
 
 #endif /* CF_ALLOC_H */

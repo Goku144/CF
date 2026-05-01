@@ -20,6 +20,12 @@
 # PUBLIC VARS
 ##############
 
+CF_ENABLE_CPU_FALLBACK ?= 0
+PKG_CONFIG ?= pkg-config
+OPENBLAS_CFLAGS ?= $(shell $(PKG_CONFIG) --cflags openblas 2>/dev/null)
+OPENBLAS_LIBS ?= $(shell $(PKG_CONFIG) --libs openblas 2>/dev/null)
+MIMALLOC_CFLAGS ?= $(shell $(PKG_CONFIG) --cflags mimalloc 2>/dev/null)
+MIMALLOC_LIBS ?= $(shell $(PKG_CONFIG) --libs mimalloc 2>/dev/null)
 INC := public/inc -I/usr/local/cuda/include
 
 ############
@@ -28,8 +34,9 @@ INC := public/inc -I/usr/local/cuda/include
 
 CC ?= $(shell command -v gcc 2>&1)
 CC_AVAILABLE := $(if $(CC),1,0)
-FLAG_C := -Wall -Wextra -Wpedantic -Werror -O3 -Wno-error=deprecated-declarations -Wno-deprecated-declarations
-LIBS_C := -lm
+FLAG_C := -Wall -Wextra -Wpedantic -Werror -O3 -Wno-error=deprecated-declarations -Wno-deprecated-declarations -fopenmp
+LIBS_C := -lm -fopenmp -lpthread -ldl -lmimalloc
+LINK_FLAGS :=
 SRCS_C :=
 OBJS_C :=
 
@@ -49,11 +56,62 @@ OBJS_ASM :=
 
 NVCC ?= $(shell command -v nvcc 2>&1)
 CUDA_AVAILABLE := $(if $(NVCC),1,0)
-FLAG_CUDA := -O3 -Wno-deprecated-gpu-targets
+FLAG_CUDA := -O3 -Wno-deprecated-gpu-targets -Xcompiler -fopenmp
 LIBS_CUDA :=
 SRCS_CUDA :=
 OBJS_CUDA :=
 CU_BACKEND :=
+
+ifeq ($(CF_ENABLE_CPU_FALLBACK),1)
+ifneq ($(MAKECMDGOALS),clean)
+ifeq ($(strip $(OPENBLAS_LIBS)),)
+ifeq ($(wildcard /usr/lib/x86_64-linux-gnu/pkgconfig/openblas.pc),)
+ifeq ($(wildcard /usr/include/openblas/cblas.h),)
+$(info try to install: sudo apt install libopenblas-dev)
+$(error OpenBLAS is required. Install libopenblas-dev/pkg-config, or build with CF_ENABLE_CPU_FALLBACK=1 for development fallback.)
+else
+$(info openblas.pc is missing. Create it with:)
+$(info sudo tee /usr/lib/x86_64-linux-gnu/pkgconfig/openblas.pc > /dev/null << 'EOF')
+$(info prefix=/usr)
+$(info libdir=$${prefix}/lib/x86_64-linux-gnu)
+$(info includedir=$${prefix}/include/openblas)
+$(info Name: openblas)
+$(info Description: OpenBLAS)
+$(info Version: 0)
+$(info Libs: -L$${libdir} -lopenblas)
+$(info Cflags: -I$${includedir})
+$(info EOF)
+$(error OpenBLAS pkg-config file missing. See above to create it, or build with CF_ENABLE_CPU_FALLBACK=1.)
+endif
+else
+$(error OpenBLAS pkg-config found but flags are empty. Check your PKG_CONFIG_PATH.)
+endif
+endif
+ifeq ($(strip $(MIMALLOC_LIBS)),)
+ifeq ($(wildcard /usr/lib/x86_64-linux-gnu/pkgconfig/mimalloc.pc),)
+ifeq ($(wildcard /usr/include/mimalloc.h),)
+$(info try to install: sudo apt install libmimalloc-dev)
+$(error mimalloc is required. Install libmimalloc-dev/pkg-config, or build with CF_ENABLE_CPU_FALLBACK=1 for development fallback.)
+else
+$(info mimalloc.pc is missing. Create it with:)
+$(info sudo tee /usr/lib/x86_64-linux-gnu/pkgconfig/mimalloc.pc > /dev/null << 'EOF')
+$(info prefix=/usr)
+$(info libdir=$${prefix}/lib/x86_64-linux-gnu)
+$(info includedir=$${prefix}/include)
+$(info Name: mimalloc)
+$(info Description: mimalloc allocator)
+$(info Version: 3.0)
+$(info Libs: -L$${libdir} -lmimalloc)
+$(info Cflags: -I$${includedir})
+$(info EOF)
+$(error mimalloc pkg-config file missing. See above to create it, or build with CF_ENABLE_CPU_FALLBACK=1.)
+endif
+else
+$(error mimalloc pkg-config found but flags are empty. Check your PKG_CONFIG_PATH.)
+endif
+endif
+endif
+endif
 
 #############
 # CONDITIONS
@@ -80,11 +138,13 @@ FLAG_C += -DCF_CUDA_AVAILABLE=1
 FLAG_CUDA += -DCF_CUDA_AVAILABLE=1
 LIBS_CUDA := -lcudnn -lcusparse -lcusolver -lcurand -lcublasLt -lcublas -lcudart
 LINK := $(NVCC)
+LINK_FLAGS := -Xlinker --no-as-needed
 CU_BACKEND := nvcc
 else
 $(info visit the website to install: https://developer.nvidia.com/cuda/toolkit)
 $(warning because CUDA is not available compiling .cu sources with the CPU fallback!)
 LINK := $(CC)
+LINK_FLAGS := -Wl,--no-as-needed
 CU_BACKEND := cc
 endif
 
@@ -102,7 +162,7 @@ runApp: app/build/app
 
 app/build/app: app/bin/app.o $(OBJS_C) $(OBJS_ASM) $(OBJS_CUDA)
 	@mkdir -p $(dir $@)
-	@$(LINK) $^ $(LIBS_CUDA) $(LIBS_C) -o $@
+	@$(LINK) $^ $(LINK_FLAGS) $(LIBS_CUDA) $(LIBS_C) -o $@
 
 app/bin/app.o: app/src/app.c
 	@mkdir -p $(dir $@)
@@ -142,7 +202,7 @@ runTests: tests/build/test
 
 tests/build/test: tests/bin/test.o $(OBJS_C) $(OBJS_ASM) $(OBJS_CUDA)
 	@mkdir -p $(dir $@)
-	@$(LINK) $^ $(LIBS_CUDA) $(LIBS_C) -o $@
+	@$(LINK) $^ $(LINK_FLAGS) $(LIBS_CUDA) $(LIBS_C) -o $@
 
 tests/bin/test.o: tests/src/test.c
 	@mkdir -p $(dir $@)
