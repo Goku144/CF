@@ -32,6 +32,18 @@ extern "C" {
  */
 cf_status cf_math_print_shape(const cf_math *x);
 
+/**
+ * @brief Print math data as a nested tensor literal using metadata dimensions and strides.
+ *
+ * Rank zero prints `[]`, rank one prints `[a, b, c]`, and higher ranks print
+ * recursively nested lists across multiple lines so the output follows the
+ * tensor shape.
+ *
+ * @param x Math view whose bound data should be printed.
+ * @return `CF_OK`, `CF_ERR_NULL`, `CF_ERR_STATE`, `CF_ERR_OOM`, or a copy/sync error.
+ */
+cf_status cf_math_print_tensor(const cf_math *x);
+
 #ifdef __cplusplus
 }
 #endif
