@@ -527,14 +527,14 @@ static cf_status cf_math_reduce_cuda(cf_math_op_kind op, const cf_math_handle_t 
   cudaStream_t stream = handler != CF_NULL && handler->cuda_ctx != CF_NULL ? handler->cuda_ctx->stream : CF_NULL;
   size_t temp_bytes = 0;
   cudaError_t cuda_status = cudaSuccess;
+  cf_usize elem_size = cf_math_dtype_size(dtype);
 
   if(handler == CF_NULL || handler->cuda_ctx == CF_NULL) return CF_ERR_STATE;
   if(len > (cf_usize)INT_MAX) return CF_ERR_BOUNDS;
   if(op != CF_MATH_OP_SUM && op != CF_MATH_OP_MEAN) return CF_ERR_UNSUPPORTED;
+  if(elem_size == 0) return CF_ERR_UNSUPPORTED;
   if(len == 0)
   {
-    cf_usize elem_size = cf_math_dtype_size(dtype);
-    if(elem_size == 0) return CF_ERR_UNSUPPORTED;
     if(cudaMemsetAsync(out_ptr, 0, (size_t)elem_size, stream) != cudaSuccess) return CF_ERR_CUDA_MEMORY;
     if(stream != CF_NULL) return cudaStreamSynchronize(stream) == cudaSuccess ? CF_OK : CF_ERR_CUDA_SYNC;
     return cudaDeviceSynchronize() == cudaSuccess ? CF_OK : CF_ERR_CUDA_SYNC;
@@ -543,13 +543,37 @@ static cf_status cf_math_reduce_cuda(cf_math_op_kind op, const cf_math_handle_t 
   switch(dtype)
   {
     case CF_MATH_DTYPE_F32:
-      cuda_status = cub::DeviceReduce::Sum(CF_NULL, temp_bytes, (const float *)x_ptr, (float *)out_ptr, (int)len, stream);
+      if(handler->cuda_ctx->cuda_workspace.ptr != CF_NULL && handler->cuda_ctx->cuda_workspace.size >= len * elem_size)
+      {
+        temp_bytes = (size_t)handler->cuda_ctx->cuda_workspace.size;
+        cuda_status = cudaSuccess;
+      }
+      else
+      {
+        cuda_status = cub::DeviceReduce::Sum(CF_NULL, temp_bytes, (const float *)x_ptr, (float *)out_ptr, (int)len, stream);
+      }
       break;
     case CF_MATH_DTYPE_F64:
-      cuda_status = cub::DeviceReduce::Sum(CF_NULL, temp_bytes, (const double *)x_ptr, (double *)out_ptr, (int)len, stream);
+      if(handler->cuda_ctx->cuda_workspace.ptr != CF_NULL && handler->cuda_ctx->cuda_workspace.size >= len * elem_size)
+      {
+        temp_bytes = (size_t)handler->cuda_ctx->cuda_workspace.size;
+        cuda_status = cudaSuccess;
+      }
+      else
+      {
+        cuda_status = cub::DeviceReduce::Sum(CF_NULL, temp_bytes, (const double *)x_ptr, (double *)out_ptr, (int)len, stream);
+      }
       break;
     case CF_MATH_DTYPE_I32:
-      cuda_status = cub::DeviceReduce::Sum(CF_NULL, temp_bytes, (const cf_i32 *)x_ptr, (cf_i32 *)out_ptr, (int)len, stream);
+      if(handler->cuda_ctx->cuda_workspace.ptr != CF_NULL && handler->cuda_ctx->cuda_workspace.size >= len * elem_size)
+      {
+        temp_bytes = (size_t)handler->cuda_ctx->cuda_workspace.size;
+        cuda_status = cudaSuccess;
+      }
+      else
+      {
+        cuda_status = cub::DeviceReduce::Sum(CF_NULL, temp_bytes, (const cf_i32 *)x_ptr, (cf_i32 *)out_ptr, (int)len, stream);
+      }
       break;
     default:
       return CF_ERR_UNSUPPORTED;
@@ -558,7 +582,8 @@ static cf_status cf_math_reduce_cuda(cf_math_op_kind op, const cf_math_handle_t 
 
   if(temp_bytes != 0)
   {
-    cf_status reserve_status = cf_math_cuda_context_reserve(handler->cuda_ctx, (cf_usize)temp_bytes);
+    cf_usize reserve_bytes = (cf_usize)temp_bytes < len * elem_size ? len * elem_size : (cf_usize)temp_bytes;
+    cf_status reserve_status = cf_math_cuda_context_reserve(handler->cuda_ctx, reserve_bytes);
     if(reserve_status != CF_OK) return reserve_status;
   }
 

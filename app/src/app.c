@@ -22,6 +22,7 @@
 #define CF_BENCH_DENSE_OUT 256U
 #define CF_BENCH_DENSE_ITERS 12U
 #define CF_BENCH_LOSS_ITERS 100U
+#define CF_BENCH_CUDA_WORKSPACE_BYTES ((cf_usize)64U * 1024U * 1024U)
 
 typedef struct cf_bench_result
 {
@@ -377,7 +378,7 @@ int main(void)
   {
     cf_bench_result gpu = {0};
     cf_math_cuda_context ctx = {0};
-    status = cf_math_cuda_context_init(&ctx, 0, 0);
+    status = cf_math_cuda_context_init(&ctx, CF_BENCH_CUDA_WORKSPACE_BYTES, 0);
     if(status == CF_OK)
     {
       status = cf_bench_run(CF_MATH_DEVICE_CUDA, &ctx, "CUDA", &gpu);

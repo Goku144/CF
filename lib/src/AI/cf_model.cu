@@ -319,10 +319,14 @@ static cf_status cf_ai_loss_cuda(cf_ai_loss_kind loss, const cf_math_handle_t *h
   cub::CountingInputIterator<cf_usize> indices(0);
   size_t temp_bytes = 0;
   cudaError_t cuda_status = cudaSuccess;
+  cf_usize elem_size = dtype == CF_MATH_DTYPE_F64 ? sizeof(double) : sizeof(float);
 
   if(handler == CF_NULL || handler->cuda_ctx == CF_NULL) return CF_ERR_STATE;
   if(len > (cf_usize)INT_MAX) return CF_ERR_BOUNDS;
   if(loss != CF_AI_LOSS_MSE && loss != CF_AI_LOSS_BINARY_CROSS_ENTROPY) return CF_ERR_UNSUPPORTED;
+  if(dtype != CF_MATH_DTYPE_F32 && dtype != CF_MATH_DTYPE_F64) return CF_ERR_UNSUPPORTED;
+  if(handler->cuda_ctx->cuda_workspace.ptr != CF_NULL && handler->cuda_ctx->cuda_workspace.size >= len * elem_size)
+    temp_bytes = (size_t)handler->cuda_ctx->cuda_workspace.size;
 
   if(dtype == CF_MATH_DTYPE_F32)
   {
@@ -330,12 +334,16 @@ static cf_status cf_ai_loss_cuda(cf_ai_loss_kind loss, const cf_math_handle_t *h
     {
       cf_ai_mse_f32 fn = {(const float *)prediction_ptr, (const float *)target_ptr};
       cub::TransformInputIterator<float, cf_ai_mse_f32, cub::CountingInputIterator<cf_usize> > loss_values(indices, fn);
-      cuda_status = cub::DeviceReduce::Sum(CF_NULL, temp_bytes, loss_values, (float *)out_ptr, (int)len, stream);
-      if(cuda_status != cudaSuccess) return CF_ERR_CUDA;
-      if(temp_bytes != 0)
+      if(temp_bytes == 0)
       {
-        cf_status reserve_status = cf_math_cuda_context_reserve(handler->cuda_ctx, (cf_usize)temp_bytes);
-        if(reserve_status != CF_OK) return reserve_status;
+        cuda_status = cub::DeviceReduce::Sum(CF_NULL, temp_bytes, loss_values, (float *)out_ptr, (int)len, stream);
+        if(cuda_status != cudaSuccess) return CF_ERR_CUDA;
+        if(temp_bytes != 0)
+        {
+          cf_usize reserve_bytes = (cf_usize)temp_bytes < len * elem_size ? len * elem_size : (cf_usize)temp_bytes;
+          cf_status reserve_status = cf_math_cuda_context_reserve(handler->cuda_ctx, reserve_bytes);
+          if(reserve_status != CF_OK) return reserve_status;
+        }
       }
       cuda_status = cub::DeviceReduce::Sum(handler->cuda_ctx->cuda_workspace.ptr, temp_bytes, loss_values, (float *)out_ptr, (int)len, stream);
     }
@@ -343,12 +351,16 @@ static cf_status cf_ai_loss_cuda(cf_ai_loss_kind loss, const cf_math_handle_t *h
     {
       cf_ai_bce_f32 fn = {(const float *)prediction_ptr, (const float *)target_ptr};
       cub::TransformInputIterator<float, cf_ai_bce_f32, cub::CountingInputIterator<cf_usize> > loss_values(indices, fn);
-      cuda_status = cub::DeviceReduce::Sum(CF_NULL, temp_bytes, loss_values, (float *)out_ptr, (int)len, stream);
-      if(cuda_status != cudaSuccess) return CF_ERR_CUDA;
-      if(temp_bytes != 0)
+      if(temp_bytes == 0)
       {
-        cf_status reserve_status = cf_math_cuda_context_reserve(handler->cuda_ctx, (cf_usize)temp_bytes);
-        if(reserve_status != CF_OK) return reserve_status;
+        cuda_status = cub::DeviceReduce::Sum(CF_NULL, temp_bytes, loss_values, (float *)out_ptr, (int)len, stream);
+        if(cuda_status != cudaSuccess) return CF_ERR_CUDA;
+        if(temp_bytes != 0)
+        {
+          cf_usize reserve_bytes = (cf_usize)temp_bytes < len * elem_size ? len * elem_size : (cf_usize)temp_bytes;
+          cf_status reserve_status = cf_math_cuda_context_reserve(handler->cuda_ctx, reserve_bytes);
+          if(reserve_status != CF_OK) return reserve_status;
+        }
       }
       cuda_status = cub::DeviceReduce::Sum(handler->cuda_ctx->cuda_workspace.ptr, temp_bytes, loss_values, (float *)out_ptr, (int)len, stream);
     }
@@ -361,12 +373,16 @@ static cf_status cf_ai_loss_cuda(cf_ai_loss_kind loss, const cf_math_handle_t *h
     {
       cf_ai_mse_f64 fn = {(const double *)prediction_ptr, (const double *)target_ptr};
       cub::TransformInputIterator<double, cf_ai_mse_f64, cub::CountingInputIterator<cf_usize> > loss_values(indices, fn);
-      cuda_status = cub::DeviceReduce::Sum(CF_NULL, temp_bytes, loss_values, (double *)out_ptr, (int)len, stream);
-      if(cuda_status != cudaSuccess) return CF_ERR_CUDA;
-      if(temp_bytes != 0)
+      if(temp_bytes == 0)
       {
-        cf_status reserve_status = cf_math_cuda_context_reserve(handler->cuda_ctx, (cf_usize)temp_bytes);
-        if(reserve_status != CF_OK) return reserve_status;
+        cuda_status = cub::DeviceReduce::Sum(CF_NULL, temp_bytes, loss_values, (double *)out_ptr, (int)len, stream);
+        if(cuda_status != cudaSuccess) return CF_ERR_CUDA;
+        if(temp_bytes != 0)
+        {
+          cf_usize reserve_bytes = (cf_usize)temp_bytes < len * elem_size ? len * elem_size : (cf_usize)temp_bytes;
+          cf_status reserve_status = cf_math_cuda_context_reserve(handler->cuda_ctx, reserve_bytes);
+          if(reserve_status != CF_OK) return reserve_status;
+        }
       }
       cuda_status = cub::DeviceReduce::Sum(handler->cuda_ctx->cuda_workspace.ptr, temp_bytes, loss_values, (double *)out_ptr, (int)len, stream);
     }
@@ -374,12 +390,16 @@ static cf_status cf_ai_loss_cuda(cf_ai_loss_kind loss, const cf_math_handle_t *h
     {
       cf_ai_bce_f64 fn = {(const double *)prediction_ptr, (const double *)target_ptr};
       cub::TransformInputIterator<double, cf_ai_bce_f64, cub::CountingInputIterator<cf_usize> > loss_values(indices, fn);
-      cuda_status = cub::DeviceReduce::Sum(CF_NULL, temp_bytes, loss_values, (double *)out_ptr, (int)len, stream);
-      if(cuda_status != cudaSuccess) return CF_ERR_CUDA;
-      if(temp_bytes != 0)
+      if(temp_bytes == 0)
       {
-        cf_status reserve_status = cf_math_cuda_context_reserve(handler->cuda_ctx, (cf_usize)temp_bytes);
-        if(reserve_status != CF_OK) return reserve_status;
+        cuda_status = cub::DeviceReduce::Sum(CF_NULL, temp_bytes, loss_values, (double *)out_ptr, (int)len, stream);
+        if(cuda_status != cudaSuccess) return CF_ERR_CUDA;
+        if(temp_bytes != 0)
+        {
+          cf_usize reserve_bytes = (cf_usize)temp_bytes < len * elem_size ? len * elem_size : (cf_usize)temp_bytes;
+          cf_status reserve_status = cf_math_cuda_context_reserve(handler->cuda_ctx, reserve_bytes);
+          if(reserve_status != CF_OK) return reserve_status;
+        }
       }
       cuda_status = cub::DeviceReduce::Sum(handler->cuda_ctx->cuda_workspace.ptr, temp_bytes, loss_values, (double *)out_ptr, (int)len, stream);
     }
