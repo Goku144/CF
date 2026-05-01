@@ -26,6 +26,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+#if defined(CF_CUDA_AVAILABLE)
+#include <cub/cub.cuh>
+#endif
+
 static cf_status cf_math_resolve_ptr(const cf_math *x, void **ptr);
 static cf_status cf_math_copy_bytes(const cf_math *x, void *dst, const void *src, cf_usize bytes);
 
@@ -145,14 +149,6 @@ static __global__ void name(cf_math_op_kind op, type *x, type scalar, cf_usize l
   } \
 }
 
-#define CF_MATH_CUDA_REDUCE_KERNEL(name, type) \
-static __global__ void name(cf_math_op_kind op, type *out, const type *x, cf_usize len) \
-{ \
-  type sum = (type)0; \
-  for(cf_usize i = 0; i < len; ++i) sum += x[i]; \
-  out[0] = op == CF_MATH_OP_MEAN && len != 0 ? sum / (type)len : sum; \
-}
-
 CF_MATH_CUDA_BINARY_KERNEL(cf_math_op_kernel_f32, float)
 CF_MATH_CUDA_BINARY_KERNEL(cf_math_op_kernel_f64, double)
 CF_MATH_CUDA_BINARY_KERNEL(cf_math_op_kernel_i32, cf_i32)
@@ -161,9 +157,12 @@ CF_MATH_CUDA_UNARY_KERNEL(cf_math_unary_kernel_f64, double, exp, log, sqrt, tanh
 CF_MATH_CUDA_SCALAR_KERNEL(cf_math_scalar_kernel_f32, float)
 CF_MATH_CUDA_SCALAR_KERNEL(cf_math_scalar_kernel_f64, double)
 CF_MATH_CUDA_SCALAR_KERNEL(cf_math_scalar_kernel_i32, cf_i32)
-CF_MATH_CUDA_REDUCE_KERNEL(cf_math_reduce_kernel_f32, float)
-CF_MATH_CUDA_REDUCE_KERNEL(cf_math_reduce_kernel_f64, double)
-CF_MATH_CUDA_REDUCE_KERNEL(cf_math_reduce_kernel_i32, cf_i32)
+
+template <typename T>
+static __global__ void cf_math_mean_finalize_kernel(T *out, cf_usize len)
+{
+  if(len != 0) out[0] = (T)(out[0] / (T)len);
+}
 #endif
 
 cf_status cf_math_metadata_init(cf_math_metadata *metadata, cf_usize dim[CF_MATH_MAX_RANK], cf_usize rank, cf_math_shape shape, cf_math_layout layout)
@@ -526,17 +525,59 @@ static cf_status cf_math_scalar_cuda(cf_math_op_kind op, const cf_math_handle_t 
 static cf_status cf_math_reduce_cuda(cf_math_op_kind op, const cf_math_handle_t *handler, cf_math_dtype dtype, void *out_ptr, const void *x_ptr, cf_usize len)
 {
   cudaStream_t stream = handler != CF_NULL && handler->cuda_ctx != CF_NULL ? handler->cuda_ctx->stream : CF_NULL;
+  size_t temp_bytes = 0;
+  cudaError_t cuda_status = cudaSuccess;
+
+  if(handler == CF_NULL || handler->cuda_ctx == CF_NULL) return CF_ERR_STATE;
+  if(len > (cf_usize)INT_MAX) return CF_ERR_BOUNDS;
+  if(op != CF_MATH_OP_SUM && op != CF_MATH_OP_MEAN) return CF_ERR_UNSUPPORTED;
+  if(len == 0)
+  {
+    cf_usize elem_size = cf_math_dtype_size(dtype);
+    if(elem_size == 0) return CF_ERR_UNSUPPORTED;
+    if(cudaMemsetAsync(out_ptr, 0, (size_t)elem_size, stream) != cudaSuccess) return CF_ERR_CUDA_MEMORY;
+    if(stream != CF_NULL) return cudaStreamSynchronize(stream) == cudaSuccess ? CF_OK : CF_ERR_CUDA_SYNC;
+    return cudaDeviceSynchronize() == cudaSuccess ? CF_OK : CF_ERR_CUDA_SYNC;
+  }
 
   switch(dtype)
   {
     case CF_MATH_DTYPE_F32:
-      cf_math_reduce_kernel_f32<<<1, 1, 0, stream>>>(op, (float *)out_ptr, (const float *)x_ptr, len);
+      cuda_status = cub::DeviceReduce::Sum(CF_NULL, temp_bytes, (const float *)x_ptr, (float *)out_ptr, (int)len, stream);
       break;
     case CF_MATH_DTYPE_F64:
-      cf_math_reduce_kernel_f64<<<1, 1, 0, stream>>>(op, (double *)out_ptr, (const double *)x_ptr, len);
+      cuda_status = cub::DeviceReduce::Sum(CF_NULL, temp_bytes, (const double *)x_ptr, (double *)out_ptr, (int)len, stream);
       break;
     case CF_MATH_DTYPE_I32:
-      cf_math_reduce_kernel_i32<<<1, 1, 0, stream>>>(op, (cf_i32 *)out_ptr, (const cf_i32 *)x_ptr, len);
+      cuda_status = cub::DeviceReduce::Sum(CF_NULL, temp_bytes, (const cf_i32 *)x_ptr, (cf_i32 *)out_ptr, (int)len, stream);
+      break;
+    default:
+      return CF_ERR_UNSUPPORTED;
+  }
+  if(cuda_status != cudaSuccess) return CF_ERR_CUDA;
+
+  if(temp_bytes != 0)
+  {
+    cf_status reserve_status = cf_math_cuda_context_reserve(handler->cuda_ctx, (cf_usize)temp_bytes);
+    if(reserve_status != CF_OK) return reserve_status;
+  }
+
+  switch(dtype)
+  {
+    case CF_MATH_DTYPE_F32:
+      cuda_status = cub::DeviceReduce::Sum(handler->cuda_ctx->cuda_workspace.ptr, temp_bytes, (const float *)x_ptr, (float *)out_ptr, (int)len, stream);
+      if(cuda_status != cudaSuccess) return CF_ERR_CUDA;
+      if(op == CF_MATH_OP_MEAN) cf_math_mean_finalize_kernel<float><<<1, 1, 0, stream>>>((float *)out_ptr, len);
+      break;
+    case CF_MATH_DTYPE_F64:
+      cuda_status = cub::DeviceReduce::Sum(handler->cuda_ctx->cuda_workspace.ptr, temp_bytes, (const double *)x_ptr, (double *)out_ptr, (int)len, stream);
+      if(cuda_status != cudaSuccess) return CF_ERR_CUDA;
+      if(op == CF_MATH_OP_MEAN) cf_math_mean_finalize_kernel<double><<<1, 1, 0, stream>>>((double *)out_ptr, len);
+      break;
+    case CF_MATH_DTYPE_I32:
+      cuda_status = cub::DeviceReduce::Sum(handler->cuda_ctx->cuda_workspace.ptr, temp_bytes, (const cf_i32 *)x_ptr, (cf_i32 *)out_ptr, (int)len, stream);
+      if(cuda_status != cudaSuccess) return CF_ERR_CUDA;
+      if(op == CF_MATH_OP_MEAN) cf_math_mean_finalize_kernel<cf_i32><<<1, 1, 0, stream>>>((cf_i32 *)out_ptr, len);
       break;
     default:
       return CF_ERR_UNSUPPORTED;
