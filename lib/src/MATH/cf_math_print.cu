@@ -17,6 +17,7 @@
  */
 
 #include "MATH/cf_math_print.h"
+#include "MATH/cf_math.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -116,6 +117,80 @@ static void cf_math_print_data_values(const cf_math *x, const void *host_data)
   printf("]\n");
 }
 
+static void cf_math_print_data_value(cf_math_dtype dtype, const void *host_data, cf_usize index)
+{
+  switch(dtype)
+  {
+    case CF_MATH_DTYPE_BOOL:
+      printf("%s", ((const cf_bool *)host_data)[index] == CF_TRUE ? "true" : "false");
+      break;
+    case CF_MATH_DTYPE_I8:
+      printf("%d", (int)((const cf_i8 *)host_data)[index]);
+      break;
+    case CF_MATH_DTYPE_U8:
+    case CF_MATH_DTYPE_FP8E4M3:
+    case CF_MATH_DTYPE_FP8E5M2:
+      printf("%u", (unsigned)((const cf_u8 *)host_data)[index]);
+      break;
+    case CF_MATH_DTYPE_I32:
+      printf("%d", ((const cf_i32 *)host_data)[index]);
+      break;
+    case CF_MATH_DTYPE_F64:
+      printf("%g", ((const double *)host_data)[index]);
+      break;
+    case CF_MATH_DTYPE_F32:
+      printf("%g", (double)((const float *)host_data)[index]);
+      break;
+    case CF_MATH_DTYPE_F16:
+    case CF_MATH_DTYPE_BF16:
+      printf("0x%04x", (unsigned)((const cf_u16 *)host_data)[index]);
+      break;
+  }
+}
+
+static void cf_math_print_indent(cf_usize depth)
+{
+  for(cf_usize i = 0; i < depth; ++i)
+    printf("  ");
+}
+
+static void cf_math_print_tensor_level(const cf_math_metadata *metadata, cf_math_dtype dtype, const void *host_data, cf_usize level, cf_usize offset, cf_usize indent)
+{
+  printf("[");
+  if(level < metadata->rank)
+  {
+    for(cf_usize i = 0; i < metadata->dim[level]; ++i)
+    {
+      if(i != 0) printf(",");
+      if(level + 1 < metadata->rank)
+      {
+        printf("\n");
+        cf_math_print_indent(indent + 1);
+      }
+      else if(i != 0)
+      {
+        printf(" ");
+      }
+
+      if(level + 1 == metadata->rank)
+      {
+        cf_math_print_data_value(dtype, host_data, offset + i * metadata->strides[level]);
+      }
+      else
+      {
+        cf_math_print_tensor_level(metadata, dtype, host_data, level + 1, offset + i * metadata->strides[level], indent + 1);
+      }
+    }
+
+    if(level + 1 < metadata->rank && metadata->dim[level] != 0)
+    {
+      printf("\n");
+      cf_math_print_indent(indent);
+    }
+  }
+  printf("]");
+}
+
 cf_status cf_math_print_shape(const cf_math *x)
 {
   const cf_math_metadata *metadata = CF_NULL;
@@ -168,5 +243,36 @@ cf_status cf_math_print_shape(const cf_math *x)
   }
   printf("}\n");
 
+  return CF_OK;
+}
+
+cf_status cf_math_print_tensor(const cf_math *x)
+{
+  void *host_data = CF_NULL;
+  cf_status status = CF_OK;
+
+  if(x == CF_NULL) return CF_ERR_NULL;
+  if(x->metadata == CF_NULL || x->handler == CF_NULL || x->data == CF_NULL) return CF_ERR_STATE;
+
+  if(x->metadata->rank == 0 || x->metadata->len == 0 || x->byte_size == 0)
+  {
+    printf("[]\n");
+    return CF_OK;
+  }
+
+  host_data = malloc((size_t)x->byte_size);
+  if(host_data == CF_NULL) return CF_ERR_OOM;
+
+  status = cf_math_cpy_d2h(x, host_data, x->metadata->len);
+  if(status != CF_OK)
+  {
+    free(host_data);
+    return status;
+  }
+
+  cf_math_print_tensor_level(x->metadata, x->handler->storage.dtype, host_data, 0, 0, 0);
+  printf("\n");
+
+  free(host_data);
   return CF_OK;
 }

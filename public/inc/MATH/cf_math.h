@@ -179,13 +179,6 @@ cf_usize cf_math_max_usize(cf_usize a, cf_usize b);
 cf_status cf_math_metadata_init(cf_math_metadata *metadata, cf_usize dim[CF_MATH_MAX_RANK], cf_usize rank, cf_math_shape shape, cf_math_layout layout);
 
 /**
- * @brief Print a readable shape summary for a math view.
- * @param x Math view whose metadata should be printed.
- * @return `CF_OK`, `CF_ERR_NULL`, or `CF_ERR_STATE` when the view has no metadata.
- */
-cf_status cf_math_print_shape(const cf_math *x);
-
-/**
  * @brief Copy host data into a bound math view.
  * @param dst Bound math view that receives the data.
  * @param host_data CPU-readable source buffer.
