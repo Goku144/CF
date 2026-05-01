@@ -26,12 +26,24 @@
 #include <stdlib.h>
 #include <string.h>
 
+#if defined(CF_MATH_USE_OPENBLAS)
+#include <cblas.h>
+#endif
+
 #if defined(CF_CUDA_AVAILABLE)
 #include <cub/cub.cuh>
 #endif
 
 static cf_status cf_math_resolve_ptr(const cf_math *x, void **ptr);
 static cf_status cf_math_copy_bytes(const cf_math *x, void *dst, const void *src, cf_usize bytes);
+
+#if defined(__cplusplus)
+#define CF_MATH_RESTRICT __restrict__
+#else
+#define CF_MATH_RESTRICT restrict
+#endif
+
+#define CF_MATH_CPU_PARALLEL_THRESHOLD ((cf_usize)16384U)
 
 cf_u8 cf_math_g8_mul_mod(cf_u8 p, cf_u8 q)
 {
@@ -163,6 +175,7 @@ static __global__ void cf_math_mean_finalize_kernel(T *out, cf_usize len)
 {
   if(len != 0) out[0] = (T)(out[0] / (T)len);
 }
+
 #endif
 
 cf_status cf_math_metadata_init(cf_math_metadata *metadata, cf_usize dim[CF_MATH_MAX_RANK], cf_usize rank, cf_math_shape shape, cf_math_layout layout)
@@ -236,6 +249,25 @@ static cf_bool cf_math_is_supported_float_dtype(cf_math_dtype dtype)
   return dtype == CF_MATH_DTYPE_F32 || dtype == CF_MATH_DTYPE_F64;
 }
 
+static cf_bool cf_math_is_compact_row_major(const cf_math_metadata *metadata)
+{
+  cf_usize expected = 1;
+
+  if(metadata == CF_NULL) return CF_FALSE;
+  if(metadata->layout != CF_MATH_LAYOUT_ROW_MAJOR) return CF_FALSE;
+  if(metadata->rank == 0) return CF_TRUE;
+
+  for(cf_usize i = metadata->rank; i > 0; --i)
+  {
+    cf_usize index = i - 1U;
+    if(metadata->strides[index] != expected) return CF_FALSE;
+    if(metadata->dim[index] != 0 && expected > (cf_usize)-1 / metadata->dim[index])
+      return CF_FALSE;
+    expected *= metadata->dim[index];
+  }
+  return expected == metadata->len;
+}
+
 static cf_bool cf_math_is_bound(const cf_math *x)
 {
   return x != CF_NULL && x->handler != CF_NULL && x->metadata != CF_NULL;
@@ -251,87 +283,200 @@ static cf_status cf_math_check_same_view_shape(const cf_math *a, const cf_math *
   return CF_OK;
 }
 
-#define CF_MATH_CPU_OP_LOOP(type) \
-  do \
-  { \
-    type *dst = (type *)op1_ptr; \
-    const type *src = (const type *)op2_ptr; \
-    switch(op) \
-    { \
-      case CF_MATH_OP_ADD: for(cf_usize i = 0; i < len; ++i) dst[i] = dst[i] + src[i]; return CF_OK; \
-      case CF_MATH_OP_SUB: for(cf_usize i = 0; i < len; ++i) dst[i] = dst[i] - src[i]; return CF_OK; \
-      case CF_MATH_OP_MUL: for(cf_usize i = 0; i < len; ++i) dst[i] = dst[i] * src[i]; return CF_OK; \
-      case CF_MATH_OP_DIV: for(cf_usize i = 0; i < len; ++i) dst[i] = dst[i] / src[i]; return CF_OK; \
-      default: return CF_ERR_UNSUPPORTED; \
-    } \
-  } while(0)
+#if defined(CF_MATH_USE_OPENMP)
+#define CF_MATH_OMP_FOR _Pragma("omp parallel for simd schedule(static) if(len >= CF_MATH_CPU_PARALLEL_THRESHOLD)")
+#define CF_MATH_OMP_REDUCTION_SUM _Pragma("omp parallel for simd reduction(+:sum) schedule(static) if(len >= CF_MATH_CPU_PARALLEL_THRESHOLD)")
+#define CF_MATH_OMP_REDUCTION_ISUM _Pragma("omp parallel for simd reduction(+:isum) schedule(static) if(len >= CF_MATH_CPU_PARALLEL_THRESHOLD)")
+#else
+#define CF_MATH_OMP_FOR
+#define CF_MATH_OMP_REDUCTION_SUM
+#define CF_MATH_OMP_REDUCTION_ISUM
+#endif
+
+static cf_status cf_math_check_blas_dim(cf_usize value)
+{
+  return value <= (cf_usize)INT_MAX ? CF_OK : CF_ERR_BOUNDS;
+}
+
+static cf_status cf_math_check_blas3(cf_usize m, cf_usize k, cf_usize n)
+{
+  if(cf_math_check_blas_dim(m) != CF_OK) return CF_ERR_BOUNDS;
+  if(cf_math_check_blas_dim(k) != CF_OK) return CF_ERR_BOUNDS;
+  if(cf_math_check_blas_dim(n) != CF_OK) return CF_ERR_BOUNDS;
+  return CF_OK;
+}
 
 static cf_status cf_math_op_cpu(cf_math_op_kind op, cf_math_dtype dtype, void *op1_ptr, const void *op2_ptr, cf_usize len)
 {
   switch(dtype)
   {
-    case CF_MATH_DTYPE_F32: CF_MATH_CPU_OP_LOOP(float);
-    case CF_MATH_DTYPE_F64: CF_MATH_CPU_OP_LOOP(double);
-    case CF_MATH_DTYPE_I32: CF_MATH_CPU_OP_LOOP(cf_i32);
+    case CF_MATH_DTYPE_F32:
+      {
+        float *CF_MATH_RESTRICT a = (float *)op1_ptr;
+        const float *CF_MATH_RESTRICT b = (const float *)op2_ptr;
+        CF_MATH_OMP_FOR
+        for(cf_usize i = 0; i < len; ++i)
+        {
+          switch(op)
+          {
+            case CF_MATH_OP_ADD: a[i] = a[i] + b[i]; break;
+            case CF_MATH_OP_SUB: a[i] = a[i] - b[i]; break;
+            case CF_MATH_OP_MUL: a[i] = a[i] * b[i]; break;
+            case CF_MATH_OP_DIV: a[i] = a[i] / b[i]; break;
+            default: break;
+          }
+        }
+        return CF_OK;
+      }
+    case CF_MATH_DTYPE_F64:
+      {
+        double *CF_MATH_RESTRICT a = (double *)op1_ptr;
+        const double *CF_MATH_RESTRICT b = (const double *)op2_ptr;
+        CF_MATH_OMP_FOR
+        for(cf_usize i = 0; i < len; ++i)
+        {
+          switch(op)
+          {
+            case CF_MATH_OP_ADD: a[i] = a[i] + b[i]; break;
+            case CF_MATH_OP_SUB: a[i] = a[i] - b[i]; break;
+            case CF_MATH_OP_MUL: a[i] = a[i] * b[i]; break;
+            case CF_MATH_OP_DIV: a[i] = a[i] / b[i]; break;
+            default: break;
+          }
+        }
+        return CF_OK;
+      }
+    case CF_MATH_DTYPE_I32:
+      {
+        cf_i32 *CF_MATH_RESTRICT a = (cf_i32 *)op1_ptr;
+        const cf_i32 *CF_MATH_RESTRICT b = (const cf_i32 *)op2_ptr;
+        CF_MATH_OMP_FOR
+        for(cf_usize i = 0; i < len; ++i)
+        {
+          switch(op)
+          {
+            case CF_MATH_OP_ADD: a[i] = a[i] + b[i]; break;
+            case CF_MATH_OP_SUB: a[i] = a[i] - b[i]; break;
+            case CF_MATH_OP_MUL: a[i] = a[i] * b[i]; break;
+            case CF_MATH_OP_DIV: a[i] = a[i] / b[i]; break;
+            default: break;
+          }
+        }
+        return CF_OK;
+      }
     default: return CF_ERR_UNSUPPORTED;
   }
 }
-
-#define CF_MATH_CPU_UNARY_LOOP(type, exp_fn, log_fn, sqrt_fn, tanh_fn) \
-  do \
-  { \
-    type *dst = (type *)x_ptr; \
-    for(cf_usize i = 0; i < len; ++i) \
-    { \
-      type v = dst[i]; \
-      switch(op) \
-      { \
-        case CF_MATH_OP_NEG: dst[i] = -v; break; \
-        case CF_MATH_OP_RELU: dst[i] = v > (type)0 ? v : (type)0; break; \
-        case CF_MATH_OP_GELU: dst[i] = (type)0.5 * v * ((type)1 + tanh_fn((type)0.7978845608028654 * (v + (type)0.044715 * v * v * v))); break; \
-        case CF_MATH_OP_EXP: dst[i] = exp_fn(v); break; \
-        case CF_MATH_OP_LOG: dst[i] = log_fn(v); break; \
-        case CF_MATH_OP_SQRT: dst[i] = sqrt_fn(v); break; \
-        case CF_MATH_OP_SIGMOID: dst[i] = (type)1 / ((type)1 + exp_fn(-v)); break; \
-        case CF_MATH_OP_TANH: dst[i] = tanh_fn(v); break; \
-        default: return CF_ERR_UNSUPPORTED; \
-      } \
-    } \
-    return CF_OK; \
-  } while(0)
 
 static cf_status cf_math_unary_cpu(cf_math_op_kind op, cf_math_dtype dtype, void *x_ptr, cf_usize len)
 {
   switch(dtype)
   {
-    case CF_MATH_DTYPE_F32: CF_MATH_CPU_UNARY_LOOP(float, expf, logf, sqrtf, tanhf);
-    case CF_MATH_DTYPE_F64: CF_MATH_CPU_UNARY_LOOP(double, exp, log, sqrt, tanh);
+    case CF_MATH_DTYPE_F32:
+    {
+      float *x = (float *)x_ptr;
+      CF_MATH_OMP_FOR
+      for(cf_usize i = 0; i < len; ++i)
+      {
+        float v = x[i];
+        switch(op)
+        {
+          case CF_MATH_OP_NEG: x[i] = -v; break;
+          case CF_MATH_OP_RELU: x[i] = v > 0.0f ? v : 0.0f; break;
+          case CF_MATH_OP_GELU: x[i] = 0.5f * v * (1.0f + tanhf(0.7978845608028654f * (v + 0.044715f * v * v * v))); break;
+          case CF_MATH_OP_EXP: x[i] = expf(v); break;
+          case CF_MATH_OP_LOG: x[i] = logf(v); break;
+          case CF_MATH_OP_SQRT: x[i] = sqrtf(v); break;
+          case CF_MATH_OP_SIGMOID: x[i] = 1.0f / (1.0f + expf(-v)); break;
+          case CF_MATH_OP_TANH: x[i] = tanhf(v); break;
+          default: break;
+        }
+      }
+      return CF_OK;
+    }
+    case CF_MATH_DTYPE_F64:
+    {
+      double *x = (double *)x_ptr;
+      CF_MATH_OMP_FOR
+      for(cf_usize i = 0; i < len; ++i)
+      {
+        double v = x[i];
+        switch(op)
+        {
+          case CF_MATH_OP_NEG: x[i] = -v; break;
+          case CF_MATH_OP_RELU: x[i] = v > 0.0 ? v : 0.0; break;
+          case CF_MATH_OP_GELU: x[i] = 0.5 * v * (1.0 + tanh(0.7978845608028654 * (v + 0.044715 * v * v * v))); break;
+          case CF_MATH_OP_EXP: x[i] = exp(v); break;
+          case CF_MATH_OP_LOG: x[i] = log(v); break;
+          case CF_MATH_OP_SQRT: x[i] = sqrt(v); break;
+          case CF_MATH_OP_SIGMOID: x[i] = 1.0 / (1.0 + exp(-v)); break;
+          case CF_MATH_OP_TANH: x[i] = tanh(v); break;
+          default: break;
+        }
+      }
+      return CF_OK;
+    }
     default: return CF_ERR_UNSUPPORTED;
   }
 }
-
-#define CF_MATH_CPU_SCALAR_LOOP(type, scalar_expr) \
-  do \
-  { \
-    type *dst = (type *)x_ptr; \
-    type s = (type)(scalar_expr); \
-    switch(op) \
-    { \
-      case CF_MATH_OP_ADD: for(cf_usize i = 0; i < len; ++i) dst[i] = dst[i] + s; return CF_OK; \
-      case CF_MATH_OP_SUB: for(cf_usize i = 0; i < len; ++i) dst[i] = dst[i] - s; return CF_OK; \
-      case CF_MATH_OP_MUL: for(cf_usize i = 0; i < len; ++i) dst[i] = dst[i] * s; return CF_OK; \
-      case CF_MATH_OP_DIV: for(cf_usize i = 0; i < len; ++i) dst[i] = dst[i] / s; return CF_OK; \
-      default: return CF_ERR_UNSUPPORTED; \
-    } \
-  } while(0)
 
 static cf_status cf_math_scalar_cpu(cf_math_op_kind op, cf_math_dtype dtype, void *x_ptr, cf_usize len, double scalar)
 {
   switch(dtype)
   {
-    case CF_MATH_DTYPE_F32: CF_MATH_CPU_SCALAR_LOOP(float, scalar);
-    case CF_MATH_DTYPE_F64: CF_MATH_CPU_SCALAR_LOOP(double, scalar);
-    case CF_MATH_DTYPE_I32: CF_MATH_CPU_SCALAR_LOOP(cf_i32, (cf_i32)scalar);
+    case CF_MATH_DTYPE_F32:
+    {
+      float *x = (float *)x_ptr;
+      float s = (float)scalar;
+      CF_MATH_OMP_FOR
+      for(cf_usize i = 0; i < len; ++i)
+      {
+        switch(op)
+        {
+          case CF_MATH_OP_ADD: x[i] = x[i] + s; break;
+          case CF_MATH_OP_SUB: x[i] = x[i] - s; break;
+          case CF_MATH_OP_MUL: x[i] = x[i] * s; break;
+          case CF_MATH_OP_DIV: x[i] = x[i] / s; break;
+          default: break;
+        }
+      }
+      return CF_OK;
+    }
+    case CF_MATH_DTYPE_F64:
+    {
+      double *x = (double *)x_ptr;
+      CF_MATH_OMP_FOR
+      for(cf_usize i = 0; i < len; ++i)
+      {
+        switch(op)
+        {
+          case CF_MATH_OP_ADD: x[i] = x[i] + scalar; break;
+          case CF_MATH_OP_SUB: x[i] = x[i] - scalar; break;
+          case CF_MATH_OP_MUL: x[i] = x[i] * scalar; break;
+          case CF_MATH_OP_DIV: x[i] = x[i] / scalar; break;
+          default: break;
+        }
+      }
+      return CF_OK;
+    }
+    case CF_MATH_DTYPE_I32:
+    {
+      cf_i32 *x = (cf_i32 *)x_ptr;
+      cf_i32 s = (cf_i32)scalar;
+      CF_MATH_OMP_FOR
+      for(cf_usize i = 0; i < len; ++i)
+      {
+        switch(op)
+        {
+          case CF_MATH_OP_ADD: x[i] = x[i] + s; break;
+          case CF_MATH_OP_SUB: x[i] = x[i] - s; break;
+          case CF_MATH_OP_MUL: x[i] = x[i] * s; break;
+          case CF_MATH_OP_DIV: x[i] = x[i] / s; break;
+          default: break;
+        }
+      }
+      return CF_OK;
+    }
     default: return CF_ERR_UNSUPPORTED;
   }
 }
@@ -344,26 +489,32 @@ static cf_status cf_math_reduce_cpu(cf_math_op_kind op, cf_math_dtype dtype, voi
   {
     case CF_MATH_DTYPE_F32:
     {
-      float sum = 0.0f;
       const float *x = (const float *)x_ptr;
-      for(cf_usize i = 0; i < len; ++i) sum += x[i];
-      ((float *)out_ptr)[0] = op == CF_MATH_OP_MEAN && len != 0 ? sum / (float)len : sum;
+      double sum = 0.0;
+      CF_MATH_OMP_REDUCTION_SUM
+      for(cf_usize i = 0; i < len; ++i) sum += (double)x[i];
+      if(op == CF_MATH_OP_MEAN && len != 0) sum /= (double)len;
+      ((float *)out_ptr)[0] = (float)sum;
       return CF_OK;
     }
     case CF_MATH_DTYPE_F64:
     {
-      double sum = 0.0;
       const double *x = (const double *)x_ptr;
+      double sum = 0.0;
+      CF_MATH_OMP_REDUCTION_SUM
       for(cf_usize i = 0; i < len; ++i) sum += x[i];
-      ((double *)out_ptr)[0] = op == CF_MATH_OP_MEAN && len != 0 ? sum / (double)len : sum;
+      if(op == CF_MATH_OP_MEAN && len != 0) sum /= (double)len;
+      ((double *)out_ptr)[0] = sum;
       return CF_OK;
     }
     case CF_MATH_DTYPE_I32:
     {
-      cf_i32 sum = 0;
       const cf_i32 *x = (const cf_i32 *)x_ptr;
-      for(cf_usize i = 0; i < len; ++i) sum += x[i];
-      ((cf_i32 *)out_ptr)[0] = op == CF_MATH_OP_MEAN && len != 0 ? sum / (cf_i32)len : sum;
+      cf_i64 isum = 0;
+      CF_MATH_OMP_REDUCTION_ISUM
+      for(cf_usize i = 0; i < len; ++i) isum += (cf_i64)x[i];
+      if(op == CF_MATH_OP_MEAN && len != 0) isum /= (cf_i64)len;
+      ((cf_i32 *)out_ptr)[0] = (cf_i32)isum;
       return CF_OK;
     }
     default:
@@ -373,40 +524,194 @@ static cf_status cf_math_reduce_cpu(cf_math_op_kind op, cf_math_dtype dtype, voi
 
 static cf_status cf_math_matmul_cpu(cf_math_dtype dtype, void *out_ptr, const void *a_ptr, const void *b_ptr, cf_usize m, cf_usize k, cf_usize n)
 {
+  cf_status status = cf_math_check_blas3(m, k, n);
+  if(status != CF_OK) return status;
+
   switch(dtype)
   {
     case CF_MATH_DTYPE_F32:
-    {
-      float *out = (float *)out_ptr;
-      const float *a = (const float *)a_ptr;
-      const float *b = (const float *)b_ptr;
-      for(cf_usize i = 0; i < m; ++i)
+#if defined(CF_MATH_USE_OPENBLAS)
+      cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, (int)m, (int)n, (int)k, 1.0f, (const float *)a_ptr, (int)k, (const float *)b_ptr, (int)n, 0.0f, (float *)out_ptr, (int)n);
+#else
       {
-        for(cf_usize j = 0; j < n; ++j)
+        float *out = (float *)out_ptr;
+        const float *a = (const float *)a_ptr;
+        const float *b = (const float *)b_ptr;
+        cf_usize len = m;
+        CF_MATH_OMP_FOR
+        for(cf_usize row = 0; row < m; ++row)
+        {
+          for(cf_usize col = 0; col < n; ++col)
+          {
+            float sum = 0.0f;
+            for(cf_usize inner = 0; inner < k; ++inner)
+              sum += a[row * k + inner] * b[inner * n + col];
+            out[row * n + col] = sum;
+          }
+        }
+      }
+#endif
+      return CF_OK;
+    case CF_MATH_DTYPE_F64:
+#if defined(CF_MATH_USE_OPENBLAS)
+      cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, (int)m, (int)n, (int)k, 1.0, (const double *)a_ptr, (int)k, (const double *)b_ptr, (int)n, 0.0, (double *)out_ptr, (int)n);
+#else
+      {
+        double *out = (double *)out_ptr;
+        const double *a = (const double *)a_ptr;
+        const double *b = (const double *)b_ptr;
+        cf_usize len = m;
+        CF_MATH_OMP_FOR
+        for(cf_usize row = 0; row < m; ++row)
+        {
+          for(cf_usize col = 0; col < n; ++col)
+          {
+            double sum = 0.0;
+            for(cf_usize inner = 0; inner < k; ++inner)
+              sum += a[row * k + inner] * b[inner * n + col];
+            out[row * n + col] = sum;
+          }
+        }
+      }
+#endif
+      return CF_OK;
+    default:
+      return CF_ERR_UNSUPPORTED;
+  }
+}
+
+static cf_status cf_math_matvec_cpu(cf_math_dtype dtype, void *out_ptr, const void *a_ptr, const void *x_ptr, cf_usize m, cf_usize n)
+{
+  cf_status status = cf_math_check_blas3(m, n, 1U);
+  if(status != CF_OK) return status;
+
+  switch(dtype)
+  {
+    case CF_MATH_DTYPE_F32:
+#if defined(CF_MATH_USE_OPENBLAS)
+      cblas_sgemv(CblasRowMajor, CblasNoTrans, (int)m, (int)n, 1.0f, (const float *)a_ptr, (int)n, (const float *)x_ptr, 1, 0.0f, (float *)out_ptr, 1);
+#else
+      {
+        float *out = (float *)out_ptr;
+        const float *a = (const float *)a_ptr;
+        const float *x = (const float *)x_ptr;
+        cf_usize len = m;
+        CF_MATH_OMP_FOR
+        for(cf_usize row = 0; row < m; ++row)
         {
           float sum = 0.0f;
-          for(cf_usize p = 0; p < k; ++p) sum += a[i * k + p] * b[p * n + j];
-          out[i * n + j] = sum;
+          for(cf_usize col = 0; col < n; ++col) sum += a[row * n + col] * x[col];
+          out[row] = sum;
         }
       }
+#endif
       return CF_OK;
-    }
     case CF_MATH_DTYPE_F64:
-    {
-      double *out = (double *)out_ptr;
-      const double *a = (const double *)a_ptr;
-      const double *b = (const double *)b_ptr;
-      for(cf_usize i = 0; i < m; ++i)
+#if defined(CF_MATH_USE_OPENBLAS)
+      cblas_dgemv(CblasRowMajor, CblasNoTrans, (int)m, (int)n, 1.0, (const double *)a_ptr, (int)n, (const double *)x_ptr, 1, 0.0, (double *)out_ptr, 1);
+#else
       {
-        for(cf_usize j = 0; j < n; ++j)
+        double *out = (double *)out_ptr;
+        const double *a = (const double *)a_ptr;
+        const double *x = (const double *)x_ptr;
+        cf_usize len = m;
+        CF_MATH_OMP_FOR
+        for(cf_usize row = 0; row < m; ++row)
         {
           double sum = 0.0;
-          for(cf_usize p = 0; p < k; ++p) sum += a[i * k + p] * b[p * n + j];
-          out[i * n + j] = sum;
+          for(cf_usize col = 0; col < n; ++col) sum += a[row * n + col] * x[col];
+          out[row] = sum;
+        }
+      }
+#endif
+      return CF_OK;
+    default:
+      return CF_ERR_UNSUPPORTED;
+  }
+}
+
+static cf_status cf_math_dot_cpu(cf_math_dtype dtype, void *out_ptr, const void *a_ptr, const void *b_ptr, cf_usize len)
+{
+  cf_status status = cf_math_check_blas_dim(len);
+  if(status != CF_OK) return status;
+
+  switch(dtype)
+  {
+    case CF_MATH_DTYPE_F32:
+#if defined(CF_MATH_USE_OPENBLAS)
+      ((float *)out_ptr)[0] = cblas_sdot((int)len, (const float *)a_ptr, 1, (const float *)b_ptr, 1);
+#else
+      {
+        const float *a = (const float *)a_ptr;
+        const float *b = (const float *)b_ptr;
+        double sum = 0.0;
+        CF_MATH_OMP_REDUCTION_SUM
+        for(cf_usize i = 0; i < len; ++i) sum += (double)a[i] * (double)b[i];
+        ((float *)out_ptr)[0] = (float)sum;
+      }
+#endif
+      return CF_OK;
+    case CF_MATH_DTYPE_F64:
+#if defined(CF_MATH_USE_OPENBLAS)
+      ((double *)out_ptr)[0] = cblas_ddot((int)len, (const double *)a_ptr, 1, (const double *)b_ptr, 1);
+#else
+      {
+        const double *a = (const double *)a_ptr;
+        const double *b = (const double *)b_ptr;
+        double sum = 0.0;
+        CF_MATH_OMP_REDUCTION_SUM
+        for(cf_usize i = 0; i < len; ++i) sum += a[i] * b[i];
+        ((double *)out_ptr)[0] = sum;
+      }
+#endif
+      return CF_OK;
+    default:
+      return CF_ERR_UNSUPPORTED;
+  }
+}
+
+static cf_status cf_math_batched_matmul_cpu(cf_math_dtype dtype, void *out_ptr, const void *a_ptr, const void *b_ptr, cf_usize batch, cf_usize m, cf_usize k, cf_usize n)
+{
+  cf_usize a_stride = 0;
+  cf_usize b_stride = 0;
+  cf_usize out_stride = 0;
+  cf_status status = cf_math_check_blas3(m, k, n);
+  if(status != CF_OK) return status;
+  if(cf_math_check_blas_dim(batch) != CF_OK) return CF_ERR_BOUNDS;
+  if(m != 0 && k > (cf_usize)-1 / m) return CF_ERR_OVERFLOW;
+  if(k != 0 && n > (cf_usize)-1 / k) return CF_ERR_OVERFLOW;
+  if(m != 0 && n > (cf_usize)-1 / m) return CF_ERR_OVERFLOW;
+
+  a_stride = m * k;
+  b_stride = k * n;
+  out_stride = m * n;
+
+  switch(dtype)
+  {
+    case CF_MATH_DTYPE_F32:
+      {
+        float *out = (float *)out_ptr;
+        const float *a = (const float *)a_ptr;
+        const float *b = (const float *)b_ptr;
+        for(cf_usize i = 0; i < batch; ++i)
+        {
+          status = cf_math_matmul_cpu(dtype, out + i * out_stride, a + i * a_stride, b + i * b_stride, m, k, n);
+          if(status != CF_OK) return status;
         }
       }
       return CF_OK;
-    }
+    case CF_MATH_DTYPE_F64:
+      {
+        double *out = (double *)out_ptr;
+        const double *a = (const double *)a_ptr;
+        const double *b = (const double *)b_ptr;
+        for(cf_usize i = 0; i < batch; ++i)
+        {
+          status = cf_math_matmul_cpu(dtype, out + i * out_stride, a + i * a_stride, b + i * b_stride, m, k, n);
+          if(status != CF_OK) return status;
+        }
+      }
+      return CF_OK;
     default:
       return CF_ERR_UNSUPPORTED;
   }
@@ -456,9 +761,7 @@ static cf_status cf_math_op_cuda(cf_math_op_kind op, const cf_math_handle_t *han
   }
 
   if(cudaGetLastError() != cudaSuccess) return CF_ERR_CUDA_LAUNCH;
-  if(stream != CF_NULL)
-    return cudaStreamSynchronize(stream) == cudaSuccess ? CF_OK : CF_ERR_CUDA_SYNC;
-  return cudaDeviceSynchronize() == cudaSuccess ? CF_OK : CF_ERR_CUDA_SYNC;
+  return CF_OK;
 }
 
 static cf_status cf_math_unary_cuda(cf_math_op_kind op, const cf_math_handle_t *handler, cf_math_dtype dtype, void *x_ptr, cf_usize len)
@@ -486,8 +789,7 @@ static cf_status cf_math_unary_cuda(cf_math_op_kind op, const cf_math_handle_t *
   }
 
   if(cudaGetLastError() != cudaSuccess) return CF_ERR_CUDA_LAUNCH;
-  if(stream != CF_NULL) return cudaStreamSynchronize(stream) == cudaSuccess ? CF_OK : CF_ERR_CUDA_SYNC;
-  return cudaDeviceSynchronize() == cudaSuccess ? CF_OK : CF_ERR_CUDA_SYNC;
+  return CF_OK;
 }
 
 static cf_status cf_math_scalar_cuda(cf_math_op_kind op, const cf_math_handle_t *handler, cf_math_dtype dtype, void *x_ptr, cf_usize len, double scalar)
@@ -518,8 +820,7 @@ static cf_status cf_math_scalar_cuda(cf_math_op_kind op, const cf_math_handle_t 
   }
 
   if(cudaGetLastError() != cudaSuccess) return CF_ERR_CUDA_LAUNCH;
-  if(stream != CF_NULL) return cudaStreamSynchronize(stream) == cudaSuccess ? CF_OK : CF_ERR_CUDA_SYNC;
-  return cudaDeviceSynchronize() == cudaSuccess ? CF_OK : CF_ERR_CUDA_SYNC;
+  return CF_OK;
 }
 
 static cf_status cf_math_reduce_cuda(cf_math_op_kind op, const cf_math_handle_t *handler, cf_math_dtype dtype, void *out_ptr, const void *x_ptr, cf_usize len)
@@ -536,8 +837,7 @@ static cf_status cf_math_reduce_cuda(cf_math_op_kind op, const cf_math_handle_t 
   if(len == 0)
   {
     if(cudaMemsetAsync(out_ptr, 0, (size_t)elem_size, stream) != cudaSuccess) return CF_ERR_CUDA_MEMORY;
-    if(stream != CF_NULL) return cudaStreamSynchronize(stream) == cudaSuccess ? CF_OK : CF_ERR_CUDA_SYNC;
-    return cudaDeviceSynchronize() == cudaSuccess ? CF_OK : CF_ERR_CUDA_SYNC;
+    return CF_OK;
   }
 
   switch(dtype)
@@ -609,8 +909,7 @@ static cf_status cf_math_reduce_cuda(cf_math_op_kind op, const cf_math_handle_t 
   }
 
   if(cudaGetLastError() != cudaSuccess) return CF_ERR_CUDA_LAUNCH;
-  if(stream != CF_NULL) return cudaStreamSynchronize(stream) == cudaSuccess ? CF_OK : CF_ERR_CUDA_SYNC;
-  return cudaDeviceSynchronize() == cudaSuccess ? CF_OK : CF_ERR_CUDA_SYNC;
+  return CF_OK;
 }
 
 static cf_status cf_math_matmul_cuda(cf_math_dtype dtype, const cf_math_handle_t *handler, void *out_ptr, const void *a_ptr, const void *b_ptr, cf_usize m, cf_usize k, cf_usize n)
@@ -626,7 +925,7 @@ static cf_status cf_math_matmul_cuda(cf_math_dtype dtype, const cf_math_handle_t
       const float beta = 0.0f;
       cublasStatus_t st = cublasSgemm(handler->cuda_ctx->cublas, CUBLAS_OP_N, CUBLAS_OP_N, (int)n, (int)m, (int)k, &alpha, (const float *)b_ptr, (int)n, (const float *)a_ptr, (int)k, &beta, (float *)out_ptr, (int)n);
       if(st != CUBLAS_STATUS_SUCCESS) return CF_ERR_CUDA;
-      return handler->cuda_ctx->stream != CF_NULL && cudaStreamSynchronize(handler->cuda_ctx->stream) != cudaSuccess ? CF_ERR_CUDA_SYNC : CF_OK;
+      return CF_OK;
     }
     case CF_MATH_DTYPE_F64:
     {
@@ -634,7 +933,97 @@ static cf_status cf_math_matmul_cuda(cf_math_dtype dtype, const cf_math_handle_t
       const double beta = 0.0;
       cublasStatus_t st = cublasDgemm(handler->cuda_ctx->cublas, CUBLAS_OP_N, CUBLAS_OP_N, (int)n, (int)m, (int)k, &alpha, (const double *)b_ptr, (int)n, (const double *)a_ptr, (int)k, &beta, (double *)out_ptr, (int)n);
       if(st != CUBLAS_STATUS_SUCCESS) return CF_ERR_CUDA;
-      return handler->cuda_ctx->stream != CF_NULL && cudaStreamSynchronize(handler->cuda_ctx->stream) != cudaSuccess ? CF_ERR_CUDA_SYNC : CF_OK;
+      return CF_OK;
+    }
+    default:
+      return CF_ERR_UNSUPPORTED;
+  }
+}
+
+static cf_status cf_math_matvec_cuda(cf_math_dtype dtype, const cf_math_handle_t *handler, void *out_ptr, const void *a_ptr, const void *x_ptr, cf_usize m, cf_usize n)
+{
+  if(handler == CF_NULL || handler->cuda_ctx == CF_NULL || handler->cuda_ctx->cublas == CF_NULL) return CF_ERR_STATE;
+  if(m > (cf_usize)INT_MAX || n > (cf_usize)INT_MAX) return CF_ERR_BOUNDS;
+
+  switch(dtype)
+  {
+    case CF_MATH_DTYPE_F32:
+    {
+      const float alpha = 1.0f;
+      const float beta = 0.0f;
+      cublasStatus_t st = cublasSgemv(handler->cuda_ctx->cublas, CUBLAS_OP_T, (int)n, (int)m, &alpha, (const float *)a_ptr, (int)n, (const float *)x_ptr, 1, &beta, (float *)out_ptr, 1);
+      return st == CUBLAS_STATUS_SUCCESS ? CF_OK : CF_ERR_CUDA;
+    }
+    case CF_MATH_DTYPE_F64:
+    {
+      const double alpha = 1.0;
+      const double beta = 0.0;
+      cublasStatus_t st = cublasDgemv(handler->cuda_ctx->cublas, CUBLAS_OP_T, (int)n, (int)m, &alpha, (const double *)a_ptr, (int)n, (const double *)x_ptr, 1, &beta, (double *)out_ptr, 1);
+      return st == CUBLAS_STATUS_SUCCESS ? CF_OK : CF_ERR_CUDA;
+    }
+    default:
+      return CF_ERR_UNSUPPORTED;
+  }
+}
+
+static cf_status cf_math_dot_cuda(cf_math_dtype dtype, const cf_math_handle_t *handler, void *out_ptr, const void *a_ptr, const void *b_ptr, cf_usize len)
+{
+  cublasPointerMode_t old_mode = CUBLAS_POINTER_MODE_HOST;
+  cublasStatus_t st = CUBLAS_STATUS_SUCCESS;
+
+  if(handler == CF_NULL || handler->cuda_ctx == CF_NULL || handler->cuda_ctx->cublas == CF_NULL) return CF_ERR_STATE;
+  if(len > (cf_usize)INT_MAX) return CF_ERR_BOUNDS;
+  if(cublasGetPointerMode(handler->cuda_ctx->cublas, &old_mode) != CUBLAS_STATUS_SUCCESS) return CF_ERR_CUDA;
+  if(cublasSetPointerMode(handler->cuda_ctx->cublas, CUBLAS_POINTER_MODE_DEVICE) != CUBLAS_STATUS_SUCCESS) return CF_ERR_CUDA;
+
+  switch(dtype)
+  {
+    case CF_MATH_DTYPE_F32:
+      st = cublasSdot(handler->cuda_ctx->cublas, (int)len, (const float *)a_ptr, 1, (const float *)b_ptr, 1, (float *)out_ptr);
+      break;
+    case CF_MATH_DTYPE_F64:
+      st = cublasDdot(handler->cuda_ctx->cublas, (int)len, (const double *)a_ptr, 1, (const double *)b_ptr, 1, (double *)out_ptr);
+      break;
+    default:
+      CF_UNUSED(cublasSetPointerMode(handler->cuda_ctx->cublas, old_mode));
+      return CF_ERR_UNSUPPORTED;
+  }
+
+  if(cublasSetPointerMode(handler->cuda_ctx->cublas, old_mode) != CUBLAS_STATUS_SUCCESS) return CF_ERR_CUDA;
+  return st == CUBLAS_STATUS_SUCCESS ? CF_OK : CF_ERR_CUDA;
+}
+
+static cf_status cf_math_batched_matmul_cuda(cf_math_dtype dtype, const cf_math_handle_t *handler, void *out_ptr, const void *a_ptr, const void *b_ptr, cf_usize batch, cf_usize m, cf_usize k, cf_usize n)
+{
+  long long int a_stride = 0;
+  long long int b_stride = 0;
+  long long int out_stride = 0;
+
+  if(handler == CF_NULL || handler->cuda_ctx == CF_NULL || handler->cuda_ctx->cublas == CF_NULL) return CF_ERR_STATE;
+  if(m > (cf_usize)INT_MAX || k > (cf_usize)INT_MAX || n > (cf_usize)INT_MAX || batch > (cf_usize)INT_MAX) return CF_ERR_BOUNDS;
+  if(m != 0 && k > (cf_usize)LLONG_MAX / m) return CF_ERR_OVERFLOW;
+  if(k != 0 && n > (cf_usize)LLONG_MAX / k) return CF_ERR_OVERFLOW;
+  if(m != 0 && n > (cf_usize)LLONG_MAX / m) return CF_ERR_OVERFLOW;
+
+  a_stride = (long long int)(m * k);
+  b_stride = (long long int)(k * n);
+  out_stride = (long long int)(m * n);
+
+  switch(dtype)
+  {
+    case CF_MATH_DTYPE_F32:
+    {
+      const float alpha = 1.0f;
+      const float beta = 0.0f;
+      cublasStatus_t st = cublasSgemmStridedBatched(handler->cuda_ctx->cublas, CUBLAS_OP_N, CUBLAS_OP_N, (int)n, (int)m, (int)k, &alpha, (const float *)b_ptr, (int)n, b_stride, (const float *)a_ptr, (int)k, a_stride, &beta, (float *)out_ptr, (int)n, out_stride, (int)batch);
+      return st == CUBLAS_STATUS_SUCCESS ? CF_OK : CF_ERR_CUDA;
+    }
+    case CF_MATH_DTYPE_F64:
+    {
+      const double alpha = 1.0;
+      const double beta = 0.0;
+      cublasStatus_t st = cublasDgemmStridedBatched(handler->cuda_ctx->cublas, CUBLAS_OP_N, CUBLAS_OP_N, (int)n, (int)m, (int)k, &alpha, (const double *)b_ptr, (int)n, b_stride, (const double *)a_ptr, (int)k, a_stride, &beta, (double *)out_ptr, (int)n, out_stride, (int)batch);
+      return st == CUBLAS_STATUS_SUCCESS ? CF_OK : CF_ERR_CUDA;
     }
     default:
       return CF_ERR_UNSUPPORTED;
@@ -839,6 +1228,41 @@ cf_status cf_math_reduce_mean(cf_math *out, const cf_math *x)
   return cf_math_reduce(CF_MATH_OP_MEAN, out, x);
 }
 
+cf_status cf_math_dot(cf_math *out, const cf_math *a, const cf_math *b)
+{
+  void *out_ptr = CF_NULL;
+  void *a_ptr = CF_NULL;
+  void *b_ptr = CF_NULL;
+  cf_status status = CF_OK;
+  cf_math_dtype dtype = CF_MATH_DTYPE_BOOL;
+
+  if(out == CF_NULL || a == CF_NULL || b == CF_NULL) return CF_ERR_NULL;
+  if(cf_math_is_bound(out) == CF_FALSE || cf_math_is_bound(a) == CF_FALSE || cf_math_is_bound(b) == CF_FALSE) return CF_ERR_STATE;
+  if(out->handler->storage.device != a->handler->storage.device || out->handler->storage.device != b->handler->storage.device) return CF_ERR_INVALID;
+  if(out->handler->storage.dtype != a->handler->storage.dtype || out->handler->storage.dtype != b->handler->storage.dtype) return CF_ERR_INVALID;
+  if(out->metadata->len != 1 || a->metadata->len != b->metadata->len) return CF_ERR_INVALID;
+  if(cf_math_is_compact_row_major(a->metadata) == CF_FALSE || cf_math_is_compact_row_major(b->metadata) == CF_FALSE || cf_math_is_compact_row_major(out->metadata) == CF_FALSE) return CF_ERR_UNSUPPORTED;
+
+  dtype = out->handler->storage.dtype;
+  if(cf_math_is_supported_float_dtype(dtype) == CF_FALSE) return CF_ERR_UNSUPPORTED;
+
+  status = cf_math_resolve_ptr(out, &out_ptr);
+  if(status != CF_OK) return status;
+  status = cf_math_resolve_ptr(a, &a_ptr);
+  if(status != CF_OK) return status;
+  status = cf_math_resolve_ptr(b, &b_ptr);
+  if(status != CF_OK) return status;
+
+  if(out->handler->storage.device == CF_MATH_DEVICE_CPU || (out->handler->storage.allocator.mem_flag & CF_MATH_MEM_PINNED) != 0)
+    return cf_math_dot_cpu(dtype, out_ptr, a_ptr, b_ptr, a->metadata->len);
+
+#if defined(CF_CUDA_AVAILABLE)
+  return cf_math_dot_cuda(dtype, out->handler, out_ptr, a_ptr, b_ptr, a->metadata->len);
+#else
+  return CF_ERR_UNSUPPORTED;
+#endif
+}
+
 cf_status cf_math_matmul(cf_math *out, const cf_math *a, const cf_math *b)
 {
   void *out_ptr = CF_NULL;
@@ -855,7 +1279,7 @@ cf_status cf_math_matmul(cf_math *out, const cf_math *a, const cf_math *b)
   if(out->handler->storage.device != a->handler->storage.device || out->handler->storage.device != b->handler->storage.device) return CF_ERR_INVALID;
   if(out->handler->storage.dtype != a->handler->storage.dtype || out->handler->storage.dtype != b->handler->storage.dtype) return CF_ERR_INVALID;
   if(out->metadata->rank != 2 || a->metadata->rank != 2 || b->metadata->rank != 2) return CF_ERR_INVALID;
-  if(out->metadata->layout != CF_MATH_LAYOUT_ROW_MAJOR || a->metadata->layout != CF_MATH_LAYOUT_ROW_MAJOR || b->metadata->layout != CF_MATH_LAYOUT_ROW_MAJOR) return CF_ERR_UNSUPPORTED;
+  if(cf_math_is_compact_row_major(out->metadata) == CF_FALSE || cf_math_is_compact_row_major(a->metadata) == CF_FALSE || cf_math_is_compact_row_major(b->metadata) == CF_FALSE) return CF_ERR_UNSUPPORTED;
 
   m = a->metadata->dim[0];
   k = a->metadata->dim[1];
@@ -877,6 +1301,93 @@ cf_status cf_math_matmul(cf_math *out, const cf_math *a, const cf_math *b)
 
 #if defined(CF_CUDA_AVAILABLE)
   return cf_math_matmul_cuda(dtype, out->handler, out_ptr, a_ptr, b_ptr, m, k, n);
+#else
+  return CF_ERR_UNSUPPORTED;
+#endif
+}
+
+cf_status cf_math_matvec(cf_math *out, const cf_math *a, const cf_math *x)
+{
+  void *out_ptr = CF_NULL;
+  void *a_ptr = CF_NULL;
+  void *x_ptr = CF_NULL;
+  cf_status status = CF_OK;
+  cf_math_dtype dtype = CF_MATH_DTYPE_BOOL;
+  cf_usize m = 0;
+  cf_usize n = 0;
+
+  if(out == CF_NULL || a == CF_NULL || x == CF_NULL) return CF_ERR_NULL;
+  if(cf_math_is_bound(out) == CF_FALSE || cf_math_is_bound(a) == CF_FALSE || cf_math_is_bound(x) == CF_FALSE) return CF_ERR_STATE;
+  if(out->handler->storage.device != a->handler->storage.device || out->handler->storage.device != x->handler->storage.device) return CF_ERR_INVALID;
+  if(out->handler->storage.dtype != a->handler->storage.dtype || out->handler->storage.dtype != x->handler->storage.dtype) return CF_ERR_INVALID;
+  if(out->metadata->rank != 1 || a->metadata->rank != 2 || x->metadata->rank != 1) return CF_ERR_INVALID;
+  if(cf_math_is_compact_row_major(out->metadata) == CF_FALSE || cf_math_is_compact_row_major(a->metadata) == CF_FALSE || cf_math_is_compact_row_major(x->metadata) == CF_FALSE) return CF_ERR_UNSUPPORTED;
+
+  m = a->metadata->dim[0];
+  n = a->metadata->dim[1];
+  if(x->metadata->dim[0] != n || out->metadata->dim[0] != m) return CF_ERR_INVALID;
+
+  dtype = out->handler->storage.dtype;
+  if(cf_math_is_supported_float_dtype(dtype) == CF_FALSE) return CF_ERR_UNSUPPORTED;
+
+  status = cf_math_resolve_ptr(out, &out_ptr);
+  if(status != CF_OK) return status;
+  status = cf_math_resolve_ptr(a, &a_ptr);
+  if(status != CF_OK) return status;
+  status = cf_math_resolve_ptr(x, &x_ptr);
+  if(status != CF_OK) return status;
+
+  if(out->handler->storage.device == CF_MATH_DEVICE_CPU || (out->handler->storage.allocator.mem_flag & CF_MATH_MEM_PINNED) != 0)
+    return cf_math_matvec_cpu(dtype, out_ptr, a_ptr, x_ptr, m, n);
+
+#if defined(CF_CUDA_AVAILABLE)
+  return cf_math_matvec_cuda(dtype, out->handler, out_ptr, a_ptr, x_ptr, m, n);
+#else
+  return CF_ERR_UNSUPPORTED;
+#endif
+}
+
+cf_status cf_math_batched_matmul(cf_math *out, const cf_math *a, const cf_math *b)
+{
+  void *out_ptr = CF_NULL;
+  void *a_ptr = CF_NULL;
+  void *b_ptr = CF_NULL;
+  cf_status status = CF_OK;
+  cf_math_dtype dtype = CF_MATH_DTYPE_BOOL;
+  cf_usize batch = 0;
+  cf_usize m = 0;
+  cf_usize k = 0;
+  cf_usize n = 0;
+
+  if(out == CF_NULL || a == CF_NULL || b == CF_NULL) return CF_ERR_NULL;
+  if(cf_math_is_bound(out) == CF_FALSE || cf_math_is_bound(a) == CF_FALSE || cf_math_is_bound(b) == CF_FALSE) return CF_ERR_STATE;
+  if(out->handler->storage.device != a->handler->storage.device || out->handler->storage.device != b->handler->storage.device) return CF_ERR_INVALID;
+  if(out->handler->storage.dtype != a->handler->storage.dtype || out->handler->storage.dtype != b->handler->storage.dtype) return CF_ERR_INVALID;
+  if(out->metadata->rank != 3 || a->metadata->rank != 3 || b->metadata->rank != 3) return CF_ERR_INVALID;
+  if(cf_math_is_compact_row_major(out->metadata) == CF_FALSE || cf_math_is_compact_row_major(a->metadata) == CF_FALSE || cf_math_is_compact_row_major(b->metadata) == CF_FALSE) return CF_ERR_UNSUPPORTED;
+
+  batch = a->metadata->dim[0];
+  m = a->metadata->dim[1];
+  k = a->metadata->dim[2];
+  n = b->metadata->dim[2];
+  if(b->metadata->dim[0] != batch || out->metadata->dim[0] != batch) return CF_ERR_INVALID;
+  if(b->metadata->dim[1] != k || out->metadata->dim[1] != m || out->metadata->dim[2] != n) return CF_ERR_INVALID;
+
+  dtype = out->handler->storage.dtype;
+  if(cf_math_is_supported_float_dtype(dtype) == CF_FALSE) return CF_ERR_UNSUPPORTED;
+
+  status = cf_math_resolve_ptr(out, &out_ptr);
+  if(status != CF_OK) return status;
+  status = cf_math_resolve_ptr(a, &a_ptr);
+  if(status != CF_OK) return status;
+  status = cf_math_resolve_ptr(b, &b_ptr);
+  if(status != CF_OK) return status;
+
+  if(out->handler->storage.device == CF_MATH_DEVICE_CPU || (out->handler->storage.allocator.mem_flag & CF_MATH_MEM_PINNED) != 0)
+    return cf_math_batched_matmul_cpu(dtype, out_ptr, a_ptr, b_ptr, batch, m, k, n);
+
+#if defined(CF_CUDA_AVAILABLE)
+  return cf_math_batched_matmul_cuda(dtype, out->handler, out_ptr, a_ptr, b_ptr, batch, m, k, n);
 #else
   return CF_ERR_UNSUPPORTED;
 #endif
@@ -941,15 +1452,6 @@ static cf_status cf_math_resolve_ptr(const cf_math *x, void **ptr)
   return CF_OK;
 }
 
-#if defined(CF_CUDA_AVAILABLE)
-static cf_status cf_math_copy_sync(const cf_math_handle_t *handler)
-{
-  if(handler != CF_NULL && handler->cuda_ctx != CF_NULL && handler->cuda_ctx->stream != CF_NULL)
-    return cudaStreamSynchronize(handler->cuda_ctx->stream) == cudaSuccess ? CF_OK : CF_ERR_CUDA_SYNC;
-  return cudaDeviceSynchronize() == cudaSuccess ? CF_OK : CF_ERR_CUDA_SYNC;
-}
-#endif
-
 static cf_status cf_math_copy_bytes(const cf_math *x, void *dst, const void *src, cf_usize bytes)
 {
   if(bytes == 0) return CF_OK;
@@ -963,9 +1465,9 @@ static cf_status cf_math_copy_bytes(const cf_math *x, void *dst, const void *src
   }
 
 #if defined(CF_CUDA_AVAILABLE)
-  if(cudaMemcpy(dst, src, (size_t)bytes, cudaMemcpyDefault) != cudaSuccess)
+  if(cudaMemcpyAsync(dst, src, (size_t)bytes, cudaMemcpyDefault, x->handler->cuda_ctx != CF_NULL ? x->handler->cuda_ctx->stream : CF_NULL) != cudaSuccess)
     return CF_ERR_CUDA_COPY;
-  return cf_math_copy_sync(x->handler);
+  return CF_OK;
 #else
   return CF_ERR_UNSUPPORTED;
 #endif
@@ -1018,7 +1520,9 @@ cf_status cf_math_cpy_d2h(const cf_math *src, void *host_data, cf_usize count)
   bytes = count * elem_size;
   if(bytes > src->byte_size) return CF_ERR_BOUNDS;
 
-  return cf_math_copy_bytes(src, host_data, ptr, bytes);
+  status = cf_math_copy_bytes(src, host_data, ptr, bytes);
+  if(status != CF_OK) return status;
+  return cf_math_handle_sync(src->handler);
 }
 
 cf_status cf_math_rebind(cf_math *x, cf_math_handle_t *handler, cf_math_metadata *metadata)

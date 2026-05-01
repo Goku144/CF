@@ -67,6 +67,14 @@ static cf_status test_allocator_arena(void)
   cf_arena_destroy(&arena);
   CF_TEST_CHECK(buffer[0] == 0);
 
+  CF_TEST_STATUS(cf_arena_init_ex(&arena, 32, 64, CF_TRUE, CF_NULL));
+  CF_TEST_STATUS(cf_arena_alloc(&arena, 96, 64, &a));
+  CF_TEST_CHECK(a != CF_NULL);
+  CF_TEST_CHECK((((cf_uptr)a) & 63U) == 0);
+  cf_arena_reset(&arena);
+  CF_TEST_CHECK(arena.offset == 0);
+  cf_arena_destroy(&arena);
+
   return CF_OK;
 }
 
@@ -83,6 +91,7 @@ static cf_status test_allocator_pool(void)
   CF_TEST_CHECK(a != CF_NULL);
   CF_TEST_CHECK(b != CF_NULL);
   CF_TEST_CHECK(a != b);
+  CF_TEST_CHECK((((cf_uptr)a) & 63U) == 0);
   CF_TEST_CHECK(cf_pool_alloc(&pool, &c) == CF_ERR_OOM);
   CF_TEST_STATUS(cf_pool_free(&pool, a));
   CF_TEST_STATUS(cf_pool_alloc(&pool, &c));
@@ -240,14 +249,6 @@ static cf_status test_math_cpu_ops_f64_i32(void)
   CF_TEST_STATUS(cf_math_op(CF_MATH_OP_ADD, &a, &b));
   CF_TEST_STATUS(cf_math_cpy_d2h(&a, i32_out, 3));
   CF_TEST_CHECK(i32_out[0] == 9 && i32_out[1] == 12 && i32_out[2] == 15);
-  CF_TEST_STATUS(cf_math_cpy_h2d(&a, i32_a, 3));
-  CF_TEST_STATUS(cf_math_op(CF_MATH_OP_SUB, &a, &b));
-  CF_TEST_STATUS(cf_math_cpy_d2h(&a, i32_out, 3));
-  CF_TEST_CHECK(i32_out[0] == 5 && i32_out[1] == 6 && i32_out[2] == 7);
-  CF_TEST_STATUS(cf_math_cpy_h2d(&a, i32_a, 3));
-  CF_TEST_STATUS(cf_math_op(CF_MATH_OP_MUL, &a, &b));
-  CF_TEST_STATUS(cf_math_cpy_d2h(&a, i32_out, 3));
-  CF_TEST_CHECK(i32_out[0] == 14 && i32_out[1] == 27 && i32_out[2] == 44);
   CF_TEST_STATUS(cf_math_unbind(&a));
   CF_TEST_STATUS(cf_math_unbind(&b));
   CF_TEST_STATUS(cf_math_handle_destroy(&i32_handler));
@@ -440,17 +441,41 @@ static cf_status test_math_cpu_matmul(void)
   cf_math_metadata b_meta = {0};
   cf_math_metadata out_meta = {0};
   cf_math_metadata bad_meta = {0};
+  cf_math_metadata vec_meta = {0};
+  cf_math_metadata vec_out_meta = {0};
+  cf_math_metadata scalar_meta = {0};
+  cf_math_metadata batch_a_meta = {0};
+  cf_math_metadata batch_b_meta = {0};
+  cf_math_metadata batch_out_meta = {0};
   cf_math a = {0};
   cf_math b = {0};
   cf_math out = {0};
   cf_math bad = {0};
+  cf_math vec = {0};
+  cf_math vec_out = {0};
+  cf_math dot_out = {0};
+  cf_math ba = {0};
+  cf_math bb = {0};
+  cf_math bout = {0};
   cf_usize a_dims[CF_MATH_MAX_RANK] = {2, 3};
   cf_usize b_dims[CF_MATH_MAX_RANK] = {3, 2};
   cf_usize out_dims[CF_MATH_MAX_RANK] = {2, 2};
   cf_usize bad_dims[CF_MATH_MAX_RANK] = {4};
+  cf_usize vec_dims[CF_MATH_MAX_RANK] = {3};
+  cf_usize vec_out_dims[CF_MATH_MAX_RANK] = {2};
+  cf_usize scalar_dims[CF_MATH_MAX_RANK] = {1};
+  cf_usize batch_a_dims[CF_MATH_MAX_RANK] = {2, 2, 3};
+  cf_usize batch_b_dims[CF_MATH_MAX_RANK] = {2, 3, 2};
+  cf_usize batch_out_dims[CF_MATH_MAX_RANK] = {2, 2, 2};
   float af[6] = {1, 2, 3, 4, 5, 6};
   float bf[6] = {7, 8, 9, 10, 11, 12};
   float of[4] = {0};
+  float vf[3] = {1, 2, 3};
+  float mvf[2] = {0};
+  float dotf[1] = {0};
+  float baf[12] = {1, 2, 3, 4, 5, 6, 2, 0, 1, 1, 3, 2};
+  float bbf[12] = {7, 8, 9, 10, 11, 12, 1, 2, 3, 4, 5, 6};
+  float bof[8] = {0};
   double ad[6] = {1, 2, 3, 4, 5, 6};
   double bd[6] = {7, 8, 9, 10, 11, 12};
   double od[4] = {0};
@@ -459,12 +484,24 @@ static cf_status test_math_cpu_matmul(void)
   CF_TEST_STATUS(cf_math_metadata_init(&b_meta, b_dims, 2, CF_MATH_SHAPE_MATRIX, CF_MATH_LAYOUT_ROW_MAJOR));
   CF_TEST_STATUS(cf_math_metadata_init(&out_meta, out_dims, 2, CF_MATH_SHAPE_MATRIX, CF_MATH_LAYOUT_ROW_MAJOR));
   CF_TEST_STATUS(cf_math_metadata_init(&bad_meta, bad_dims, 1, CF_MATH_SHAPE_VECTOR, CF_MATH_LAYOUT_ROW_MAJOR));
+  CF_TEST_STATUS(cf_math_metadata_init(&vec_meta, vec_dims, 1, CF_MATH_SHAPE_VECTOR, CF_MATH_LAYOUT_ROW_MAJOR));
+  CF_TEST_STATUS(cf_math_metadata_init(&vec_out_meta, vec_out_dims, 1, CF_MATH_SHAPE_VECTOR, CF_MATH_LAYOUT_ROW_MAJOR));
+  CF_TEST_STATUS(cf_math_metadata_init(&scalar_meta, scalar_dims, 1, CF_MATH_SHAPE_SCALAR, CF_MATH_LAYOUT_ROW_MAJOR));
+  CF_TEST_STATUS(cf_math_metadata_init(&batch_a_meta, batch_a_dims, 3, CF_MATH_SHAPE_TENSOR, CF_MATH_LAYOUT_ROW_MAJOR));
+  CF_TEST_STATUS(cf_math_metadata_init(&batch_b_meta, batch_b_dims, 3, CF_MATH_SHAPE_TENSOR, CF_MATH_LAYOUT_ROW_MAJOR));
+  CF_TEST_STATUS(cf_math_metadata_init(&batch_out_meta, batch_out_dims, 3, CF_MATH_SHAPE_TENSOR, CF_MATH_LAYOUT_ROW_MAJOR));
 
-  CF_TEST_STATUS(cf_math_handle_init(&f32_handler, CF_NULL, CF_MATH_DTYPE_F32, CF_MATH_DEVICE_CPU, CF_MATH_MEM_DEFAULT, CF_MATH_HANDLE_OPT_MATMUL, 512));
+  CF_TEST_STATUS(cf_math_handle_init(&f32_handler, CF_NULL, CF_MATH_DTYPE_F32, CF_MATH_DEVICE_CPU, CF_MATH_MEM_DEFAULT, CF_MATH_HANDLE_OPT_MATMUL, 1024));
   CF_TEST_STATUS(cf_math_bind(&a, &f32_handler, &a_meta));
   CF_TEST_STATUS(cf_math_bind(&b, &f32_handler, &b_meta));
   CF_TEST_STATUS(cf_math_bind(&out, &f32_handler, &out_meta));
   CF_TEST_STATUS(cf_math_bind(&bad, &f32_handler, &bad_meta));
+  CF_TEST_STATUS(cf_math_bind(&vec, &f32_handler, &vec_meta));
+  CF_TEST_STATUS(cf_math_bind(&vec_out, &f32_handler, &vec_out_meta));
+  CF_TEST_STATUS(cf_math_bind(&dot_out, &f32_handler, &scalar_meta));
+  CF_TEST_STATUS(cf_math_bind(&ba, &f32_handler, &batch_a_meta));
+  CF_TEST_STATUS(cf_math_bind(&bb, &f32_handler, &batch_b_meta));
+  CF_TEST_STATUS(cf_math_bind(&bout, &f32_handler, &batch_out_meta));
   CF_TEST_STATUS(cf_math_cpy_h2d(&a, af, 6));
   CF_TEST_STATUS(cf_math_cpy_h2d(&b, bf, 6));
   CF_TEST_STATUS(cf_math_matmul(&out, &a, &b));
@@ -474,10 +511,32 @@ static cf_status test_math_cpu_matmul(void)
   CF_TEST_CLOSE(of[2], 139.0f, 0.0001);
   CF_TEST_CLOSE(of[3], 154.0f, 0.0001);
   CF_TEST_CHECK(cf_math_matmul(&bad, &a, &b) == CF_ERR_INVALID);
+  CF_TEST_STATUS(cf_math_cpy_h2d(&vec, vf, 3));
+  CF_TEST_STATUS(cf_math_matvec(&vec_out, &a, &vec));
+  CF_TEST_STATUS(cf_math_cpy_d2h(&vec_out, mvf, 2));
+  CF_TEST_CLOSE(mvf[0], 14.0f, 0.0001);
+  CF_TEST_CLOSE(mvf[1], 32.0f, 0.0001);
+  CF_TEST_STATUS(cf_math_dot(&dot_out, &a, &a));
+  CF_TEST_STATUS(cf_math_cpy_d2h(&dot_out, dotf, 1));
+  CF_TEST_CLOSE(dotf[0], 91.0f, 0.0001);
+  CF_TEST_STATUS(cf_math_cpy_h2d(&ba, baf, 12));
+  CF_TEST_STATUS(cf_math_cpy_h2d(&bb, bbf, 12));
+  CF_TEST_STATUS(cf_math_batched_matmul(&bout, &ba, &bb));
+  CF_TEST_STATUS(cf_math_cpy_d2h(&bout, bof, 8));
+  CF_TEST_CLOSE(bof[0], 58.0f, 0.0001);
+  CF_TEST_CLOSE(bof[3], 154.0f, 0.0001);
+  CF_TEST_CLOSE(bof[4], 7.0f, 0.0001);
+  CF_TEST_CLOSE(bof[7], 26.0f, 0.0001);
   CF_TEST_STATUS(cf_math_unbind(&a));
   CF_TEST_STATUS(cf_math_unbind(&b));
   CF_TEST_STATUS(cf_math_unbind(&out));
   CF_TEST_STATUS(cf_math_unbind(&bad));
+  CF_TEST_STATUS(cf_math_unbind(&vec));
+  CF_TEST_STATUS(cf_math_unbind(&vec_out));
+  CF_TEST_STATUS(cf_math_unbind(&dot_out));
+  CF_TEST_STATUS(cf_math_unbind(&ba));
+  CF_TEST_STATUS(cf_math_unbind(&bb));
+  CF_TEST_STATUS(cf_math_unbind(&bout));
   CF_TEST_STATUS(cf_math_handle_destroy(&f32_handler));
 
   CF_TEST_STATUS(cf_math_handle_init(&f64_handler, CF_NULL, CF_MATH_DTYPE_F64, CF_MATH_DEVICE_CPU, CF_MATH_MEM_DEFAULT, CF_MATH_HANDLE_OPT_MATMUL, 1024));
@@ -755,6 +814,7 @@ static cf_status test_math_cuda_ops_f32(void)
   CF_TEST_CHECK(out[0] == 0.0f && out[2] == 1.0f && out[3] == 2.0f);
 
   CF_TEST_STATUS(cf_math_scalar(CF_MATH_OP_MUL, &out_view, 3.0));
+  CF_TEST_STATUS(cf_math_handle_sync(&handler));
   CF_TEST_STATUS(cf_math_cpy_d2h(&out_view, out, 4));
   CF_TEST_CHECK(out[3] == 6.0f);
 

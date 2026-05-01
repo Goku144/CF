@@ -26,6 +26,16 @@
 #include <cub/cub.cuh>
 #endif
 
+#define CF_AI_CPU_PARALLEL_THRESHOLD ((cf_usize)16384U)
+
+#if defined(CF_MATH_USE_OPENMP)
+#define CF_AI_OMP_FOR _Pragma("omp parallel for simd schedule(static) if(len >= CF_AI_CPU_PARALLEL_THRESHOLD)")
+#define CF_AI_OMP_REDUCTION_SUM _Pragma("omp parallel for simd reduction(+:total) schedule(static) if(len >= CF_AI_CPU_PARALLEL_THRESHOLD)")
+#else
+#define CF_AI_OMP_FOR
+#define CF_AI_OMP_REDUCTION_SUM
+#endif
+
 static cf_bool cf_ai_math_is_bound(const cf_math *x)
 {
   return x != CF_NULL && x->handler != CF_NULL && x->metadata != CF_NULL;
@@ -106,12 +116,11 @@ static cf_status cf_ai_bias_add_cpu(cf_math_dtype dtype, void *out_ptr, const vo
   {
     float *out = (float *)out_ptr;
     const float *bias = (const float *)bias_ptr;
-    for(cf_usize row = 0; row < batch; ++row)
+    cf_usize len = batch * out_features;
+    CF_AI_OMP_FOR
+    for(cf_usize i = 0; i < len; ++i)
     {
-      for(cf_usize col = 0; col < out_features; ++col)
-      {
-        out[row * out_features + col] += bias[col];
-      }
+      out[i] += bias[i % out_features];
     }
     return CF_OK;
   }
@@ -119,12 +128,11 @@ static cf_status cf_ai_bias_add_cpu(cf_math_dtype dtype, void *out_ptr, const vo
   {
     double *out = (double *)out_ptr;
     const double *bias = (const double *)bias_ptr;
-    for(cf_usize row = 0; row < batch; ++row)
+    cf_usize len = batch * out_features;
+    CF_AI_OMP_FOR
+    for(cf_usize i = 0; i < len; ++i)
     {
-      for(cf_usize col = 0; col < out_features; ++col)
-      {
-        out[row * out_features + col] += bias[col];
-      }
+      out[i] += bias[i % out_features];
     }
     return CF_OK;
   }
@@ -142,6 +150,7 @@ static cf_status cf_ai_loss_cpu(cf_ai_loss_kind loss, cf_math_dtype dtype, void 
     const float *prediction = (const float *)prediction_ptr;
     const float *target = (const float *)target_ptr;
     float *out = (float *)out_ptr;
+    CF_AI_OMP_REDUCTION_SUM
     for(cf_usize i = 0; i < len; ++i)
     {
       double p = (double)prediction[i];
@@ -167,6 +176,7 @@ static cf_status cf_ai_loss_cpu(cf_ai_loss_kind loss, cf_math_dtype dtype, void 
     const double *prediction = (const double *)prediction_ptr;
     const double *target = (const double *)target_ptr;
     double *out = (double *)out_ptr;
+    CF_AI_OMP_REDUCTION_SUM
     for(cf_usize i = 0; i < len; ++i)
     {
       double p = prediction[i];
@@ -191,13 +201,6 @@ static cf_status cf_ai_loss_cpu(cf_ai_loss_kind loss, cf_math_dtype dtype, void 
 }
 
 #if defined(CF_CUDA_AVAILABLE)
-static cf_status cf_ai_cuda_sync(const cf_math_handle_t *handler)
-{
-  if(handler != CF_NULL && handler->cuda_ctx != CF_NULL && handler->cuda_ctx->stream != CF_NULL)
-    return cudaStreamSynchronize(handler->cuda_ctx->stream) == cudaSuccess ? CF_OK : CF_ERR_CUDA_SYNC;
-  return cudaDeviceSynchronize() == cudaSuccess ? CF_OK : CF_ERR_CUDA_SYNC;
-}
-
 static __global__ void cf_ai_bias_add_kernel_f32(float *out, const float *bias, cf_usize batch, cf_usize out_features)
 {
   cf_usize i = (cf_usize)blockIdx.x * (cf_usize)blockDim.x + (cf_usize)threadIdx.x;
@@ -305,7 +308,7 @@ static cf_status cf_ai_bias_add(cf_ai_dense *layer)
     else
       return CF_ERR_UNSUPPORTED;
     if(cudaGetLastError() != cudaSuccess) return CF_ERR_CUDA_LAUNCH;
-    return cf_ai_cuda_sync(layer->output.handler);
+    return CF_OK;
   }
 #else
   return CF_ERR_UNSUPPORTED;
@@ -412,7 +415,7 @@ static cf_status cf_ai_loss_cuda(cf_ai_loss_kind loss, const cf_math_handle_t *h
   }
 
   if(cudaGetLastError() != cudaSuccess) return CF_ERR_CUDA_LAUNCH;
-  return cf_ai_cuda_sync(handler);
+  return CF_OK;
 }
 #endif
 

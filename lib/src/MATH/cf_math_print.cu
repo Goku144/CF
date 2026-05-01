@@ -18,9 +18,9 @@
 
 #include "MATH/cf_math_print.h"
 #include "MATH/cf_math.h"
+#include "ALLOCATOR/cf_alloc.h"
 
 #include <stdio.h>
-#include <stdlib.h>
 
 static const char *cf_math_shape_name(cf_math_shape shape)
 {
@@ -195,6 +195,7 @@ cf_status cf_math_print_shape(const cf_math *x)
 {
   const cf_math_metadata *metadata = CF_NULL;
   void *host_data = CF_NULL;
+  cf_alloc allocator;
   cf_status status = CF_OK;
 
   if(x == CF_NULL) return CF_ERR_NULL;
@@ -228,18 +229,19 @@ cf_status cf_math_print_shape(const cf_math *x)
   printf("  bytes: offset=%zu size=%zu\n", (size_t)x->byte_offset, (size_t)x->byte_size);
   if(x->handler != CF_NULL && x->byte_size != 0)
   {
-    host_data = malloc((size_t)x->byte_size);
+    cf_alloc_new(&allocator);
+    host_data = allocator.alloc(allocator.ctx, x->byte_size);
     if(host_data == CF_NULL) return CF_ERR_OOM;
 
     status = cf_math_cpy_d2h(x, host_data, x->metadata->len);
     if(status != CF_OK)
     {
-      free(host_data);
+      allocator.free(allocator.ctx, host_data);
       return status;
     }
 
     cf_math_print_data_values(x, host_data);
-    free(host_data);
+    allocator.free(allocator.ctx, host_data);
   }
   printf("}\n");
 
@@ -249,6 +251,7 @@ cf_status cf_math_print_shape(const cf_math *x)
 cf_status cf_math_print_tensor(const cf_math *x)
 {
   void *host_data = CF_NULL;
+  cf_alloc allocator;
   cf_status status = CF_OK;
 
   if(x == CF_NULL) return CF_ERR_NULL;
@@ -260,19 +263,20 @@ cf_status cf_math_print_tensor(const cf_math *x)
     return CF_OK;
   }
 
-  host_data = malloc((size_t)x->byte_size);
+  cf_alloc_new(&allocator);
+  host_data = allocator.alloc(allocator.ctx, x->byte_size);
   if(host_data == CF_NULL) return CF_ERR_OOM;
 
   status = cf_math_cpy_d2h(x, host_data, x->metadata->len);
   if(status != CF_OK)
   {
-    free(host_data);
+    allocator.free(allocator.ctx, host_data);
     return status;
   }
 
   cf_math_print_tensor_level(x->metadata, x->handler->storage.dtype, host_data, 0, 0, 0);
   printf("\n");
 
-  free(host_data);
+  allocator.free(allocator.ctx, host_data);
   return CF_OK;
 }

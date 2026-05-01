@@ -24,7 +24,10 @@ faster because the expensive work is moved into reusable objects:
 - binding a tensor usually only consumes a slice from a handler arena;
 - unbinding returns unused slices to a small free-list;
 - rebinding changes pointers instead of reconstructing tensors;
+- CPU BLAS-shaped operations dispatch to OpenBLAS without packing/copying;
+- CPU elementwise/reduction work uses SIMD/OpenMP loops;
 - CUDA handles, streams, workspace, and descriptors stay in the handler/context;
+- CUDA math calls enqueue work and synchronize only at explicit boundaries;
 - handlers can be tagged with `optimized_for` so later scheduling can choose a
   handler prepared for matmul, attention, reductions, transfers, and so on.
 
@@ -199,7 +202,7 @@ being silently ignored.
 
 CPU flag behavior:
 
-- `CF_MATH_MEM_DEFAULT`: host heap backing plus CPU arena slice tracking.
+- `CF_MATH_MEM_DEFAULT`: mimalloc-backed host storage plus CPU arena tracking.
 - `CF_MATH_MEM_POOLED`: host backing plus math arena/free-list reuse.
 - `CF_MATH_MEM_PINNED`: pinned host backing through CUDA; unsupported in
   CPU-only builds and requires a CUDA context.
@@ -214,6 +217,7 @@ CPU flag behavior:
 cf_status cf_math_cuda_context_init(cf_math_cuda_context *ctx, cf_usize bytes, int device_id);
 cf_status cf_math_cuda_context_destroy(cf_math_cuda_context *ctx);
 cf_status cf_math_cuda_context_reserve(cf_math_cuda_context *ctx, cf_usize bytes);
+cf_status cf_math_cuda_context_sync(cf_math_cuda_context *ctx);
 
 cf_status cf_math_metadata_init(
   cf_math_metadata *metadata,
@@ -237,6 +241,7 @@ cf_status cf_math_handle_init(
 
 cf_status cf_math_handle_reserve(cf_math_handle_t *handler, cf_usize bytes);
 cf_status cf_math_handle_alloc(cf_math_handle_t *handler, cf_usize bytes, void **ptr);
+cf_status cf_math_handle_sync(cf_math_handle_t *handler);
 void cf_math_handle_reset(cf_math_handle_t *handler);
 cf_status cf_math_handle_destroy(cf_math_handle_t *handler);
 
@@ -245,6 +250,9 @@ cf_status cf_math_unbind(cf_math *x);
 cf_status cf_math_rebind(cf_math *x, cf_math_handle_t *handler, cf_math_metadata *metadata);
 
 cf_status cf_math_op(cf_math_op_kind op, cf_math *op1, const cf_math *op2);
+cf_status cf_math_dot(cf_math *out, const cf_math *a, const cf_math *b);
+cf_status cf_math_matvec(cf_math *out, const cf_math *a, const cf_math *x);
+cf_status cf_math_batched_matmul(cf_math *out, const cf_math *a, const cf_math *b);
 ```
 
 ## Binding Rules
@@ -259,6 +267,23 @@ active block reference count is only decremented.
 
 `cf_math_rebind` unbinds automatically and then binds to the new handler and
 metadata. No manual `free_current` flag is needed.
+
+## Backend Dispatch
+
+CPU math uses the same public functions as CUDA math. The handler device selects
+the backend:
+
+- `cf_math_matmul`, `cf_math_matvec`, `cf_math_batched_matmul`, and
+  `cf_math_dot` use OpenBLAS CBLAS in production CPU builds.
+- Elementwise, unary, scalar, bias, and reductions use SIMD/OpenMP loops on CPU.
+- CUDA keeps cuBLAS for matrix operations, CUB for reductions, and existing
+  stream kernels for elementwise/unary/scalar work.
+- CUDA calls are asynchronous by default. `cf_math_handle_sync` is the explicit
+  completion point; `cf_math_cpy_d2h` also synchronizes before returning because
+  the host buffer must be valid.
+
+All BLAS-shaped APIs require compact row-major views in this version. Strided
+layouts that would require packing are rejected with `CF_ERR_UNSUPPORTED`.
 
 `cf_math_print_shape` prints a readable summary of a math view: shape kind,
 rank, dimensions, strides, length, layout, dtype, device, and byte slice.

@@ -224,6 +224,13 @@ cf_status cf_math_cuda_context_init(cf_math_cuda_context *ctx, cf_usize bytes, i
 cf_status cf_math_cuda_context_reserve(cf_math_cuda_context *ctx, cf_usize bytes);
 
 /**
+ * @brief Synchronize queued CUDA work for a context.
+ * @param ctx CUDA context to synchronize.
+ * @return `CF_OK`, `CF_ERR_NULL`, `CF_ERR_UNSUPPORTED`, or a CUDA sync error.
+ */
+cf_status cf_math_cuda_context_sync(cf_math_cuda_context *ctx);
+
+/**
  * @brief Destroy CUDA runtime handles and workspace owned by a context.
  * @param ctx Context object to destroy.
  * @return `CF_OK`, `CF_ERR_NULL`, or a CUDA cleanup error.
@@ -259,6 +266,18 @@ cf_status cf_math_handle_alloc(cf_math_handle_t *handler, cf_usize bytes, void *
  * @return `CF_OK`, `CF_ERR_NULL`, `CF_ERR_STATE`, `CF_ERR_UNSUPPORTED`, or a CUDA memory error.
  */
 cf_status cf_math_handle_reserve(cf_math_handle_t *handler, cf_usize bytes);
+
+/**
+ * @brief Synchronize queued backend work for a handler.
+ *
+ * CPU handlers return immediately. CUDA handlers synchronize the handler's
+ * context stream and should be used before wall-clock timing stops or before
+ * code needs queued GPU work to be complete.
+ *
+ * @param handler Handler whose backend work should be complete on return.
+ * @return `CF_OK`, `CF_ERR_NULL`, `CF_ERR_UNSUPPORTED`, or a CUDA sync error.
+ */
+cf_status cf_math_handle_sync(cf_math_handle_t *handler);
 
 /**
  * @brief Reset handler arena slice tracking without freeing the base allocation.

@@ -345,13 +345,17 @@ Header: `public/inc/ALLOCATOR/cf_alloc.h`
 
 ```c
 void cf_alloc_new(cf_alloc *alloc);
+void *cf_alloc_aligned(cf_alloc *alloc, cf_usize alignment, cf_usize size);
+void cf_alloc_aligned_free(cf_alloc *alloc, void *ptr);
 ```
 
-Initializes an allocator with default heap-backed callbacks.
+Initializes or uses allocator callbacks.
 
 Critical points:
 
-- Uses `malloc`, `realloc`, and `free`.
+- Production builds route the default allocator through mimalloc.
+- `cf_alloc_aligned` uses aligned callbacks when available and otherwise
+  stores the original pointer beside the aligned result.
 - `ctx` is `CF_NULL`.
 - Many containers store a `cf_alloc` internally.
 
@@ -387,6 +391,7 @@ Header: `public/inc/ALLOCATOR/cf_arena.h`
 
 ```c
 cf_status cf_arena_init(cf_arena *arena, cf_usize capacity, cf_alloc *allocator);
+cf_status cf_arena_init_ex(cf_arena *arena, cf_usize capacity, cf_usize alignment, cf_bool growable, cf_alloc *allocator);
 cf_status cf_arena_init_with_buffer(cf_arena *arena, void *buffer, cf_usize capacity);
 cf_status cf_arena_alloc(cf_arena *arena, cf_usize size, cf_usize alignment, void **ptr);
 void cf_arena_reset(cf_arena *arena);
@@ -397,8 +402,9 @@ Provides monotonic byte-slice allocation for bulk-lifetime memory.
 
 Critical points:
 
-- `cf_arena_init` owns its backing storage and uses the supplied allocator or
-  the default allocator.
+- `cf_arena_init` owns 64-byte aligned backing storage and uses the supplied
+  allocator or the default allocator.
+- `cf_arena_init_ex` adds explicit alignment and optional chunk growth.
 - `cf_arena_init_with_buffer` wraps caller-owned storage and never frees it.
 - `cf_arena_alloc` supports power-of-two alignment; zero alignment means
   pointer alignment.
@@ -411,6 +417,7 @@ Header: `public/inc/ALLOCATOR/cf_pool.h`
 
 ```c
 cf_status cf_pool_init(cf_pool *pool, cf_usize block_size, cf_usize block_count, cf_alloc *allocator);
+cf_status cf_pool_init_ex(cf_pool *pool, cf_usize block_size, cf_usize block_count, cf_usize alignment, cf_alloc *allocator);
 cf_status cf_pool_init_with_buffer(cf_pool *pool, void *buffer, cf_usize block_size, cf_usize block_count);
 cf_status cf_pool_alloc(cf_pool *pool, void **ptr);
 cf_status cf_pool_free(cf_pool *pool, void *ptr);
@@ -422,7 +429,8 @@ Provides fixed-size block reuse with O(1) allocate/free operations.
 
 Critical points:
 
-- Small blocks are internally rounded up enough to store the free-list link.
+- Small blocks are internally rounded up enough to store the free-list link and
+  satisfy the pool alignment.
 - `cf_pool_alloc` returns `CF_ERR_OOM` when no blocks are available.
 - `cf_pool_free` validates that the pointer belongs to a block boundary.
 - `cf_pool_reset` restores every block to the free list.
@@ -812,12 +820,14 @@ min/max.
 cf_status cf_math_cuda_context_init(cf_math_cuda_context *ctx, cf_usize bytes, int device_id);
 cf_status cf_math_cuda_context_destroy(cf_math_cuda_context *ctx);
 cf_status cf_math_cuda_context_reserve(cf_math_cuda_context *ctx, cf_usize bytes);
+cf_status cf_math_cuda_context_sync(cf_math_cuda_context *ctx);
 
 cf_status cf_math_metadata_init(...);
 cf_status cf_math_print_shape(const cf_math *x);
 cf_status cf_math_handle_init(...);
 cf_status cf_math_handle_reserve(cf_math_handle_t *handler, cf_usize bytes);
 cf_status cf_math_handle_alloc(cf_math_handle_t *handler, cf_usize bytes, void **ptr);
+cf_status cf_math_handle_sync(cf_math_handle_t *handler);
 void cf_math_handle_reset(cf_math_handle_t *handler);
 cf_status cf_math_handle_destroy(cf_math_handle_t *handler);
 
@@ -844,7 +854,10 @@ cf_status cf_math_scalar(cf_math_op_kind op, cf_math *x, double scalar);
 cf_status cf_math_scalar_out(cf_math_op_kind op, cf_math *out, const cf_math *x, double scalar);
 cf_status cf_math_reduce_sum(cf_math *out, const cf_math *x);
 cf_status cf_math_reduce_mean(cf_math *out, const cf_math *x);
+cf_status cf_math_dot(cf_math *out, const cf_math *a, const cf_math *b);
 cf_status cf_math_matmul(cf_math *out, const cf_math *a, const cf_math *b);
+cf_status cf_math_matvec(cf_math *out, const cf_math *a, const cf_math *x);
+cf_status cf_math_batched_matmul(cf_math *out, const cf_math *a, const cf_math *b);
 ```
 
 Core V1 forward math operations over bound `cf_math` views.
@@ -855,22 +868,25 @@ Implemented v1 operation families:
 - Unary neg/relu/gelu/exp/log/sqrt/sigmoid/tanh.
 - Scalar add/sub/mul/div.
 - Sum and mean reductions into one-element outputs.
-- 2D row-major matmul.
+- Dot, 2D row-major matmul, matvec, and batched matmul.
 
 Implemented v1 dtypes:
 
 - Binary/scalar/reduction: `F32`, `F64`, `I32`.
 - Unary activations/math: `F32`, `F64`.
-- Matmul: `F32`, `F64`.
+- Dot/matmul/matvec/batched matmul: compact row-major `F32`, `F64`.
 
 Critical points:
 
 - `cf_math_op` is the hot in-place API. The caller owns compatibility checks
   for dtype, device, binding, length, and lifetime.
 - `cf_math_op_check` is the explicit preflight helper for graph/layer setup.
-- CPU storage uses flat typed loops.
+- CPU storage uses OpenBLAS for BLAS-shaped `F32/F64` operations in production
+  and SIMD/OpenMP loops for elementwise/scalar/unary/reduction work.
 - CUDA storage uses custom kernels for elementwise/unary/scalar operations,
-  CUB for reductions, and cuBLAS for matmul when CUDA is available.
+  CUB for reductions, and cuBLAS for matrix operations when CUDA is available.
+- CUDA math is asynchronous by default; `cf_math_handle_sync` is the explicit
+  completion point, and `cf_math_cpy_d2h` synchronizes before returning.
 - There are no hidden allocations or host/device copies inside operations.
 - Unsupported operations or dtypes return `CF_ERR_UNSUPPORTED`.
 

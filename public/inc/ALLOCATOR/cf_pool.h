@@ -29,6 +29,8 @@ typedef struct cf_pool
 
   cf_usize block_size;
   cf_usize block_count;
+  cf_usize alignment;
+  cf_usize stride;
 
   cf_usize free_head;
   cf_usize free_count;
@@ -50,6 +52,17 @@ extern "C" {
  * @return `CF_OK`, `CF_ERR_NULL`, `CF_ERR_INVALID`, `CF_ERR_STATE`, `CF_ERR_OVERFLOW`, or `CF_ERR_OOM`.
  */
 cf_status cf_pool_init(cf_pool *pool, cf_usize block_size, cf_usize block_count, cf_alloc *allocator);
+
+/**
+ * @brief Initialize an owning fixed-size block pool with explicit alignment.
+ * @param pool Pool object to initialize.
+ * @param block_size User-visible bytes per block.
+ * @param block_count Number of blocks to reserve.
+ * @param alignment Power-of-two block alignment; zero uses 64 bytes.
+ * @param allocator Optional backing allocator; `CF_NULL` uses `cf_alloc_new`.
+ * @return `CF_OK`, `CF_ERR_NULL`, `CF_ERR_INVALID`, `CF_ERR_STATE`, `CF_ERR_OVERFLOW`, or `CF_ERR_OOM`.
+ */
+cf_status cf_pool_init_ex(cf_pool *pool, cf_usize block_size, cf_usize block_count, cf_usize alignment, cf_alloc *allocator);
 
 /**
  * @brief Initialize a non-owning fixed-size block pool over caller storage.
