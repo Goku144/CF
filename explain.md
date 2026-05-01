@@ -78,8 +78,9 @@ division. Matmul V1 supports 2D row-major `F32` and `F64`.
 CPU handlers execute flat typed loops. This keeps reference behavior simple and
 easy to test.
 
-CUDA handlers dispatch to custom kernels for elementwise, unary, scalar, and
-reduction operations. Matmul uses cuBLAS with the row-major contract mapped onto
+CUDA handlers dispatch to custom kernels for elementwise, unary, and scalar
+operations. Reductions use CUB `DeviceReduce::Sum`, with a tiny finalization
+kernel for mean. Matmul uses cuBLAS with the row-major contract mapped onto
 cuBLAS' column-major interface. CUDA code is compiled only when
 `CF_CUDA_AVAILABLE` is set.
 
@@ -141,8 +142,8 @@ temporary tensors. Host/device transfers remain explicit through the math copy
 APIs.
 
 CPU execution uses the `cf_math` CPU kernels plus small typed loops for bias and
-loss. CUDA execution uses `cf_math` CUDA matmul/unary kernels plus small
-compile-gated kernels for bias and loss.
+loss. CUDA execution uses `cf_math` CUDA matmul/unary kernels, a small
+compile-gated bias kernel, and CUB-backed reductions for loss forward.
 
 Gradients are now a named boundary, not an automatic tape. Manual backward will
 come next so layer code can own its cached forward values and call Layer 0 math

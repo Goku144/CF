@@ -18,8 +18,13 @@
 
 #include "AI/cf_model.h"
 
+#include <limits.h>
 #include <math.h>
 #include <string.h>
+
+#if defined(CF_CUDA_AVAILABLE)
+#include <cub/cub.cuh>
+#endif
 
 static cf_bool cf_ai_math_is_bound(const cf_math *x)
 {
@@ -207,48 +212,64 @@ static __global__ void cf_ai_bias_add_kernel_f64(double *out, const double *bias
   if(i < len) out[i] += bias[i % out_features];
 }
 
-static __global__ void cf_ai_loss_kernel_f32(cf_ai_loss_kind loss, float *out, const float *prediction, const float *target, cf_usize len)
+struct cf_ai_mse_f32
 {
-  double total = 0.0;
-  for(cf_usize i = 0; i < len; ++i)
-  {
-    double p = (double)prediction[i];
-    double t = (double)target[i];
-    if(loss == CF_AI_LOSS_MSE)
-    {
-      double d = p - t;
-      total += d * d;
-    }
-    else
-    {
-      if(p < 1.0e-7) p = 1.0e-7;
-      if(p > 1.0 - 1.0e-7) p = 1.0 - 1.0e-7;
-      total += -(t * log(p) + (1.0 - t) * log(1.0 - p));
-    }
-  }
-  out[0] = (float)(total / (double)len);
-}
+  const float *prediction;
+  const float *target;
 
-static __global__ void cf_ai_loss_kernel_f64(cf_ai_loss_kind loss, double *out, const double *prediction, const double *target, cf_usize len)
+  __host__ __device__ float operator()(cf_usize i) const
+  {
+    float d = prediction[i] - target[i];
+    return d * d;
+  }
+};
+
+struct cf_ai_bce_f32
 {
-  double total = 0.0;
-  for(cf_usize i = 0; i < len; ++i)
+  const float *prediction;
+  const float *target;
+
+  __host__ __device__ float operator()(cf_usize i) const
+  {
+    float p = prediction[i];
+    float t = target[i];
+    if(p < 1.0e-7f) p = 1.0e-7f;
+    if(p > 1.0f - 1.0e-7f) p = 1.0f - 1.0e-7f;
+    return -(t * logf(p) + (1.0f - t) * logf(1.0f - p));
+  }
+};
+
+struct cf_ai_mse_f64
+{
+  const double *prediction;
+  const double *target;
+
+  __host__ __device__ double operator()(cf_usize i) const
+  {
+    double d = prediction[i] - target[i];
+    return d * d;
+  }
+};
+
+struct cf_ai_bce_f64
+{
+  const double *prediction;
+  const double *target;
+
+  __host__ __device__ double operator()(cf_usize i) const
   {
     double p = prediction[i];
     double t = target[i];
-    if(loss == CF_AI_LOSS_MSE)
-    {
-      double d = p - t;
-      total += d * d;
-    }
-    else
-    {
-      if(p < 1.0e-12) p = 1.0e-12;
-      if(p > 1.0 - 1.0e-12) p = 1.0 - 1.0e-12;
-      total += -(t * log(p) + (1.0 - t) * log(1.0 - p));
-    }
+    if(p < 1.0e-12) p = 1.0e-12;
+    if(p > 1.0 - 1.0e-12) p = 1.0 - 1.0e-12;
+    return -(t * log(p) + (1.0 - t) * log(1.0 - p));
   }
-  out[0] = total / (double)len;
+};
+
+template <typename T>
+static __global__ void cf_ai_loss_mean_finalize_kernel(T *out, cf_usize len)
+{
+  if(len != 0) out[0] = (T)(out[0] / (T)len);
 }
 #endif
 
@@ -290,6 +311,110 @@ static cf_status cf_ai_bias_add(cf_ai_dense *layer)
   return CF_ERR_UNSUPPORTED;
 #endif
 }
+
+#if defined(CF_CUDA_AVAILABLE)
+static cf_status cf_ai_loss_cuda(cf_ai_loss_kind loss, const cf_math_handle_t *handler, cf_math_dtype dtype, void *out_ptr, const void *prediction_ptr, const void *target_ptr, cf_usize len)
+{
+  cudaStream_t stream = handler != CF_NULL && handler->cuda_ctx != CF_NULL ? handler->cuda_ctx->stream : CF_NULL;
+  cub::CountingInputIterator<cf_usize> indices(0);
+  size_t temp_bytes = 0;
+  cudaError_t cuda_status = cudaSuccess;
+  cf_usize elem_size = dtype == CF_MATH_DTYPE_F64 ? sizeof(double) : sizeof(float);
+
+  if(handler == CF_NULL || handler->cuda_ctx == CF_NULL) return CF_ERR_STATE;
+  if(len > (cf_usize)INT_MAX) return CF_ERR_BOUNDS;
+  if(loss != CF_AI_LOSS_MSE && loss != CF_AI_LOSS_BINARY_CROSS_ENTROPY) return CF_ERR_UNSUPPORTED;
+  if(dtype != CF_MATH_DTYPE_F32 && dtype != CF_MATH_DTYPE_F64) return CF_ERR_UNSUPPORTED;
+  if(handler->cuda_ctx->cuda_workspace.ptr != CF_NULL && handler->cuda_ctx->cuda_workspace.size >= len * elem_size)
+    temp_bytes = (size_t)handler->cuda_ctx->cuda_workspace.size;
+
+  if(dtype == CF_MATH_DTYPE_F32)
+  {
+    if(loss == CF_AI_LOSS_MSE)
+    {
+      cf_ai_mse_f32 fn = {(const float *)prediction_ptr, (const float *)target_ptr};
+      cub::TransformInputIterator<float, cf_ai_mse_f32, cub::CountingInputIterator<cf_usize> > loss_values(indices, fn);
+      if(temp_bytes == 0)
+      {
+        cuda_status = cub::DeviceReduce::Sum(CF_NULL, temp_bytes, loss_values, (float *)out_ptr, (int)len, stream);
+        if(cuda_status != cudaSuccess) return CF_ERR_CUDA;
+        if(temp_bytes != 0)
+        {
+          cf_usize reserve_bytes = (cf_usize)temp_bytes < len * elem_size ? len * elem_size : (cf_usize)temp_bytes;
+          cf_status reserve_status = cf_math_cuda_context_reserve(handler->cuda_ctx, reserve_bytes);
+          if(reserve_status != CF_OK) return reserve_status;
+        }
+      }
+      cuda_status = cub::DeviceReduce::Sum(handler->cuda_ctx->cuda_workspace.ptr, temp_bytes, loss_values, (float *)out_ptr, (int)len, stream);
+    }
+    else
+    {
+      cf_ai_bce_f32 fn = {(const float *)prediction_ptr, (const float *)target_ptr};
+      cub::TransformInputIterator<float, cf_ai_bce_f32, cub::CountingInputIterator<cf_usize> > loss_values(indices, fn);
+      if(temp_bytes == 0)
+      {
+        cuda_status = cub::DeviceReduce::Sum(CF_NULL, temp_bytes, loss_values, (float *)out_ptr, (int)len, stream);
+        if(cuda_status != cudaSuccess) return CF_ERR_CUDA;
+        if(temp_bytes != 0)
+        {
+          cf_usize reserve_bytes = (cf_usize)temp_bytes < len * elem_size ? len * elem_size : (cf_usize)temp_bytes;
+          cf_status reserve_status = cf_math_cuda_context_reserve(handler->cuda_ctx, reserve_bytes);
+          if(reserve_status != CF_OK) return reserve_status;
+        }
+      }
+      cuda_status = cub::DeviceReduce::Sum(handler->cuda_ctx->cuda_workspace.ptr, temp_bytes, loss_values, (float *)out_ptr, (int)len, stream);
+    }
+    if(cuda_status != cudaSuccess) return CF_ERR_CUDA;
+    cf_ai_loss_mean_finalize_kernel<float><<<1, 1, 0, stream>>>((float *)out_ptr, len);
+  }
+  else if(dtype == CF_MATH_DTYPE_F64)
+  {
+    if(loss == CF_AI_LOSS_MSE)
+    {
+      cf_ai_mse_f64 fn = {(const double *)prediction_ptr, (const double *)target_ptr};
+      cub::TransformInputIterator<double, cf_ai_mse_f64, cub::CountingInputIterator<cf_usize> > loss_values(indices, fn);
+      if(temp_bytes == 0)
+      {
+        cuda_status = cub::DeviceReduce::Sum(CF_NULL, temp_bytes, loss_values, (double *)out_ptr, (int)len, stream);
+        if(cuda_status != cudaSuccess) return CF_ERR_CUDA;
+        if(temp_bytes != 0)
+        {
+          cf_usize reserve_bytes = (cf_usize)temp_bytes < len * elem_size ? len * elem_size : (cf_usize)temp_bytes;
+          cf_status reserve_status = cf_math_cuda_context_reserve(handler->cuda_ctx, reserve_bytes);
+          if(reserve_status != CF_OK) return reserve_status;
+        }
+      }
+      cuda_status = cub::DeviceReduce::Sum(handler->cuda_ctx->cuda_workspace.ptr, temp_bytes, loss_values, (double *)out_ptr, (int)len, stream);
+    }
+    else
+    {
+      cf_ai_bce_f64 fn = {(const double *)prediction_ptr, (const double *)target_ptr};
+      cub::TransformInputIterator<double, cf_ai_bce_f64, cub::CountingInputIterator<cf_usize> > loss_values(indices, fn);
+      if(temp_bytes == 0)
+      {
+        cuda_status = cub::DeviceReduce::Sum(CF_NULL, temp_bytes, loss_values, (double *)out_ptr, (int)len, stream);
+        if(cuda_status != cudaSuccess) return CF_ERR_CUDA;
+        if(temp_bytes != 0)
+        {
+          cf_usize reserve_bytes = (cf_usize)temp_bytes < len * elem_size ? len * elem_size : (cf_usize)temp_bytes;
+          cf_status reserve_status = cf_math_cuda_context_reserve(handler->cuda_ctx, reserve_bytes);
+          if(reserve_status != CF_OK) return reserve_status;
+        }
+      }
+      cuda_status = cub::DeviceReduce::Sum(handler->cuda_ctx->cuda_workspace.ptr, temp_bytes, loss_values, (double *)out_ptr, (int)len, stream);
+    }
+    if(cuda_status != cudaSuccess) return CF_ERR_CUDA;
+    cf_ai_loss_mean_finalize_kernel<double><<<1, 1, 0, stream>>>((double *)out_ptr, len);
+  }
+  else
+  {
+    return CF_ERR_UNSUPPORTED;
+  }
+
+  if(cudaGetLastError() != cudaSuccess) return CF_ERR_CUDA_LAUNCH;
+  return cf_ai_cuda_sync(handler);
+}
+#endif
 
 cf_status cf_ai_dense_init(cf_ai_dense *layer, cf_math_handle_t *parameter_handler, cf_math_handle_t *activation_handler, cf_usize batch, cf_usize in_features, cf_usize out_features, cf_ai_activation activation)
 {
@@ -462,17 +587,7 @@ cf_status cf_ai_loss_forward(cf_ai_loss_kind loss, cf_math *out, const cf_math *
     return cf_ai_loss_cpu(loss, dtype, out_ptr, prediction_ptr, target_ptr, prediction->metadata->len);
 
 #if defined(CF_CUDA_AVAILABLE)
-  {
-    cudaStream_t stream = out->handler->cuda_ctx != CF_NULL ? out->handler->cuda_ctx->stream : CF_NULL;
-    if(dtype == CF_MATH_DTYPE_F32)
-      cf_ai_loss_kernel_f32<<<1, 1, 0, stream>>>(loss, (float *)out_ptr, (const float *)prediction_ptr, (const float *)target_ptr, prediction->metadata->len);
-    else if(dtype == CF_MATH_DTYPE_F64)
-      cf_ai_loss_kernel_f64<<<1, 1, 0, stream>>>(loss, (double *)out_ptr, (const double *)prediction_ptr, (const double *)target_ptr, prediction->metadata->len);
-    else
-      return CF_ERR_UNSUPPORTED;
-    if(cudaGetLastError() != cudaSuccess) return CF_ERR_CUDA_LAUNCH;
-    return cf_ai_cuda_sync(out->handler);
-  }
+  return cf_ai_loss_cuda(loss, out->handler, dtype, out_ptr, prediction_ptr, target_ptr, prediction->metadata->len);
 #else
   return CF_ERR_UNSUPPORTED;
 #endif

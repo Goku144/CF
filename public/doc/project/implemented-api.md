@@ -869,8 +869,8 @@ Critical points:
   for dtype, device, binding, length, and lifetime.
 - `cf_math_op_check` is the explicit preflight helper for graph/layer setup.
 - CPU storage uses flat typed loops.
-- CUDA storage uses custom kernels for elementwise/unary/scalar/reduction and
-  cuBLAS for matmul when CUDA is available.
+- CUDA storage uses custom kernels for elementwise/unary/scalar operations,
+  CUB for reductions, and cuBLAS for matmul when CUDA is available.
 - There are no hidden allocations or host/device copies inside operations.
 - Unsupported operations or dtypes return `CF_ERR_UNSUPPORTED`.
 
@@ -949,6 +949,7 @@ Critical points:
 - `out` must already be bound as a one-element view.
 - Prediction and target must have matching dtype, device, and element count.
 - No hidden allocation or hidden host/device copy occurs.
+- CUDA loss forward uses CUB reduction over transformed per-element loss values.
 
 ### Gradient Boundary
 

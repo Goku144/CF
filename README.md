@@ -145,6 +145,7 @@ Implemented math module:
   slices can be reused safely.
 - Core V1 math operations include checked/out-of-place binary ops, unary
   activations, scalar ops, reductions, and 2D row-major matmul.
+- CUDA reductions use CUB, and CUDA matmul uses cuBLAS.
 
 Basic example:
 
