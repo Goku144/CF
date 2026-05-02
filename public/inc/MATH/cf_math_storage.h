@@ -19,115 +19,54 @@
 #if !defined(CF_MATH_STORAGE_H)
 #define CF_MATH_STORAGE_H
 
-#include "ALLOCATOR/cf_arena.h"
 #include "RUNTIME/cf_status.h"
 #include "RUNTIME/cf_types.h"
 
-#if defined(CF_CUDA_AVAILABLE)
-  #include <cuda_runtime.h>
-  #include <cublas_v2.h>
-  #include <cublasLt.h>
-  #include <cudnn.h>
-  #include <cusparse_v2.h>
-  #include <cusolverDn.h>
-  #include <curand.h>
-#else
-  typedef void *cudaStream_t;
-  typedef void *cudaMemPool_t;
-  typedef void *cublasHandle_t;
-  typedef void *cublasLtHandle_t;
-  typedef void *cudnnHandle_t;
-  typedef void *cusparseHandle_t;
-  typedef void *cusolverDnHandle_t;
-  typedef void *curandGenerator_t;
+#include <mimalloc.h>
+#include <dnnl.h>
 
-  typedef void *cudnnTensorDescriptor_t;
-  typedef void *cudnnFilterDescriptor_t;
-  typedef void *cudnnConvolutionDescriptor_t;
-  typedef void *cudnnRNNDataDescriptor_t;
-  typedef void *cublasLtMatrixLayout_t;
-#endif
+#include <cuda_runtime.h>
+#include <cublas_v2.h>
+#include <cublasLt.h>
+#include <cudnn.h>
+#include <cusparse_v2.h>
+#include <cusolverDn.h>
+#include <curand.h>
 
-#define CF_MATH_MAX_FREE_BLOCKS 64
-#define CF_MATH_MAX_ACTIVE_BLOCKS 256
-
-typedef struct cf_math_cuda_workspace cf_math_cuda_workspace;
+typedef struct cf_math_context cf_math_context;
+typedef struct cf_math_workspace cf_math_workspace;
 typedef struct cf_math_cuda_context cf_math_cuda_context;
-typedef struct cf_math_allocator cf_math_allocator;
-typedef struct cf_math_desc_cache cf_math_desc_cache;
-typedef struct cf_math_memory_block cf_math_memory_block;
+typedef struct cf_math_cpu_context cf_math_cpu_context;
 typedef struct cf_math_arena cf_math_arena;
-typedef struct cf_math_storage cf_math_storage;
-typedef struct cf_math_handle cf_math_handle_t;
+typedef struct cf_math_handle cf_math_handle;
 
-typedef enum cf_math_dtype
-{
-  CF_MATH_DTYPE_BOOL = 0,
-  CF_MATH_DTYPE_I8,
-  CF_MATH_DTYPE_U8,
-  CF_MATH_DTYPE_I32,
-  CF_MATH_DTYPE_F64,
-  CF_MATH_DTYPE_F32,
-  CF_MATH_DTYPE_F16,
-  CF_MATH_DTYPE_BF16,
-  CF_MATH_DTYPE_FP8E4M3,
-  CF_MATH_DTYPE_FP8E5M2,
-} cf_math_dtype;
 typedef enum cf_math_device
 {
   CF_MATH_DEVICE_CPU = 0,
   CF_MATH_DEVICE_CUDA
 } cf_math_device;
-typedef enum cf_math_mem_flags
+
+struct cf_math_context
 {
-  /** Default storage: host heap on CPU, cudaMalloc on CUDA. */
-  CF_MATH_MEM_DEFAULT     = 0,
+  union 
+  {
+    cf_math_cuda_context cuda;
+    cf_math_cpu_context cpu;
+  } context;
+  cf_math_device device;
+};
 
-  /** CUDA pinned host storage for CPU handlers; requires CUDA support. */
-  CF_MATH_MEM_PINNED      = 1 << 0,
-
-  /** CUDA managed storage; invalid for CPU handlers. */
-  CF_MATH_MEM_MANAGED     = 1 << 1,
-
-  /** Pooled storage: arena/free-list on CPU, cudaMallocAsync on CUDA. */
-  CF_MATH_MEM_POOLED      = 1 << 2,
-
-  /** Align base storage and slices to 128-byte boundaries where supported. */
-  CF_MATH_MEM_ALIGNED128  = 1 << 3,
-
-  /** Read-mostly hint for CUDA managed memory; accepted as a no-op on CPU. */
-  CF_MATH_MEM_READ_ONLY   = 1 << 4,
-
-  /** Reserved for future peer-mapped storage. */
-  CF_MATH_MEM_PEER_MAPPED = 1 << 5,
-} cf_math_mem_flags;
-
-typedef enum cf_math_handle_opt
+struct cf_math_workspace
 {
-  CF_MATH_HANDLE_OPT_NONE        = 0,
-  CF_MATH_HANDLE_OPT_ELEMENTWISE = 1 << 0,
-  CF_MATH_HANDLE_OPT_REDUCTION   = 1 << 1,
-  CF_MATH_HANDLE_OPT_MATMUL      = 1 << 2,
-  CF_MATH_HANDLE_OPT_LINEAR      = 1 << 3,
-  CF_MATH_HANDLE_OPT_CONV        = 1 << 4,
-  CF_MATH_HANDLE_OPT_ATTENTION   = 1 << 5,
-  CF_MATH_HANDLE_OPT_NORM        = 1 << 6,
-  CF_MATH_HANDLE_OPT_RANDOM      = 1 << 7,
-  CF_MATH_HANDLE_OPT_TRANSFER    = 1 << 8,
-} cf_math_handle_opt;
-
-struct cf_math_cuda_workspace
-{
-  void     *ptr;
-  cf_usize  size;
-  cf_usize  high_water;
+  void *scratchpad;
+  cudaStream_t stream;
+  cf_usize scratchpad_size;
+  cf_math_device device;
 };
 
 struct cf_math_cuda_context
 {
   int device_id;
-
-  cudaStream_t stream;
 
   cublasHandle_t      cublas;
   cublasLtHandle_t    cublasLt;
@@ -135,146 +74,37 @@ struct cf_math_cuda_context
   cusparseHandle_t    cusparse;
   cusolverDnHandle_t  cusolverDn;
   curandGenerator_t   curand;
-
-  cf_math_cuda_workspace cuda_workspace;
 };
 
-struct cf_math_allocator
+struct cf_math_cpu_context
 {
-  void *backend;
-  cf_math_mem_flags mem_flag;
-  cf_arena cpu_arena;
-};
-
-struct cf_math_memory_block
-{
-  cf_usize offset;
-  cf_usize size;
-  cf_usize ref_count;
+  int num_threads;
+  dnnl_stream_t stream;
+  dnnl_engine_t engine;
 };
 
 struct cf_math_arena
 {
+  void *backend;
+  mi_heap_t *heap;
+
   cf_usize offset;
-  cf_usize capacity;
-
-  cf_math_memory_block free_blocks[CF_MATH_MAX_FREE_BLOCKS];
-  cf_usize free_count;
-
-  cf_math_memory_block active_blocks[CF_MATH_MAX_ACTIVE_BLOCKS];
-  cf_usize active_count;
-};
-
-struct cf_math_storage
-{
-  cf_math_arena arena;
-  cf_math_dtype dtype;
-  cf_math_device device;
-  cf_math_allocator allocator;
-};
-
-struct cf_math_desc_cache
-{
-  cf_bool dirty;
-
-  cf_bool has_cudnn_tensor;
-  cudnnTensorDescriptor_t cudnn_tensor;
-
-  cf_bool has_lt_layout;
-  cublasLtMatrixLayout_t  lt_layout;
+  cf_usize byte_capacity;
 };
 
 struct cf_math_handle
 {
-  cf_math_handle_opt optimized_for;
-  cf_math_desc_cache desc_cache;
-  cf_math_cuda_context *cuda_ctx;
-  cf_math_storage storage;
+  cf_math_arena storage;
+  cf_math_context *ctx;
+  cf_math_workspace *workspace;
+  cf_math_device device;
 };
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-/**
- * @brief Release an active byte slice back to storage tracking.
- * @param storage Storage arena that owns the active slice.
- * @param offset Slice byte offset inside the arena.
- * @param size Slice byte size.
- * @param released Receives whether the slice reached refcount zero.
- * @return `CF_OK`, `CF_ERR_NULL`, `CF_ERR_STATE`, or `CF_ERR_BOUNDS`.
- */
-cf_status cf_math_storage_release_slice(cf_math_storage *storage, cf_usize offset, cf_usize size, cf_bool *released);
 
-/**
- * @brief Initialize CUDA runtime handles for a device.
- * @param ctx Context object to initialize.
- * @param bytes Minimum workspace capacity in bytes.
- * @param device_id CUDA device index.
- * @return `CF_OK`, `CF_ERR_NULL`, `CF_ERR_INVALID`, `CF_ERR_UNSUPPORTED`, or a CUDA init error.
- */
-cf_status cf_math_cuda_context_init(cf_math_cuda_context *ctx, cf_usize bytes, int device_id);
-
-/**
- * @brief Reserve reusable CUDA operation workspace.
- * @param ctx CUDA context that owns the workspace.
- * @param bytes Minimum workspace capacity in bytes.
- * @return `CF_OK`, `CF_ERR_NULL`, `CF_ERR_UNSUPPORTED`, or a CUDA memory error.
- */
-cf_status cf_math_cuda_context_reserve(cf_math_cuda_context *ctx, cf_usize bytes);
-
-/**
- * @brief Destroy CUDA runtime handles and workspace owned by a context.
- * @param ctx Context object to destroy.
- * @return `CF_OK`, `CF_ERR_NULL`, or a CUDA cleanup error.
- */
-cf_status cf_math_cuda_context_destroy(cf_math_cuda_context *ctx);
-
-/**
- * @brief Initialize a math handler and optionally reserve storage.
- * @param handler Handler to initialize.
- * @param ctx Shared CUDA context used by CUDA or pinned CPU handlers; it must outlive handler.
- * @param dtype Storage element dtype.
- * @param device Storage device.
- * @param flags Allocation flags.
- * @param optimized_for Operation classes this handler is optimized for.
- * @param capacity Initial storage capacity in bytes.
- * @return `CF_OK`, `CF_ERR_NULL`, `CF_ERR_INVALID`, `CF_ERR_UNSUPPORTED`, or CUDA memory errors.
- */
-cf_status cf_math_handle_init(cf_math_handle_t *handler, cf_math_cuda_context *ctx, cf_math_dtype dtype, cf_math_device device, cf_math_mem_flags flags, cf_math_handle_opt optimized_for, cf_usize capacity);
-
-/**
- * @brief Allocate a byte slice from a handler storage arena.
- * @param handler Handler whose arena owns the allocation.
- * @param bytes Requested slice size in bytes.
- * @param ptr Receives the start of the allocated slice.
- * @return `CF_OK`, `CF_ERR_NULL`, `CF_ERR_BOUNDS`, `CF_ERR_OVERFLOW`, or a CUDA memory error.
- */
-cf_status cf_math_handle_alloc(cf_math_handle_t *handler, cf_usize bytes, void **ptr);
-
-/**
- * @brief Ensure handler storage has at least the requested byte capacity.
- * @param handler Handler whose storage arena should grow.
- * @param bytes Required storage capacity in bytes.
- * @return `CF_OK`, `CF_ERR_NULL`, `CF_ERR_STATE`, `CF_ERR_UNSUPPORTED`, or a CUDA memory error.
- */
-cf_status cf_math_handle_reserve(cf_math_handle_t *handler, cf_usize bytes);
-
-/**
- * @brief Reset handler arena slice tracking without freeing the base allocation.
- *
- * The reset is ignored while views are still bound to the handler.
- *
- * @param handler Handler whose storage arena should reset.
- */
-void cf_math_handle_reset(cf_math_handle_t *handler);
-
-/**
- * @brief Destroy handler-owned storage and descriptor cache.
- * @param handler Handler to destroy.
- * @return `CF_OK`, `CF_ERR_NULL`, `CF_ERR_STATE` when views are still bound, `CF_ERR_UNSUPPORTED`, or a CUDA cleanup error.
- */
-cf_status cf_math_handle_destroy(cf_math_handle_t *handler);
 
 #ifdef __cplusplus
 }

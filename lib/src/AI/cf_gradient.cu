@@ -18,19 +18,8 @@
 
 #include "AI/cf_gradient.h"
 
-cf_status cf_ai_dense_backward(cf_ai_dense *layer, const cf_math *input, const cf_math *grad_output)
-{
-  CF_UNUSED(layer);
-  CF_UNUSED(input);
-  CF_UNUSED(grad_output);
-  return CF_ERR_UNSUPPORTED;
-}
-
-cf_status cf_ai_loss_backward(cf_ai_loss_kind loss, cf_math *grad_prediction, const cf_math *prediction, const cf_math *target)
-{
-  CF_UNUSED(loss);
-  CF_UNUSED(grad_prediction);
-  CF_UNUSED(prediction);
-  CF_UNUSED(target);
-  return CF_ERR_UNSUPPORTED;
-}
+/*
+ * AI gradient placeholder. Future compute gradient nodes, edges, and scheduling
+ * helpers should be implemented here.
+ */
+typedef int cf_gradient_placeholder;

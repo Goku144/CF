@@ -20,18 +20,18 @@
 # PUBLIC VARS
 ##############
 
-INC := public/inc -I/usr/local/cuda/include
+INC := -Ipublic/inc -I/usr/local/cuda/include
 
 ############
 # C OPTIONS
 ############
 
-CC ?= $(shell command -v gcc 2>&1)
+CC ?= $(if $(shell command -v gcc 2>&1))
 CC_AVAILABLE := $(if $(CC),1,0)
-FLAG_C := -Wall -Wextra -Wpedantic -Werror -O3 -Wno-error=deprecated-declarations -Wno-deprecated-declarations
-LIBS_C := -lm
-SRCS_C :=
-OBJS_C :=
+FLAG_C := -Wall -Wextra -Wpedantic -Werror -O3
+LIBS_C := $(pkg-config --cflags --libs dnnl)
+SRCS_C := $(shell find lib/src -name '*.c')
+OBJS_C := $(patsubst lib/src/%.c, lib/bin/%.o, $(SRCS_C))
 
 ##############
 # ASM OPTIONS
@@ -40,8 +40,9 @@ OBJS_C :=
 ASM ?= $(shell command -v nasm 2>&1)
 ASM_AVAILABLE := $(if $(ASM),1,0)
 FLAG_ASM := -f elf64 -w+all
-SRCS_ASM :=
-OBJS_ASM :=
+LIBS_ASM :=
+SRCS_ASM := $(shell find lib/src -name '*.asm')
+OBJS_ASM := $(patsubst lib/src/%.asm, lib/bin/%.o, $(SRCS_ASM))
 
 ###############
 # NVCC OPTIONS 
@@ -50,46 +51,28 @@ OBJS_ASM :=
 NVCC ?= $(shell command -v nvcc 2>&1)
 CUDA_AVAILABLE := $(if $(NVCC),1,0)
 FLAG_CUDA := -O3 -Wno-deprecated-gpu-targets
-LIBS_CUDA :=
-SRCS_CUDA :=
-OBJS_CUDA :=
-CU_BACKEND :=
+LIBS_CUDA := -lcudnn -lcusparse -lcusolver -lcurand -lcublasLt -lcublas -lcudart
+SRCS_CUDA := $(shell find lib/src -name '*.cu')
+OBJS_CUDA := $(patsubst lib/src/%.cu, lib/bin/%.o, $(SRCS_CUDA))
 
 #############
 # CONDITIONS
 #############
 
-ifeq ($(CC_AVAILABLE),1)
-SRCS_C := $(shell find lib/src -name '*.c')
-OBJS_C := $(patsubst lib/src/%.c, lib/bin/%.o, $(SRCS_C))
-else
+ifeq ($(CC_AVAILABLE),0)
 $(info try to install: sudo apt install gcc)
 $(error because GCC is not available no compiling!)
 endif
 
-ifeq ($(ASM_AVAILABLE),1)
-SRCS_ASM := $(shell find lib/src -name '*.asm')
-OBJS_ASM := $(patsubst lib/src/%.asm, lib/bin/%.o, $(SRCS_ASM))
-else
+ifeq ($(ASM_AVAILABLE),0)
 $(info try to install: sudo apt install nasm)
-$(warning because NASM is not available no optimized functions!)
+$(error because NASM is not available no optimized functions!)
 endif
 
-ifeq ($(CUDA_AVAILABLE),1)
-FLAG_C += -DCF_CUDA_AVAILABLE=1
-FLAG_CUDA += -DCF_CUDA_AVAILABLE=1
-LIBS_CUDA := -lcudnn -lcusparse -lcusolver -lcurand -lcublasLt -lcublas -lcudart
-LINK := $(NVCC)
-CU_BACKEND := nvcc
-else
+ifeq ($(CUDA_AVAILABLE),0)
 $(info visit the website to install: https://developer.nvidia.com/cuda/toolkit)
-$(warning because CUDA is not available compiling .cu sources with the CPU fallback!)
-LINK := $(CC)
-CU_BACKEND := cc
+$(error because CUDA is not available compiling .cu sources)
 endif
-
-SRCS_CUDA := $(shell find lib/src -name '*.cu')
-OBJS_CUDA := $(patsubst lib/src/%.cu, lib/bin/%.o, $(SRCS_CUDA))
 
 ############
 # Build App
@@ -102,11 +85,11 @@ runApp: app/build/app
 
 app/build/app: app/bin/app.o $(OBJS_C) $(OBJS_ASM) $(OBJS_CUDA)
 	@mkdir -p $(dir $@)
-	@$(LINK) $^ $(LIBS_CUDA) $(LIBS_C) -o $@
+	@$(NVCC) $^ $(LIBS_CUDA) $(LIBS_C) -o $@
 
 app/bin/app.o: app/src/app.c
 	@mkdir -p $(dir $@)
-	@$(CC) $(FLAG_C) -I$(INC) -c $< -o $@
+	@$(CC) $(FLAG_C) $(INC) -c $< -o $@
 
 ############
 # Build Lib
@@ -116,7 +99,7 @@ lib: $(OBJS_C) $(OBJS_ASM) $(OBJS_CUDA)
 
 lib/bin/%.o: lib/src/%.c
 	@mkdir -p $(dir $@)
-	$(CC) $(FLAG_C) -I$(INC) -c $< -o $@
+	$(CC) $(FLAG_C) $(INC) -c $< -o $@
 
 lib/bin/%.o: lib/src/%.asm
 	@mkdir -p $(dir $@)
@@ -124,11 +107,7 @@ lib/bin/%.o: lib/src/%.asm
 
 lib/bin/%.o: lib/src/%.cu
 	@mkdir -p $(dir $@)
-ifeq ($(CU_BACKEND),nvcc)
-	$(NVCC) $(FLAG_CUDA) -I$(INC) -c $< -o $@
-else
-	$(CC) $(FLAG_C) -x c -I$(INC) -c $< -o $@
-endif
+	$(NVCC) $(FLAG_CUDA) $(INC) -c $< -o $@
 
 ############
 # Run Tests
@@ -142,11 +121,11 @@ runTests: tests/build/test
 
 tests/build/test: tests/bin/test.o $(OBJS_C) $(OBJS_ASM) $(OBJS_CUDA)
 	@mkdir -p $(dir $@)
-	@$(LINK) $^ $(LIBS_CUDA) $(LIBS_C) -o $@
+	@$(NVCC) $^ $(LIBS_CUDA) $(LIBS_C) -o $@
 
 tests/bin/test.o: tests/src/test.c
 	@mkdir -p $(dir $@)
-	@$(CC) $(FLAG_C) -I$(INC) -c $< -o $@
+	@$(CC) $(FLAG_C) $(INC) -c $< -o $@
 
 ############
 # Utility
