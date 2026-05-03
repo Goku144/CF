@@ -29,7 +29,7 @@ INC := -Ipublic/inc -I/usr/local/cuda/include
 CC ?= $(if $(shell command -v gcc 2>&1))
 CC_AVAILABLE := $(if $(CC),1,0)
 FLAG_C := -Wall -Wextra -Wpedantic -Werror -O3
-LIBS_C := $(pkg-config --cflags --libs dnnl)
+LIBS_C := -ldnnl -lmimalloc
 SRCS_C := $(shell find lib/src -name '*.c')
 OBJS_C := $(patsubst lib/src/%.c, lib/bin/%.o, $(SRCS_C))
 
@@ -87,9 +87,9 @@ app/build/app: app/bin/app.o $(OBJS_C) $(OBJS_ASM) $(OBJS_CUDA)
 	@mkdir -p $(dir $@)
 	@$(NVCC) $^ $(LIBS_CUDA) $(LIBS_C) -o $@
 
-app/bin/app.o: app/src/app.c
+app/bin/app.o: app/src/app.cu
 	@mkdir -p $(dir $@)
-	@$(CC) $(FLAG_C) $(INC) -c $< -o $@
+	@$(NVCC) $(INC) -c $< -o $@
 
 ############
 # Build Lib

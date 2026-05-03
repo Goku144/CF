@@ -33,6 +33,7 @@
 #include <cusolverDn.h>
 #include <curand.h>
 
+typedef struct cf_math cf_math;
 typedef struct cf_math_context cf_math_context;
 typedef struct cf_math_workspace cf_math_workspace;
 typedef struct cf_math_cuda_context cf_math_cuda_context;
@@ -45,16 +46,6 @@ typedef enum cf_math_device
   CF_MATH_DEVICE_CPU = 0,
   CF_MATH_DEVICE_CUDA
 } cf_math_device;
-
-struct cf_math_context
-{
-  union 
-  {
-    cf_math_cuda_context cuda;
-    cf_math_cpu_context cpu;
-  } context;
-  cf_math_device device;
-};
 
 struct cf_math_workspace
 {
@@ -83,6 +74,16 @@ struct cf_math_cpu_context
   dnnl_engine_t engine;
 };
 
+struct cf_math_context
+{
+  union
+  {
+    cf_math_cuda_context cuda;
+    cf_math_cpu_context cpu;
+  } context;
+  cf_math_device device;
+};
+
 struct cf_math_arena
 {
   void *backend;
@@ -104,7 +105,21 @@ struct cf_math_handle
 extern "C" {
 #endif
 
+cf_status cf_math_context_create(cf_math_context *ctx, int id_or_tnum, cf_math_device device);
 
+void cf_math_context_destroy(cf_math_context *ctx);
+
+cf_status cf_math_workspace_create(cf_math_workspace *workspace, cf_usize capacity, cf_math_device device);
+
+void cf_math_workspace_destroy(cf_math_workspace *workspace);
+
+cf_status cf_math_handle_create(cf_math_handle *handle, cf_math_context *ctx, cf_math_workspace *workspace, cf_usize capacity, cf_math_device device);
+
+cf_status cf_math_handle_add(cf_math_handle *handle, cf_math *math);
+
+void cf_math_handle_reset(cf_math_handle *handle);
+
+void cf_math_handle_destroy(cf_math_handle *handle);
 
 #ifdef __cplusplus
 }

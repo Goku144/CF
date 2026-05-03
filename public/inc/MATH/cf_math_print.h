@@ -25,7 +25,13 @@
 extern "C" {
 #endif
 
-
+/**
+ * @brief Print a handle-backed tensor as nested bracketed rows.
+ * @param handle Storage handle that owns the tensor memory.
+ * @param math Tensor metadata to print.
+ * @return `CF_OK` on success, or an error status when memory access fails.
+ */
+cf_status cf_math_print(cf_math_handle *handle, const cf_math *math);
 
 #ifdef __cplusplus
 }

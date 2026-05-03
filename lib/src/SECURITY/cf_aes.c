@@ -16,11 +16,21 @@
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include "MATH/cf_math.h"
-
 #include "SECURITY/cf_aes.h"
 
 #include <string.h>
+
+static cf_u8 cf_aes_g8_mul_mod(cf_u8 p, cf_u8 q)
+{
+  cf_u8 res = 0;
+  do
+  {
+    if(q & 0x01) res ^= p;
+    if(p & 0x80) p = (p << 1) ^ 0x1B;
+    else p <<= 1;
+  } while(q >>= 1);
+  return res;
+}
 
 /*
  * Apply the AES S-box to each byte of a key-schedule word.
@@ -140,7 +150,7 @@ static void cf_aes_inv_shift_rows(cf_u8 state[4][4])
 }
 
 /*
- * Forward AES MixColumns transform using GF(2^8) multiplication from MATH.
+ * Forward AES MixColumns transform using GF(2^8) multiplication from aes.
  */
 static void cf_aes_mix_columns(cf_u8 state[4][4])
 {
@@ -148,25 +158,25 @@ static void cf_aes_mix_columns(cf_u8 state[4][4])
   {
       cf_u8 tmp[]= 
       {
-        cf_math_g8_mul_mod(state[0][i], CF_AES_MIX_COLUMN[0][0])^
-        cf_math_g8_mul_mod(state[1][i], CF_AES_MIX_COLUMN[0][1])^
+        cf_aes_g8_mul_mod(state[0][i], CF_AES_MIX_COLUMN[0][0])^
+        cf_aes_g8_mul_mod(state[1][i], CF_AES_MIX_COLUMN[0][1])^
         state[2][i]^
         state[3][i],
 
         state[0][i]^
-        cf_math_g8_mul_mod(state[1][i], CF_AES_MIX_COLUMN[1][1])^
-        cf_math_g8_mul_mod(state[2][i], CF_AES_MIX_COLUMN[1][2])^
+        cf_aes_g8_mul_mod(state[1][i], CF_AES_MIX_COLUMN[1][1])^
+        cf_aes_g8_mul_mod(state[2][i], CF_AES_MIX_COLUMN[1][2])^
         state[3][i],
 
         state[0][i]^
         state[1][i]^
-        cf_math_g8_mul_mod(state[2][i], CF_AES_MIX_COLUMN[2][2])^
-        cf_math_g8_mul_mod(state[3][i], CF_AES_MIX_COLUMN[2][3]),
+        cf_aes_g8_mul_mod(state[2][i], CF_AES_MIX_COLUMN[2][2])^
+        cf_aes_g8_mul_mod(state[3][i], CF_AES_MIX_COLUMN[2][3]),
 
-        cf_math_g8_mul_mod(state[0][i], CF_AES_MIX_COLUMN[3][0])^
+        cf_aes_g8_mul_mod(state[0][i], CF_AES_MIX_COLUMN[3][0])^
         state[1][i]^
         state[2][i]^
-        cf_math_g8_mul_mod(state[3][i], CF_AES_MIX_COLUMN[3][3]),
+        cf_aes_g8_mul_mod(state[3][i], CF_AES_MIX_COLUMN[3][3]),
       };
       state[0][i] = tmp[0];
       state[1][i] = tmp[1];
@@ -184,25 +194,25 @@ static void cf_aes_inv_mix_columns(cf_u8 state[4][4])
   {
       cf_u8 tmp[]= 
       {
-        cf_math_g8_mul_mod(state[0][i], CF_AES_INV_MIX_COLUMN[0][0])^
-        cf_math_g8_mul_mod(state[1][i], CF_AES_INV_MIX_COLUMN[0][1])^
-        cf_math_g8_mul_mod(state[2][i], CF_AES_INV_MIX_COLUMN[0][2])^
-        cf_math_g8_mul_mod(state[3][i], CF_AES_INV_MIX_COLUMN[0][3]),
+        cf_aes_g8_mul_mod(state[0][i], CF_AES_INV_MIX_COLUMN[0][0])^
+        cf_aes_g8_mul_mod(state[1][i], CF_AES_INV_MIX_COLUMN[0][1])^
+        cf_aes_g8_mul_mod(state[2][i], CF_AES_INV_MIX_COLUMN[0][2])^
+        cf_aes_g8_mul_mod(state[3][i], CF_AES_INV_MIX_COLUMN[0][3]),
 
-        cf_math_g8_mul_mod(state[0][i], CF_AES_INV_MIX_COLUMN[1][0])^
-        cf_math_g8_mul_mod(state[1][i], CF_AES_INV_MIX_COLUMN[1][1])^
-        cf_math_g8_mul_mod(state[2][i], CF_AES_INV_MIX_COLUMN[1][2])^
-        cf_math_g8_mul_mod(state[3][i], CF_AES_INV_MIX_COLUMN[1][3]),
+        cf_aes_g8_mul_mod(state[0][i], CF_AES_INV_MIX_COLUMN[1][0])^
+        cf_aes_g8_mul_mod(state[1][i], CF_AES_INV_MIX_COLUMN[1][1])^
+        cf_aes_g8_mul_mod(state[2][i], CF_AES_INV_MIX_COLUMN[1][2])^
+        cf_aes_g8_mul_mod(state[3][i], CF_AES_INV_MIX_COLUMN[1][3]),
 
-        cf_math_g8_mul_mod(state[0][i], CF_AES_INV_MIX_COLUMN[2][0])^
-        cf_math_g8_mul_mod(state[1][i], CF_AES_INV_MIX_COLUMN[2][1])^
-        cf_math_g8_mul_mod(state[2][i], CF_AES_INV_MIX_COLUMN[2][2])^
-        cf_math_g8_mul_mod(state[3][i], CF_AES_INV_MIX_COLUMN[2][3]),
+        cf_aes_g8_mul_mod(state[0][i], CF_AES_INV_MIX_COLUMN[2][0])^
+        cf_aes_g8_mul_mod(state[1][i], CF_AES_INV_MIX_COLUMN[2][1])^
+        cf_aes_g8_mul_mod(state[2][i], CF_AES_INV_MIX_COLUMN[2][2])^
+        cf_aes_g8_mul_mod(state[3][i], CF_AES_INV_MIX_COLUMN[2][3]),
 
-        cf_math_g8_mul_mod(state[0][i], CF_AES_INV_MIX_COLUMN[3][0])^
-        cf_math_g8_mul_mod(state[1][i], CF_AES_INV_MIX_COLUMN[3][1])^
-        cf_math_g8_mul_mod(state[2][i], CF_AES_INV_MIX_COLUMN[3][2])^
-        cf_math_g8_mul_mod(state[3][i], CF_AES_INV_MIX_COLUMN[3][3]),
+        cf_aes_g8_mul_mod(state[0][i], CF_AES_INV_MIX_COLUMN[3][0])^
+        cf_aes_g8_mul_mod(state[1][i], CF_AES_INV_MIX_COLUMN[3][1])^
+        cf_aes_g8_mul_mod(state[2][i], CF_AES_INV_MIX_COLUMN[3][2])^
+        cf_aes_g8_mul_mod(state[3][i], CF_AES_INV_MIX_COLUMN[3][3]),
       };
       state[0][i] = tmp[0];
       state[1][i] = tmp[1];

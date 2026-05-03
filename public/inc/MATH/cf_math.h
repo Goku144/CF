@@ -97,9 +97,9 @@ typedef union cf_math_descriptor
 
 struct cf_math_desc
 {
-  cf_usize rank;
-  cf_usize dim[CF_MATH_MAX_RANK];
-  cf_usize strides[CF_MATH_MAX_RANK];
+  int rank;
+  int dim[CF_MATH_MAX_RANK];
+  int strides[CF_MATH_MAX_RANK];
 
   cf_math_desc_type desc_type;
   cf_math_descriptor desc;
@@ -129,6 +129,102 @@ struct cf_math
 extern "C" {
 #endif
 
+/**
+ * @brief Multiply two bytes in the AES GF(2^8) finite field.
+ * @param p First finite-field byte operand.
+ * @param q Second finite-field byte operand.
+ * @return Computed 8-bit value.
+ */
+cf_u8 cf_math_g8_mul_mod(cf_u8 p, cf_u8 q);
+
+/**
+ * @brief Rotate an 8-bit value left.
+ * @param x Input value or tensor.
+ * @param n Bit count, scalar exponent, or batch index.
+ * @return Computed 8-bit value.
+ */
+cf_u8 cf_math_rotl8(cf_u8 x, cf_u8 n);
+
+/**
+ * @brief Rotate an 8-bit value right.
+ * @param x Input value or tensor.
+ * @param n Bit count, scalar exponent, or batch index.
+ * @return Computed 8-bit value.
+ */
+cf_u8 cf_math_rotr8(cf_u8 x, cf_u8 n);
+
+/**
+ * @brief Rotate a 32-bit value left.
+ * @param x Input value or tensor.
+ * @param n Bit count, scalar exponent, or batch index.
+ * @return Computed 32-bit value.
+ */
+cf_u32 cf_math_rotl32(cf_u32 x, cf_u8 n);
+
+/**
+ * @brief Rotate a 32-bit value right.
+ * @param x Input value or tensor.
+ * @param n Bit count, scalar exponent, or batch index.
+ * @return Computed 32-bit value.
+ */
+cf_u32 cf_math_rotr32(cf_u32 x, cf_u8 n);
+
+/**
+ * @brief Return the smaller of two cf_usize values.
+ * @param a First input value, matrix, or sparse matrix.
+ * @param b Second input value, tensor, bias tensor, or dense matrix.
+ * @return Computed size value.
+ */
+cf_usize cf_math_min_usize(cf_usize a, cf_usize b);
+
+/**
+ * @brief Return the larger of two cf_usize values.
+ * @param a First input value, matrix, or sparse matrix.
+ * @param b Second input value, tensor, bias tensor, or dense matrix.
+ * @return Computed size value.
+ */
+cf_usize cf_math_max_usize(cf_usize a, cf_usize b);
+
+/**
+ * @brief Initialize a tensor descriptor and optionally create a backend descriptor.
+ * @param desc Descriptor object to initialize.
+ * @param rank Number of active dimensions in `dim`.
+ * @param dim Tensor dimensions.
+ * @param dtype Element data type.
+ * @param desc_type Backend descriptor type to create, or `CF_MATH_DESC_NONE`.
+ * @return `CF_OK` on success, or an error status when backend descriptor creation fails.
+ */
+cf_status cf_math_desc_create(cf_math_desc *desc, int rank, const int *dim, cf_math_dtype dtype, cf_math_desc_type desc_type);
+
+/**
+ * @brief Destroy the active backend descriptor and clear the descriptor object.
+ * @param desc Descriptor object to destroy.
+ */
+void cf_math_desc_destroy(cf_math_desc *desc);
+
+/**
+ * @brief Bind a math object to a descriptor and reserve storage from a handle.
+ * @param handle Storage handle that owns the backing arena.
+ * @param math Math object to initialize and bind.
+ * @param desc Descriptor that defines the object's shape, layout, and dtype.
+ * @return `CF_OK` on success, or an error status when storage reservation fails.
+ */
+cf_status cf_math_bind(cf_math_handle *handle, cf_math *math, cf_math_desc *desc);
+
+/**
+ * @brief Rebind a math object to a descriptor and reserve fresh storage from a handle.
+ * @param handle Storage handle that owns the backing arena.
+ * @param math Math object to clear and bind again.
+ * @param desc Descriptor that defines the object's new shape, layout, and dtype.
+ * @return `CF_OK` on success, or an error status when storage reservation fails.
+ */
+cf_status cf_math_rebind(cf_math_handle *handle, cf_math *math, cf_math_desc *desc);
+
+/**
+ * @brief Clear a math object's descriptor, byte offset, and gradient binding.
+ * @param math Math object to clear.
+ */
+void cf_math_unbind(cf_math *math);
 
 
 #ifdef __cplusplus

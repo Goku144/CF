@@ -27,6 +27,10 @@ typedef struct cf_time
   cf_i64 ns;
 }cf_time, cf_time_point;
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /**
  * @brief Read the current wall-clock time.
  *
@@ -124,5 +128,9 @@ cf_status cf_time_sleep_ms(cf_u64 ms);
  * @return `CF_OK` on success or `CF_ERR_TIME_SLEEP` when sleeping fails.
  */
 cf_status cf_time_sleep_ns(cf_u64 ns);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* CF_TIME_H */

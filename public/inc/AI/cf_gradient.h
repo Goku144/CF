@@ -19,26 +19,9 @@
 #if !defined(CF_GRADIENT_H)
 #define CF_GRADIENT_H
 
-#include "AI/cf_model.h"
-#include "RUNTIME/cf_status.h"
-
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-/**
- * @brief Manual dense backward API boundary for the next AI batch.
- *
- * V1 currently returns `CF_ERR_UNSUPPORTED`.
- */
-cf_status cf_ai_dense_backward(cf_ai_dense *layer, const cf_math *input, const cf_math *grad_output);
-
-/**
- * @brief Manual loss backward API boundary for the next AI batch.
- *
- * V1 currently returns `CF_ERR_UNSUPPORTED`.
- */
-cf_status cf_ai_loss_backward(cf_ai_loss_kind loss, cf_math *grad_prediction, const cf_math *prediction, const cf_math *target);
 
 #ifdef __cplusplus
 }
