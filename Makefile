@@ -20,7 +20,7 @@
 # PUBLIC VARS
 ##############
 
-INC := -Ipublic/inc -I/usr/local/cuda/include
+INC := -Ipublic/inc -I/usr/local/cuda/include -I/usr/include
 
 ############
 # C OPTIONS
@@ -89,7 +89,7 @@ app/build/app: app/bin/app.o $(OBJS_C) $(OBJS_ASM) $(OBJS_CUDA)
 
 app/bin/app.o: app/src/app.cu
 	@mkdir -p $(dir $@)
-	@$(NVCC) $(INC) -c $< -o $@
+	@$(NVCC) $(FLAG_CUDA) $(INC) -c $< -o $@
 
 ############
 # Build Lib
