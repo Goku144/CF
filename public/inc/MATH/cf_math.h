@@ -226,6 +226,20 @@ cf_status cf_math_rebind(cf_math_handle *handle, cf_math *math, cf_math_desc *de
  */
 void cf_math_unbind(cf_math *math);
 
+/**
+ * @brief Execute a fast elementwise math operation on already-bound math objects.
+ * @param handle Math handle that owns the storage backing `out`, `a`, and `b`.
+ * @param out Output math object receiving the result.
+ * @param a First input math object.
+ * @param b Second input math object for binary ops, or `CF_NULL` for unary ops such as `CF_MATH_OP_NEG`.
+ * @param op Operation selector. Supported hot-path ops are `CF_MATH_OP_ADD`, `CF_MATH_OP_SUB`,
+ * `CF_MATH_OP_MUL`, `CF_MATH_OP_DIV`, and `CF_MATH_OP_NEG`.
+ *
+ * This function performs no allocation and no host/device transfer. It resolves dtype,
+ * length, and raw storage pointers once, then dispatches to the CPU or CUDA hot path.
+ * Storage is expected to provide the padded aligned virtual elements used by vectorized kernels.
+ */
+void cf_math_wise_op(cf_math_handle *handle, cf_math *out, const cf_math *a, const cf_math *b, cf_math_op_kind op);
 
 #ifdef __cplusplus
 }

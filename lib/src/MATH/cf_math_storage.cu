@@ -101,11 +101,14 @@ cf_status cf_math_workspace_create(cf_math_workspace *workspace, cf_usize capaci
   *workspace = {0};
 
   if(capacity == 0) return state;
+  if(capacity > SIZE_MAX - 15) return CF_ERR_OVERFLOW;
+  capacity = (capacity + 15) & ~(cf_usize)15;
   workspace->device = device;
+
   switch (device)
   {
     case CF_MATH_DEVICE_CPU:
-      workspace->scratchpad = mi_malloc(capacity);
+      workspace->scratchpad = mi_malloc_aligned(capacity, 16);
       workspace->scratchpad_size = workspace->scratchpad == CF_NULL ? 0 : capacity;
       if(!workspace->scratchpad_size) state = CF_ERR_OOM;
     break;
@@ -151,13 +154,16 @@ cf_status cf_math_handle_create(cf_math_handle *handle, cf_math_context *ctx, cf
   handle->ctx = ctx;
   handle->device = device;
   handle->workspace = workspace;
+  
+  if(capacity > SIZE_MAX - 15) return CF_ERR_OVERFLOW;
+  capacity = (capacity + 15) & ~(cf_usize)15;
 
   switch (device)
   {
     case CF_MATH_DEVICE_CPU:
       handle->storage.heap = mi_heap_new();
       if(handle->storage.heap == CF_NULL) { state = CF_ERR_OOM; goto fail; }
-      handle->storage.backend = mi_heap_malloc(handle->storage.heap, capacity);
+      handle->storage.backend = mi_heap_malloc_aligned(handle->storage.heap, capacity, 16);
       handle->storage.byte_capacity = handle->storage.backend == CF_NULL ? 0 : capacity;
       if(!handle->storage.byte_capacity) { state = CF_ERR_OOM; goto fail; }
     break;
@@ -182,12 +188,13 @@ cf_status cf_math_handle_add(cf_math_handle *handle, cf_math *math)
   if(handle == CF_NULL || math == CF_NULL) return CF_ERR_NULL;
   if(math->desc == CF_NULL) return CF_ERR_STATE;
 
-  cf_usize len = math->desc->dim[0] * math->desc->strides[0] * cf_math_type_size(math->desc->dtype);
+  cf_usize len = (math->desc->dim[0] * math->desc->strides[0] * cf_math_type_size(math->desc->dtype) + 15) & ~(cf_usize)15;
+
   if(len > SIZE_MAX - handle->storage.offset) return CF_ERR_OVERFLOW;
   if(len + handle->storage.offset > handle->storage.byte_capacity) return CF_ERR_BOUNDS;
 
   math->byte_offset = handle->storage.offset;
-  handle->storage.offset += (len ? len : 1);
+  handle->storage.offset += ((len ? len : 1) + 15) & ~(cf_usize)15;
   return CF_OK;
 }
 
