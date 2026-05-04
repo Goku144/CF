@@ -90,6 +90,10 @@ typedef enum cf_status
   CF_ERR_CUDA_SYNC = 0x20000000,
 } cf_status;
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /**
  * Return the symbolic string name of a framework status code.
  *
@@ -105,5 +109,8 @@ typedef enum cf_status
  */
 const char *cf_status_as_char(cf_status state);
 
- 
+#ifdef __cplusplus
+}
+#endif 
+
 #endif /* CF_STATUS_H */
