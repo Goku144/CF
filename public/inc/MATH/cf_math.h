@@ -92,7 +92,9 @@ typedef union cf_math_descriptor
 {
   cudnnTensorDescriptor_t cudnn_tensor;
   cublasLtMatrixLayout_t lt_layout;
+#if(CF_MATH_USE_DNNL == 1)
   dnnl_memory_desc_t dnnl_desc; 
+#endif
 } cf_math_descriptor;
 
 struct cf_math_desc

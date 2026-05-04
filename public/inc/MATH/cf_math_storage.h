@@ -19,11 +19,16 @@
 #if !defined(CF_MATH_STORAGE_H)
 #define CF_MATH_STORAGE_H
 
+#define CF_MATH_USE_DNNL 0
+
 #include "RUNTIME/cf_status.h"
 #include "RUNTIME/cf_types.h"
 
 #include <mimalloc.h>
+
+#if(CF_MATH_USE_DNNL == 1)
 #include <dnnl.h>
+#endif
 
 #include <cuda_runtime.h>
 #include <cublas_v2.h>
@@ -70,8 +75,10 @@ struct cf_math_cuda_context
 struct cf_math_cpu_context
 {
   int num_threads;
+#if(CF_MATH_USE_DNNL == 1)
   dnnl_stream_t stream;
   dnnl_engine_t engine;
+#endif
 };
 
 struct cf_math_context

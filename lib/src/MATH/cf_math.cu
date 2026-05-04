@@ -26,6 +26,7 @@
 #include <string.h>
 
 
+#if(CF_MATH_USE_DNNL == 1)
 static cudnnDataType_t cf_math_cudnn_dtype(cf_math_dtype dtype)
 {
   switch (dtype)
@@ -40,6 +41,7 @@ static cudnnDataType_t cf_math_cudnn_dtype(cf_math_dtype dtype)
     default: return CUDNN_DATA_FLOAT;
   }
 }
+#endif
 
 static cudaDataType_t cf_math_cuda_dtype(cf_math_dtype dtype)
 {
@@ -57,6 +59,7 @@ static cudaDataType_t cf_math_cuda_dtype(cf_math_dtype dtype)
   }
 }
 
+#if(CF_MATH_USE_DNNL == 1)
 static dnnl_data_type_t cf_math_dnnl_dtype(cf_math_dtype dtype)
 {
   switch (dtype)
@@ -71,6 +74,7 @@ static dnnl_data_type_t cf_math_dnnl_dtype(cf_math_dtype dtype)
     default: return dnnl_f32;
   }
 }
+#endif
 
 cf_status cf_math_desc_create(cf_math_desc *desc, int rank, const int *dim, cf_math_dtype dtype, cf_math_desc_type desc_type)
 {
@@ -96,8 +100,10 @@ cf_status cf_math_desc_create(cf_math_desc *desc, int rank, const int *dim, cf_m
     break;
 
     case CF_MATH_DESC_CUDNN:
+#if(CF_MATH_USE_DNNL == 1)
       if(cudnnCreateTensorDescriptor(&desc->desc.cudnn_tensor) != CUDNN_STATUS_SUCCESS) { state = CF_ERR_CUDA; goto fail; }
       if(cudnnSetTensorNdDescriptor(desc->desc.cudnn_tensor, cf_math_cudnn_dtype(dtype), rank, desc->dim, desc->strides) != CUDNN_STATUS_SUCCESS) { state = CF_ERR_CUDA; goto fail; }
+#endif
     break;
 
     case CF_MATH_DESC_LT:
@@ -106,6 +112,7 @@ cf_status cf_math_desc_create(cf_math_desc *desc, int rank, const int *dim, cf_m
 
     case CF_MATH_DESC_DNNL:
     {
+#if(CF_MATH_USE_DNNL == 1)
       dnnl_dims_t dnnl_dim = {0};
       dnnl_dims_t dnnl_strides = {0};
       for (int i = 0; i < rank; i++)
@@ -114,6 +121,7 @@ cf_status cf_math_desc_create(cf_math_desc *desc, int rank, const int *dim, cf_m
         dnnl_strides[i] = (dnnl_dim_t) desc->strides[i];
       }
       if(dnnl_memory_desc_create_with_strides(&desc->desc.dnnl_desc, rank, dnnl_dim, cf_math_dnnl_dtype(dtype), dnnl_strides) != dnnl_success) { state = CF_ERR_INTERNAL; goto fail; }
+#endif
     }
     break;
 
@@ -142,7 +150,9 @@ void cf_math_desc_destroy(cf_math_desc *desc)
     break;
 
     case CF_MATH_DESC_DNNL:
+#if(CF_MATH_USE_DNNL == 1)
       if(desc->desc.dnnl_desc != CF_NULL) dnnl_memory_desc_destroy(desc->desc.dnnl_desc);
+#endif
     break;
   }
 

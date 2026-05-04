@@ -47,8 +47,10 @@ cf_status cf_math_context_create(cf_math_context *ctx, int id_or_tnum, cf_math_d
   {
     case CF_MATH_DEVICE_CPU:
       ctx->context.cpu.num_threads = id_or_tnum;
+#if(CF_MATH_USE_DNNL == 1)
       if(dnnl_engine_create(&ctx->context.cpu.engine, dnnl_cpu, 0) != dnnl_success) { state = CF_ERR_INTERNAL; goto fail; }
       if(dnnl_stream_create(&ctx->context.cpu.stream, ctx->context.cpu.engine, dnnl_stream_default_flags) != dnnl_success) { state = CF_ERR_INTERNAL; goto fail; }
+#endif
     break;
 
     case CF_MATH_DEVICE_CUDA:
@@ -78,8 +80,10 @@ void cf_math_context_destroy(cf_math_context *ctx)
   switch (ctx->device)
   {
     case CF_MATH_DEVICE_CPU:
+#if(CF_MATH_USE_DNNL == 1)
       if(ctx->context.cpu.stream != CF_NULL) dnnl_stream_destroy(ctx->context.cpu.stream);
       if(ctx->context.cpu.engine != CF_NULL) dnnl_engine_destroy(ctx->context.cpu.engine);
+#endif
     break;
 
     case CF_MATH_DEVICE_CUDA:
