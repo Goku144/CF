@@ -134,4 +134,4 @@ tests/bin/test.o: tests/src/test.c
 clean:
 	rm -rf lib/bin app/bin app/build tests/bin tests/build
 
-.PHONY: app runApp lib test runTests clean 
+.PHONY: app runApp lib test runTests clean

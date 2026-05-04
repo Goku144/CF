@@ -194,7 +194,8 @@ cf_status cf_math_handle_add(cf_math_handle *handle, cf_math *math)
   if(len + handle->storage.offset > handle->storage.byte_capacity) return CF_ERR_BOUNDS;
 
   math->byte_offset = handle->storage.offset;
-  handle->storage.offset += ((len ? len : 1) + 15) & ~(cf_usize)15;
+  math->byte_len = ((len ? len : 1) + 15) & ~(cf_usize)15;
+  handle->storage.offset += math->byte_len;
   return CF_OK;
 }
 
