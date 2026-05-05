@@ -19,6 +19,9 @@
 #if !defined(CF_MATH_F16_H)
 #define CF_MATH_F16_H
 
+#define CF_GELU_COEFF_A 0.79788456f
+#define CF_GELU_COEFF_B 0.03567741f
+
 typedef struct cf_math_handle cf_math_handle;
 typedef struct cf_math cf_math;
 
@@ -49,6 +52,10 @@ void cf_math_relu_f16(cf_math_handle *handle, cf_math *C, cf_math *A);
 void cf_math_sigmoid_f16(cf_math_handle *handle, cf_math *C, cf_math *A);
 
 void cf_math_gelu_f16(cf_math_handle *handle, cf_math *C, cf_math *A);
+
+void cf_math_reduce_sum_f16(cf_math_handle *handle, cf_math *C, cf_math *A);
+
+void cf_math_reduce_mean_f16(cf_math_handle *handle, cf_math *C, cf_math *A);
 
 #ifdef __cplusplus
 }

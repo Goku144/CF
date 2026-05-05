@@ -23,6 +23,7 @@
 #include <cuda_fp16.h>
 #include <vector_types.h>
 #include <cuda/cmath>
+#include <cub/cub.cuh>
 
 #include <stdint.h>
 #include <string.h>
@@ -141,7 +142,7 @@ void cf_math_##op##_f16(cf_math_handle *handle, cf_math *C, cf_math *A, cf_math 
   {\
     int tail_end = N - tail_start;\
     int blocks = cuda::ceil_div(tail_end, threads);\
-    cf_math_kernel_tail_##op##_f16<<<blocks, threads, 0, handle->workspace->stream>>>(C_D, A_D, B_D, tail_end);\
+    cf_math_kernel_tail_##op##_f16<<<blocks, threads, 0, handle->workspace->stream>>>(C_D + tail_start, A_D + tail_start, B_D + tail_start, tail_end);\
   }\
 }\
 
@@ -180,13 +181,21 @@ static __device__ __forceinline__ half2 cf_math_half2_sigmoid(half2 x)
 
 static __device__ __forceinline__ half2 cf_math_half2_gelu(half2 x)
 {
-  __half lo_h = __low2half(x);
-  __half hi_h = __high2half(x);
-    float lo = __half2float(lo_h);
-    float hi = __half2float(hi_h);
-  __half lo_out = __float2half((0.5f * lo) * (1 + tanhf(CF_MATH_SQRT_2_DIV_PI_F * (lo + 0.044715f * powf(lo, 3.0f)))));
-  __half hi_out = __float2half((0.5f * hi) * (1 + tanhf(CF_MATH_SQRT_2_DIV_PI_F * (hi + 0.044715f * powf(hi, 3.0f)))));
-  return __halves2half2(lo_out, hi_out);
+    half2 x_sq = __hmul2(x, x);
+    
+    half2 poly = __hfma2(__float2half2_rn(CF_GELU_COEFF_B), x_sq, __float2half2_rn(CF_GELU_COEFF_A));
+    poly = __hmul2(poly, x);
+
+    float2 p_f = __half22float2(poly);
+    p_f.x = tanhf(p_f.x);
+    p_f.y = tanhf(p_f.y);
+    
+    half2 t = __float22half2_rn(p_f);
+    
+    half2 one = __float2half2_rn(1.0f);
+    half2 half_v = __float2half2_rn(0.5f);
+    
+    return __hmul2(__hmul2(half_v, x), __hadd2(one, t));
 }
 
 #define CF_MATH_KERNEL_FUNC_F16_CREATE(name) \
@@ -194,8 +203,6 @@ __global__ void cf_math_kernel_##name##_f16(uint4 * __restrict__ C, const uint4 
 { \
   int index = threadIdx.x + blockDim.x * blockIdx.x; \
   if(index >= N8) return; \
- \
-  __half2 zero = __float2half2_rn(0.0f); \
  \
   uint4 a = A[index]; \
   uint4 c; \
@@ -283,8 +290,21 @@ __global__ void cf_math_kernel_tail_gelu_f16(__half * __restrict__ C, const __ha
   int index = threadIdx.x + blockDim.x * blockIdx.x;
   if(index >= N8) return;
 
-  float a_f = __half2float(A[index]);
-  C[index] = __float2half((0.5f * a_f) * (1.0f + tanhf(CF_MATH_SQRT_2_DIV_PI_F * (a_f + 0.044715f * powf(a_f, 3.0f)))));
+  half a_f = A[index];
+  half x_sq = __hmul(a_f , a_f);
+    
+  half poly = __hfma(__float2half_rn(CF_GELU_COEFF_B), x_sq, __float2half_rn(CF_GELU_COEFF_A));
+  poly = __hmul(poly, a_f );
+
+  float p_f = __half2float(poly);
+  p_f = tanhf(p_f);
+  
+  half t = __float2half_rn(p_f);
+  
+  half one = __float2half_rn(1.0f);
+  half half_v = __float2half_rn(0.5f);
+    
+  C[index] = __hmul(__hmul(half_v, a_f ), __hadd(one, t));
 }
 
 #define CF_MATH_UNARY_F16_CREATE(name) \
@@ -311,7 +331,7 @@ void cf_math_##name##_f16(cf_math_handle *handle, cf_math *C, cf_math *A) \
   { \
     int tail_end = N - tail_start; \
     int blocks = cuda::ceil_div(tail_end, threads); \
-    cf_math_kernel_tail_##name##_f16<<<blocks, threads, 0, handle->workspace->stream>>>(C_D, A_D, tail_end); \
+    cf_math_kernel_tail_##name##_f16<<<blocks, threads, 0, handle->workspace->stream>>>(C_D + tail_start, A_D + tail_start, tail_end); \
   } \
 } \
 
@@ -323,3 +343,24 @@ CF_MATH_UNARY_F16_CREATE(tanh)
 CF_MATH_UNARY_F16_CREATE(relu)
 CF_MATH_UNARY_F16_CREATE(sigmoid)
 CF_MATH_UNARY_F16_CREATE(gelu)
+
+void cf_math_reduce_sum_f16(cf_math_handle *handle, cf_math *C, cf_math *A)
+{
+  cf_u8 *ptr = (cf_u8 *)handle->storage.backend;
+  __half *A_D = (__half *)(ptr + A->byte_offset);
+  __half *C_D = (__half *)(ptr + C->byte_offset);
+
+  void *temp_storage = handle->workspace->scratchpad;
+  size_t temp_storage_bytes = handle->workspace->scratchpad_size;
+
+  cudaStream_t stream = handle->workspace->stream;
+
+  cub::DeviceReduce::Sum(temp_storage, temp_storage_bytes, A_D, C_D, (int) A->elem_len, handle->workspace->stream);
+}
+
+void cf_math_reduce_mean_f16(cf_math_handle *handle, cf_math *C, cf_math *A)
+{
+  cf_math_reduce_sum_f16(handle, C, A);
+  __half * ptr = ((__half *)handle->storage.backend + C->byte_offset);
+  *ptr = *ptr / (__half) A->elem_len;
+}

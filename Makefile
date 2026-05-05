@@ -50,7 +50,7 @@ OBJS_ASM := $(patsubst lib/src/%.asm, lib/bin/%.o, $(SRCS_ASM))
 
 NVCC ?= $(shell command -v nvcc 2>&1)
 CUDA_AVAILABLE := $(if $(NVCC),1,0)
-FLAG_CUDA := -O3 -Wno-deprecated-gpu-targets
+FLAG_CUDA := -O3 -Wno-deprecated-gpu-targets -arch=sm_75
 LIBS_CUDA := -lcudnn -lcusparse -lcusolver -lcurand -lcublasLt -lcublas -lcudart
 SRCS_CUDA := $(shell find lib/src -name '*.cu')
 OBJS_CUDA := $(patsubst lib/src/%.cu, lib/bin/%.o, $(SRCS_CUDA))
