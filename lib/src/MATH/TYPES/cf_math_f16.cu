@@ -1,0 +1,305 @@
+/*
+ * CF Framework
+ * Copyright (C) 2026 Orion
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
+ */
+
+#include "MATH/TYPES/cf_math_f16.h"
+#include "MATH/cf_math.h"
+
+#include <cuda_bf16.h>
+#include <cuda_fp16.h>
+#include <vector_types.h>
+#include <cuda/cmath>
+
+#include <stdint.h>
+#include <string.h>
+#include <math.h>
+
+static __device__ __forceinline__ unsigned int cf_math_device_half2_to_u32(__half2 x)
+{
+  union
+  {
+    unsigned int u;
+    __half2 h;
+  } v;
+  v.h = x;
+  return v.u;
+}
+
+static __device__ __forceinline__ __half2 cf_math_device_u32_to_half2(unsigned int x)
+{
+  union
+  {
+    unsigned int u;
+    __half2 h;
+  } v;
+  v.u = x;
+  return v.h;
+}
+
+#define CF_MATH_KERNEL_OP_CREATE(name, op)\
+__global__ void cf_math_kernel_##name##_f16(uint4 * __restrict__ C, const uint4 * __restrict__ A, const uint4 * __restrict__ B, int N8)\
+{\
+  int index = threadIdx.x + blockDim.x * blockIdx.x;\
+  if(index >= N8) return;\
+\
+  uint4 a = A[index];\
+  uint4 b = B[index];\
+  uint4 c;\
+  c.x = cf_math_device_half2_to_u32(op(cf_math_device_u32_to_half2(a.x), cf_math_device_u32_to_half2(b.x)));\
+  c.y = cf_math_device_half2_to_u32(op(cf_math_device_u32_to_half2(a.y), cf_math_device_u32_to_half2(b.y)));\
+  c.z = cf_math_device_half2_to_u32(op(cf_math_device_u32_to_half2(a.z), cf_math_device_u32_to_half2(b.z)));\
+  c.w = cf_math_device_half2_to_u32(op(cf_math_device_u32_to_half2(a.w), cf_math_device_u32_to_half2(b.w)));\
+\
+  C[index] = c;\
+}\
+
+CF_MATH_KERNEL_OP_CREATE(add, __hadd2)
+CF_MATH_KERNEL_OP_CREATE(sub, __hsub2)
+CF_MATH_KERNEL_OP_CREATE(mul, __hmul2)
+
+__global__ void cf_math_kernel_div_f16(uint4 * __restrict__ C, const uint4 * __restrict__ A, const uint4 * __restrict__ B, int N8)
+{
+  int index = threadIdx.x + blockDim.x * blockIdx.x;
+  if(index >= N8) return;
+
+  uint4 a = A[index];
+  uint4 b = B[index];
+  uint4 c;
+  c.x = cf_math_device_half2_to_u32(__hmul2(cf_math_device_u32_to_half2(a.x), h2rcp(cf_math_device_u32_to_half2(b.x))));
+  c.y = cf_math_device_half2_to_u32(__hmul2(cf_math_device_u32_to_half2(a.y), h2rcp(cf_math_device_u32_to_half2(b.y))));
+  c.z = cf_math_device_half2_to_u32(__hmul2(cf_math_device_u32_to_half2(a.z), h2rcp(cf_math_device_u32_to_half2(b.z))));
+  c.w = cf_math_device_half2_to_u32(__hmul2(cf_math_device_u32_to_half2(a.w), h2rcp(cf_math_device_u32_to_half2(b.w))));
+  C[index] = c;
+}
+
+
+#define CF_MATH_KERNEL_TAIL_OP_CREATE(name, op)\
+__global__ void cf_math_kernel_tail_##name##_f16(__half * __restrict__ C, const __half * __restrict__ A, const __half * __restrict__ B, int N8)\
+{\
+  int index = threadIdx.x + blockDim.x * blockIdx.x;\
+  if(index >= N8) return;\
+\
+  C[index] = op(A[index], B[index]);\
+}\
+
+CF_MATH_KERNEL_TAIL_OP_CREATE(add, __hadd)
+CF_MATH_KERNEL_TAIL_OP_CREATE(sub, __hsub)
+CF_MATH_KERNEL_TAIL_OP_CREATE(mul, __hmul)
+
+__global__ void cf_math_kernel_tail_div_f16(__half * __restrict__ C, const __half * __restrict__ A, const __half * __restrict__ B, int N8)
+{
+  int index = threadIdx.x + blockDim.x * blockIdx.x;
+  if(index >= N8) return;
+
+  C[index] = __hdiv(A[index], B[index]);
+}
+
+__global__ void cf_math_kernel_tail_neg_f16(__half * __restrict__ C, const __half * __restrict__ A, int N8)
+{
+  int index = threadIdx.x + blockDim.x * blockIdx.x;
+  if(index >= N8) return;
+
+  C[index] = __hneg(A[index]);
+}
+
+#define CF_MATH_OP_CREATE(op)\
+void cf_math_##op##_f16(cf_math_handle *handle, cf_math *C, cf_math *A, cf_math *B)\
+{\
+  int N = (int) C->elem_len;\
+\
+  cf_u8 *ptr = (cf_u8 *) handle->storage.backend;\
+  \
+  __half * A_D = (__half *) (ptr + A->byte_offset);\
+  __half * B_D = (__half *) (ptr + B->byte_offset);\
+  __half * C_D = (__half *) (ptr + C->byte_offset);\
+\
+  int threads = N <= 256 ? 256 : N <= 512 ? 512 : 1024;\
+\
+  int N8 = N / 8;\
+  if(N8 > 0)\
+  {\
+    int blocks = cuda::ceil_div(N8, threads);\
+    cf_math_kernel_##op##_f16<<<blocks, threads, 0, handle->workspace->stream>>>((uint4 *) C_D, (uint4 *) A_D, (uint4 *) B_D, N8);\
+  }\
+\
+  int tail_start = N8 * 8;\
+  if(tail_start < N) \
+  {\
+    int tail_end = N - tail_start;\
+    int blocks = cuda::ceil_div(tail_end, threads);\
+    cf_math_kernel_tail_##op##_f16<<<blocks, threads, 0, handle->workspace->stream>>>(C_D, A_D, B_D, tail_end);\
+  }\
+}\
+
+CF_MATH_OP_CREATE(add)
+CF_MATH_OP_CREATE(sub)
+CF_MATH_OP_CREATE(mul)
+CF_MATH_OP_CREATE(div)
+
+#define CF_MATH_KERNEL_FUNC_HALF2_CREATE(name, func) \
+static __device__ __forceinline__ half2 cf_math_half2_##name(half2 x) \
+{ \
+  __half lo_h = __low2half(x); \
+  __half hi_h = __high2half(x); \
+    float lo = __half2float(lo_h); \
+    float hi = __half2float(hi_h); \
+  __half lo_out = __float2half(func(lo)); \
+  __half hi_out = __float2half(func(hi)); \
+  return __halves2half2(lo_out, hi_out); \
+} \
+
+CF_MATH_KERNEL_FUNC_HALF2_CREATE(sqrt, sqrtf)
+CF_MATH_KERNEL_FUNC_HALF2_CREATE(exp, expf)
+CF_MATH_KERNEL_FUNC_HALF2_CREATE(log, logf)
+CF_MATH_KERNEL_FUNC_HALF2_CREATE(tanh, tanhf)
+
+static __device__ __forceinline__ half2 cf_math_half2_sigmoid(half2 x)
+{
+  __half lo_h = __low2half(x);
+  __half hi_h = __high2half(x);
+    float one = 1;
+    float lo = __half2float(lo_h);
+    float hi = __half2float(hi_h);
+  __half lo_out = hrcp(__float2half(one + expf(-lo)));
+  __half hi_out = hrcp(__float2half(one + expf(-hi)));
+  return __halves2half2(lo_out, hi_out);
+}
+
+#define CF_MATH_KERNEL_FUNC_F16_CREATE(name) \
+__global__ void cf_math_kernel_##name##_f16(uint4 * __restrict__ C, const uint4 * __restrict__ A, int N8)\
+{ \
+  int index = threadIdx.x + blockDim.x * blockIdx.x; \
+  if(index >= N8) return; \
+ \
+  __half2 zero = __float2half2_rn(0.0f); \
+ \
+  uint4 a = A[index]; \
+  uint4 c; \
+  c.x = cf_math_device_half2_to_u32(cf_math_half2_##name(cf_math_device_u32_to_half2(a.x))); \
+  c.y = cf_math_device_half2_to_u32(cf_math_half2_##name(cf_math_device_u32_to_half2(a.y))); \
+  c.z = cf_math_device_half2_to_u32(cf_math_half2_##name(cf_math_device_u32_to_half2(a.z))); \
+  c.w = cf_math_device_half2_to_u32(cf_math_half2_##name(cf_math_device_u32_to_half2(a.w))); \
+  C[index] = c; \
+} \
+
+CF_MATH_KERNEL_FUNC_F16_CREATE(sqrt)
+CF_MATH_KERNEL_FUNC_F16_CREATE(exp)
+CF_MATH_KERNEL_FUNC_F16_CREATE(log)
+CF_MATH_KERNEL_FUNC_F16_CREATE(tanh)
+CF_MATH_KERNEL_FUNC_F16_CREATE(sigmoid)
+
+__global__ void cf_math_kernel_neg_f16(uint4 * __restrict__ C, const uint4 * __restrict__ A, int N8)
+{
+  int index = threadIdx.x + blockDim.x * blockIdx.x;
+  if(index >= N8) return;
+
+  uint4 a = A[index];
+  uint4 c;
+  c.x = cf_math_device_half2_to_u32(__hneg2(cf_math_device_u32_to_half2(a.x)));
+  c.y = cf_math_device_half2_to_u32(__hneg2(cf_math_device_u32_to_half2(a.y)));
+  c.z = cf_math_device_half2_to_u32(__hneg2(cf_math_device_u32_to_half2(a.z)));
+  c.w = cf_math_device_half2_to_u32(__hneg2(cf_math_device_u32_to_half2(a.w)));
+  C[index] = c;
+}
+
+__global__ void cf_math_kernel_relu_f16(uint4 * __restrict__ C, const uint4 * __restrict__ A, int N8)
+{
+  int index = threadIdx.x + blockDim.x * blockIdx.x;
+  if(index >= N8) return;
+
+  __half2 zero = __float2half2_rn(0.0f);
+
+  uint4 a = A[index];
+  uint4 c;
+  c.x = cf_math_device_half2_to_u32(__hmax2(cf_math_device_u32_to_half2(a.x), zero));
+  c.y = cf_math_device_half2_to_u32(__hmax2(cf_math_device_u32_to_half2(a.y), zero));
+  c.z = cf_math_device_half2_to_u32(__hmax2(cf_math_device_u32_to_half2(a.z), zero));
+  c.w = cf_math_device_half2_to_u32(__hmax2(cf_math_device_u32_to_half2(a.w), zero));
+  C[index] = c;
+}
+
+
+#define CF_MATH_KERNEL_TAIL_FUNC_F16_CREATE(name, func) \
+__global__ void cf_math_kernel_tail_##name##_f16(__half * __restrict__ C, const __half * __restrict__ A, int N8) \
+{ \
+  int index = threadIdx.x + blockDim.x * blockIdx.x; \
+  if(index >= N8) return; \
+ \
+  float a_f = __half2float(A[index]); \
+  C[index] = __float2half(func(a_f)); \
+} \
+
+
+CF_MATH_KERNEL_TAIL_FUNC_F16_CREATE(sqrt, sqrtf)
+CF_MATH_KERNEL_TAIL_FUNC_F16_CREATE(exp, expf)
+CF_MATH_KERNEL_TAIL_FUNC_F16_CREATE(log, logf)
+CF_MATH_KERNEL_TAIL_FUNC_F16_CREATE(tanh, tanhf)
+
+__global__ void cf_math_kernel_tail_relu_f16(__half * __restrict__ C, const __half * __restrict__ A, int N8)
+{
+  int index = threadIdx.x + blockDim.x * blockIdx.x;
+  if(index >= N8) return;
+
+  __half zero = __float2half_rn(0.0f);
+  C[index] = __hmax(A[index], zero);
+}
+
+__global__ void cf_math_kernel_tail_sigmoid_f16(__half * __restrict__ C, const __half * __restrict__ A, int N8)
+{
+  int index = threadIdx.x + blockDim.x * blockIdx.x;
+  if(index >= N8) return;
+
+  float one = 1;
+  float a_f = __half2float(A[index]);
+  C[index] = hrcp(__float2half(one + expf(-a_f)));
+}
+
+#define CF_MATH_UNARY_F16_CREATE(name) \
+void cf_math_##name##_f16(cf_math_handle *handle, cf_math *C, cf_math *A) \
+{ \
+  int N = (int) C->elem_len; \
+ \
+  cf_u8 *ptr = (cf_u8 *) handle->storage.backend; \
+  \
+  __half * A_D = (__half *) (ptr + A->byte_offset); \
+  __half * C_D = (__half *) (ptr + C->byte_offset); \
+ \
+  int threads = N <= 256 ? 256 : N <= 512 ? 512 : 1024; \
+ \
+  int N8 = N / 8; \
+  if(N8 > 0) \
+  { \
+    int blocks = cuda::ceil_div(N8, threads); \
+    cf_math_kernel_##name##_f16<<<blocks, threads, 0, handle->workspace->stream>>>((uint4 *) C_D, (uint4 *) A_D, N8); \
+  } \
+ \
+  int tail_start = N8 * 8; \
+  if(tail_start < N)  \
+  { \
+    int tail_end = N - tail_start; \
+    int blocks = cuda::ceil_div(tail_end, threads); \
+    cf_math_kernel_tail_##name##_f16<<<blocks, threads, 0, handle->workspace->stream>>>(C_D, A_D, tail_end); \
+  } \
+} \
+
+CF_MATH_UNARY_F16_CREATE(neg)
+CF_MATH_UNARY_F16_CREATE(sqrt)
+CF_MATH_UNARY_F16_CREATE(exp)
+CF_MATH_UNARY_F16_CREATE(log)
+CF_MATH_UNARY_F16_CREATE(tanh)
+CF_MATH_UNARY_F16_CREATE(relu)
+CF_MATH_UNARY_F16_CREATE(sigmoid)

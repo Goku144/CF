@@ -19,6 +19,7 @@
 #if !defined(CF_MATH_H)
 #define CF_MATH_H
 
+#include "MATH/TYPES/cf_math_f16.h"
 #include "MATH/cf_math_storage.h"
 
 #define CF_MATH_MAX_NODE_INPUTS 8
@@ -228,26 +229,6 @@ cf_status cf_math_rebind(cf_math_handle *handle, cf_math *math, cf_math_desc *de
  * @param math Math object to clear.
  */
 void cf_math_unbind(cf_math *math);
-
-void cf_math_add_f16(cf_math_handle *handle, cf_math *C, cf_math *A, cf_math *B);
-
-void cf_math_sub_f16(cf_math_handle *handle, cf_math *C, cf_math *A, cf_math *B);
-
-void cf_math_mul_f16(cf_math_handle *handle, cf_math *C, cf_math *A, cf_math *B);
-
-void cf_math_div_f16(cf_math_handle *handle, cf_math *C, cf_math *A, cf_math *B);
-
-void cf_math_neg_f16(cf_math_handle *handle, cf_math *C, cf_math *A);
-
-void cf_math_relu_f16(cf_math_handle *handle, cf_math *C, cf_math *A);
-
-void cf_math_sqrt_f16(cf_math_handle *handle, cf_math *C, cf_math *A);
-
-void cf_math_exp_f16(cf_math_handle *handle, cf_math *C, cf_math *A);
-
-void cf_math_log_f16(cf_math_handle *handle, cf_math *C, cf_math *A);
-
-void cf_math_tanh_f16(cf_math_handle *handle, cf_math *C, cf_math *A);
 
 #ifdef __cplusplus
 }
