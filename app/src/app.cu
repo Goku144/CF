@@ -9,7 +9,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#define CF_APP_DEFAULT_ELEMENTS (1u << 20)
+#define CF_APP_DEFAULT_ELEMENTS (1u << 24)
 #define CF_APP_DEFAULT_ITERS 200
 #define CF_APP_DEFAULT_WARMUP 20
 
@@ -54,6 +54,116 @@ static __global__ void cf_app_init_half_inputs(__half *a, __half *b, cf_usize n)
 
   a[index] = __float2half(af);
   b[index] = __float2half(bf);
+}
+
+typedef void (*cf_app_f16_binary_op)(cf_math_handle *handle, cf_math *C, cf_math *A, cf_math *B);
+
+static int cf_app_benchmark_f16_op(const char *name,
+                                   cf_app_f16_binary_op op,
+                                   cf_math_handle *handle,
+                                   cf_math_workspace *workspace,
+                                   cf_math *C,
+                                   cf_math *A,
+                                   cf_math *B,
+                                   __half *C_D,
+                                   cf_usize element_count,
+                                   int iterations,
+                                   int warmup)
+{
+  cudaEvent_t start = NULL;
+  cudaEvent_t stop = NULL;
+  cudaError_t cuda_state = cudaSuccess;
+  float total_ms = 0.0f;
+  __half sample[8];
+
+  for(int i = 0; i < warmup; ++i)
+    op(handle, C, A, B);
+
+  cuda_state = cudaGetLastError();
+  if(cuda_state != cudaSuccess)
+    return cf_app_fail_cuda(name, cuda_state);
+
+  cuda_state = cudaStreamSynchronize(workspace->stream);
+  if(cuda_state != cudaSuccess)
+    return cf_app_fail_cuda("cudaStreamSynchronize(warmup)", cuda_state);
+
+  cuda_state = cudaEventCreate(&start);
+  if(cuda_state != cudaSuccess)
+    return cf_app_fail_cuda("cudaEventCreate(start)", cuda_state);
+
+  cuda_state = cudaEventCreate(&stop);
+  if(cuda_state != cudaSuccess)
+  {
+    cudaEventDestroy(start);
+    return cf_app_fail_cuda("cudaEventCreate(stop)", cuda_state);
+  }
+
+  cuda_state = cudaEventRecord(start, workspace->stream);
+  if(cuda_state != cudaSuccess)
+  {
+    cudaEventDestroy(stop);
+    cudaEventDestroy(start);
+    return cf_app_fail_cuda("cudaEventRecord(start)", cuda_state);
+  }
+
+  for(int i = 0; i < iterations; ++i)
+    op(handle, C, A, B);
+
+  cuda_state = cudaEventRecord(stop, workspace->stream);
+  if(cuda_state != cudaSuccess)
+  {
+    cudaEventDestroy(stop);
+    cudaEventDestroy(start);
+    return cf_app_fail_cuda("cudaEventRecord(stop)", cuda_state);
+  }
+
+  cuda_state = cudaEventSynchronize(stop);
+  if(cuda_state != cudaSuccess)
+  {
+    cudaEventDestroy(stop);
+    cudaEventDestroy(start);
+    return cf_app_fail_cuda("cudaEventSynchronize(stop)", cuda_state);
+  }
+
+  cuda_state = cudaGetLastError();
+  if(cuda_state != cudaSuccess)
+  {
+    cudaEventDestroy(stop);
+    cudaEventDestroy(start);
+    return cf_app_fail_cuda(name, cuda_state);
+  }
+
+  cuda_state = cudaEventElapsedTime(&total_ms, start, stop);
+  cudaEventDestroy(stop);
+  cudaEventDestroy(start);
+  if(cuda_state != cudaSuccess)
+    return cf_app_fail_cuda("cudaEventElapsedTime", cuda_state);
+
+  cuda_state = cudaMemcpyAsync(sample, C_D, sizeof(sample), cudaMemcpyDeviceToHost, workspace->stream);
+  if(cuda_state != cudaSuccess)
+    return cf_app_fail_cuda("cudaMemcpyAsync(sample)", cuda_state);
+
+  cuda_state = cudaStreamSynchronize(workspace->stream);
+  if(cuda_state != cudaSuccess)
+    return cf_app_fail_cuda("cudaStreamSynchronize(sample)", cuda_state);
+
+  double avg_ms = (double)total_ms / (double)iterations;
+  double logical_bytes = (double)element_count * (double)sizeof(__half) * 3.0;
+  double logical_gib = logical_bytes / (1024.0 * 1024.0 * 1024.0);
+  double logical_gib_s = logical_gib / (avg_ms / 1000.0);
+
+  printf("%s performance check\n", name);
+  printf("total time: %.3f ms\n", total_ms);
+  printf("average time: %.6f ms\n", avg_ms);
+  printf("logical bandwidth: %.3f GiB/s\n", logical_gib_s);
+  printf("sample C[0..7]:");
+
+  for(int i = 0; i < 8; ++i)
+    printf(" %.3f", (double)__half2float(sample[i]));
+
+  printf("\n\n");
+
+  return 0;
 }
 
 int main(int argc, char **argv)
@@ -104,14 +214,6 @@ int main(int argc, char **argv)
   cf_usize launched_items = 0;
   int threads = 256;
   int blocks = 0;
-  cudaEvent_t start = NULL;
-  cudaEvent_t stop = NULL;
-  float total_ms = 0.0f;
-  __half sample[8];
-  double avg_ms = 0.0;
-  double logical_bytes = 0.0;
-  double logical_gib = 0.0;
-  double logical_gib_s = 0.0;
 
   status = cf_math_context_create(&ctx, 0, CF_MATH_DEVICE_CUDA);
   if(status != CF_OK)
@@ -191,117 +293,26 @@ int main(int argc, char **argv)
     goto destroy_desc;
   }
 
-  for(int i = 0; i < warmup; ++i)
-    cf_math_add_f16(&handle, &C, &A, &B);
-
-  cuda_state = cudaGetLastError();
-  if(cuda_state != cudaSuccess)
-  {
-    rc = cf_app_fail_cuda("cf_math_add_f16 warmup launch", cuda_state);
-    goto destroy_desc;
-  }
-
-  cuda_state = cudaStreamSynchronize(workspace.stream);
-  if(cuda_state != cudaSuccess)
-  {
-    rc = cf_app_fail_cuda("cudaStreamSynchronize(warmup)", cuda_state);
-    goto destroy_desc;
-  }
-
-  cuda_state = cudaEventCreate(&start);
-  if(cuda_state != cudaSuccess)
-  {
-    rc = cf_app_fail_cuda("cudaEventCreate(start)", cuda_state);
-    goto destroy_desc;
-  }
-
-  cuda_state = cudaEventCreate(&stop);
-  if(cuda_state != cudaSuccess)
-  {
-    rc = cf_app_fail_cuda("cudaEventCreate(stop)", cuda_state);
-    goto destroy_start_event;
-  }
-
-  cuda_state = cudaEventRecord(start, workspace.stream);
-  if(cuda_state != cudaSuccess)
-  {
-    rc = cf_app_fail_cuda("cudaEventRecord(start)", cuda_state);
-    goto destroy_events;
-  }
-
-  for(int i = 0; i < iterations; ++i)
-    cf_math_add_f16(&handle, &C, &A, &B);
-
-  cuda_state = cudaEventRecord(stop, workspace.stream);
-  if(cuda_state != cudaSuccess)
-  {
-    rc = cf_app_fail_cuda("cudaEventRecord(stop)", cuda_state);
-    goto destroy_events;
-  }
-
-  cuda_state = cudaEventSynchronize(stop);
-  if(cuda_state != cudaSuccess)
-  {
-    rc = cf_app_fail_cuda("cudaEventSynchronize(stop)", cuda_state);
-    goto destroy_events;
-  }
-
-  cuda_state = cudaGetLastError();
-  if(cuda_state != cudaSuccess)
-  {
-    rc = cf_app_fail_cuda("cf_math_add_f16 timed launch", cuda_state);
-    goto destroy_events;
-  }
-
-  cuda_state = cudaEventElapsedTime(&total_ms, start, stop);
-  if(cuda_state != cudaSuccess)
-  {
-    rc = cf_app_fail_cuda("cudaEventElapsedTime", cuda_state);
-    goto destroy_events;
-  }
-
-  cuda_state = cudaMemcpyAsync(sample, C_D, sizeof(sample), cudaMemcpyDeviceToHost, workspace.stream);
-  if(cuda_state != cudaSuccess)
-  {
-    rc = cf_app_fail_cuda("cudaMemcpyAsync(sample)", cuda_state);
-    goto destroy_events;
-  }
-
-  cuda_state = cudaStreamSynchronize(workspace.stream);
-  if(cuda_state != cudaSuccess)
-  {
-    rc = cf_app_fail_cuda("cudaStreamSynchronize(sample)", cuda_state);
-    goto destroy_events;
-  }
-
-  avg_ms = (double)total_ms / (double)iterations;
-  logical_bytes = (double)element_count * (double)sizeof(__half) * 3.0;
-  logical_gib = logical_bytes / (1024.0 * 1024.0 * 1024.0);
-  logical_gib_s = logical_gib / (avg_ms / 1000.0);
-
-  printf("cf_math_add_f16 performance check\n");
   printf("elements: %zu\n", (size_t)element_count);
   printf("iterations: %d\n", iterations);
   printf("warmup: %d\n", warmup);
   printf("launched items from C.elem_len: %zu\n", (size_t)launched_items);
-  printf("total time: %.3f ms\n", total_ms);
-  printf("average time: %.6f ms\n", avg_ms);
-  printf("logical bandwidth: %.3f GiB/s\n", logical_gib_s);
-  printf("sample C[0..7]:");
-
-  for(int i = 0; i < 8; ++i)
-    printf(" %.3f", (double)__half2float(sample[i]));
-
   printf("\n");
+
+  rc = cf_app_benchmark_f16_op("cf_math_add_f16", cf_math_add_f16, &handle, &workspace, &C, &A, &B, C_D, element_count, iterations, warmup);
+  if(rc != 0)
+    goto destroy_desc;
+
+  rc = cf_app_benchmark_f16_op("cf_math_sub_f16", cf_math_sub_f16, &handle, &workspace, &C, &A, &B, C_D, element_count, iterations, warmup);
+  if(rc != 0)
+    goto destroy_desc;
+
+  rc = cf_app_benchmark_f16_op("cf_math_mul_f16", cf_math_mul_f16, &handle, &workspace, &C, &A, &B, C_D, element_count, iterations, warmup);
+  if(rc != 0)
+    goto destroy_desc;
 
   rc = 0;
 
-destroy_events:
-  if(stop != NULL)
-    cudaEventDestroy(stop);
-destroy_start_event:
-  if(start != NULL)
-    cudaEventDestroy(start);
 destroy_desc:
   cf_math_desc_destroy(&desc);
 destroy_handle:

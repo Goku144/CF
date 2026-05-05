@@ -231,6 +231,10 @@ void cf_math_unbind(cf_math *math);
 
 void cf_math_add_f16(cf_math_handle *handle, cf_math *C, cf_math *A, cf_math *B);
 
+void cf_math_sub_f16(cf_math_handle *handle, cf_math *C, cf_math *A, cf_math *B);
+
+void cf_math_mul_f16(cf_math_handle *handle, cf_math *C, cf_math *A, cf_math *B);
+
 #ifdef __cplusplus
 }
 #endif
