@@ -78,6 +78,28 @@ static __global__ void cf_app_init_half_relu_input(__half *a, cf_usize n)
   a[index] = __float2half(af);
 }
 
+static __global__ void cf_app_init_half_exp_input(__half *a, cf_usize n)
+{
+  cf_usize index = (cf_usize)threadIdx.x + (cf_usize)blockDim.x * (cf_usize)blockIdx.x;
+
+  if(index >= n)
+    return;
+
+  float af = (float)((int)(index % 16u) - 8) * 0.25f;
+  a[index] = __float2half(af);
+}
+
+static __global__ void cf_app_init_half_log_input(__half *a, cf_usize n)
+{
+  cf_usize index = (cf_usize)threadIdx.x + (cf_usize)blockDim.x * (cf_usize)blockIdx.x;
+
+  if(index >= n)
+    return;
+
+  float af = (float)((index % 16u) + 1u) * 0.25f;
+  a[index] = __float2half(af);
+}
+
 typedef void (*cf_app_f16_binary_op)(cf_math_handle *handle, cf_math *C, cf_math *A, cf_math *B);
 typedef void (*cf_app_f16_unary_op)(cf_math_handle *handle, cf_math *C, cf_math *A);
 
@@ -474,6 +496,54 @@ int main(int argc, char **argv)
   }
 
   rc = cf_app_benchmark_f16_unary_op("cf_math_relu_f16", cf_math_relu_f16, &handle, &workspace, &D, &A, (__half *)cf_app_add_f16_device_ptr(&handle, &D), element_count, iterations, warmup);
+  if(rc != 0)
+    goto destroy_desc;
+
+  cf_app_init_half_inputs<<<blocks, threads, 0, workspace.stream>>>(A_D, B_D, launched_items);
+  cuda_state = cudaGetLastError();
+  if(cuda_state != cudaSuccess)
+  {
+    rc = cf_app_fail_cuda("cf_app_init_half_inputs launch", cuda_state);
+    goto destroy_desc;
+  }
+
+  rc = cf_app_benchmark_f16_unary_op("cf_math_sqrt_f16", cf_math_sqrt_f16, &handle, &workspace, &D, &A, (__half *)cf_app_add_f16_device_ptr(&handle, &D), element_count, iterations, warmup);
+  if(rc != 0)
+    goto destroy_desc;
+
+  cf_app_init_half_exp_input<<<blocks, threads, 0, workspace.stream>>>(A_D, launched_items);
+  cuda_state = cudaGetLastError();
+  if(cuda_state != cudaSuccess)
+  {
+    rc = cf_app_fail_cuda("cf_app_init_half_exp_input launch", cuda_state);
+    goto destroy_desc;
+  }
+
+  rc = cf_app_benchmark_f16_unary_op("cf_math_exp_f16", cf_math_exp_f16, &handle, &workspace, &D, &A, (__half *)cf_app_add_f16_device_ptr(&handle, &D), element_count, iterations, warmup);
+  if(rc != 0)
+    goto destroy_desc;
+
+  cf_app_init_half_log_input<<<blocks, threads, 0, workspace.stream>>>(A_D, launched_items);
+  cuda_state = cudaGetLastError();
+  if(cuda_state != cudaSuccess)
+  {
+    rc = cf_app_fail_cuda("cf_app_init_half_log_input launch", cuda_state);
+    goto destroy_desc;
+  }
+
+  rc = cf_app_benchmark_f16_unary_op("cf_math_log_f16", cf_math_log_f16, &handle, &workspace, &D, &A, (__half *)cf_app_add_f16_device_ptr(&handle, &D), element_count, iterations, warmup);
+  if(rc != 0)
+    goto destroy_desc;
+
+  cf_app_init_half_relu_input<<<blocks, threads, 0, workspace.stream>>>(A_D, launched_items);
+  cuda_state = cudaGetLastError();
+  if(cuda_state != cudaSuccess)
+  {
+    rc = cf_app_fail_cuda("cf_app_init_half_relu_input launch", cuda_state);
+    goto destroy_desc;
+  }
+
+  rc = cf_app_benchmark_f16_unary_op("cf_math_tanh_f16", cf_math_tanh_f16, &handle, &workspace, &D, &A, (__half *)cf_app_add_f16_device_ptr(&handle, &D), element_count, iterations, warmup);
   if(rc != 0)
     goto destroy_desc;
 

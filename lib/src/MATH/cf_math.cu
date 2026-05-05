@@ -25,6 +25,7 @@
 
 #include <stdint.h>
 #include <string.h>
+#include <math.h>
 
 static __device__ __forceinline__ unsigned int cf_math_device_half2_to_u32(__half2 x)
 {
@@ -136,6 +137,22 @@ __global__ void cf_math_kernel_neg_f16(uint4 * __restrict__ C, const uint4 * __r
   C[index] = c;
 }
 
+__global__ void cf_math_kernel_relu_f16(uint4 * __restrict__ C, const uint4 * __restrict__ A, int N8)
+{
+  int index = threadIdx.x + blockDim.x * blockIdx.x;
+  if(index >= N8) return;
+
+  __half2 zero = __float2half2_rn(0.0f);
+
+  uint4 a = A[index];
+  uint4 c;
+  c.x = cf_math_device_half2_to_u32(__hmax2(cf_math_device_u32_to_half2(a.x), zero));
+  c.y = cf_math_device_half2_to_u32(__hmax2(cf_math_device_u32_to_half2(a.y), zero));
+  c.z = cf_math_device_half2_to_u32(__hmax2(cf_math_device_u32_to_half2(a.z), zero));
+  c.w = cf_math_device_half2_to_u32(__hmax2(cf_math_device_u32_to_half2(a.w), zero));
+  C[index] = c;
+}
+
 CF_MATH_KERNEL_TAIL_OP_CREATE(add, __hadd)
 CF_MATH_KERNEL_TAIL_OP_CREATE(sub, __hsub)
 CF_MATH_KERNEL_TAIL_OP_CREATE(mul, __hmul)
@@ -161,9 +178,108 @@ CF_MATH_OP_CREATE(sub)
 CF_MATH_OP_CREATE(mul)
 CF_MATH_OP_CREATE(div)
 
-void cf_math_neg_f16(cf_math_handle *handle, cf_math *C, cf_math *A)
+#define CF_MATH_KERNEL_FUNC_HALF2_CREATE(name, func) \
+static __device__ __forceinline__ half2 cf_math_half2_##name(half2 x) \
+{ \
+  __half lo_h = __low2half(x); \
+  __half hi_h = __high2half(x); \
+    float lo = __half2float(lo_h); \
+    float hi = __half2float(hi_h); \
+  __half lo_out = __float2half(func(lo)); \
+  __half hi_out = __float2half(func(hi)); \
+  return __halves2half2(lo_out, hi_out); \
+} \
+
+CF_MATH_KERNEL_FUNC_HALF2_CREATE(sqrt, sqrtf)
+CF_MATH_KERNEL_FUNC_HALF2_CREATE(exp, expf)
+CF_MATH_KERNEL_FUNC_HALF2_CREATE(log, logf)
+CF_MATH_KERNEL_FUNC_HALF2_CREATE(tanh, tanhf)
+
+#define CF_MATH_KERNEL_FUNC_F16_CREATE(name) \
+__global__ void cf_math_kernel_##name##_f16(uint4 * __restrict__ C, const uint4 * __restrict__ A, int N8)\
+{ \
+  int index = threadIdx.x + blockDim.x * blockIdx.x; \
+  if(index >= N8) return; \
+ \
+  __half2 zero = __float2half2_rn(0.0f); \
+ \
+  uint4 a = A[index]; \
+  uint4 c; \
+  c.x = cf_math_device_half2_to_u32(cf_math_half2_##name(cf_math_device_u32_to_half2(a.x))); \
+  c.y = cf_math_device_half2_to_u32(cf_math_half2_##name(cf_math_device_u32_to_half2(a.y))); \
+  c.z = cf_math_device_half2_to_u32(cf_math_half2_##name(cf_math_device_u32_to_half2(a.z))); \
+  c.w = cf_math_device_half2_to_u32(cf_math_half2_##name(cf_math_device_u32_to_half2(a.w))); \
+  C[index] = c; \
+} \
+
+CF_MATH_KERNEL_FUNC_F16_CREATE(sqrt)
+CF_MATH_KERNEL_FUNC_F16_CREATE(exp)
+CF_MATH_KERNEL_FUNC_F16_CREATE(log)
+CF_MATH_KERNEL_FUNC_F16_CREATE(tanh)
+
+#define CF_MATH_KERNEL_TAIL_FUNC_F16_CREATE(name, func) \
+__global__ void cf_math_kernel_tail_##name##_f16(__half * __restrict__ C, const __half * __restrict__ A, int N8) \
+{ \
+  int index = threadIdx.x + blockDim.x * blockIdx.x; \
+  if(index >= N8) return; \
+ \
+  float a_f = __half2float(A[index]); \
+  C[index] = __float2half(func(a_f)); \
+} \
+
+
+CF_MATH_KERNEL_TAIL_FUNC_F16_CREATE(sqrt, sqrtf)
+CF_MATH_KERNEL_TAIL_FUNC_F16_CREATE(exp, expf)
+CF_MATH_KERNEL_TAIL_FUNC_F16_CREATE(log, logf)
+CF_MATH_KERNEL_TAIL_FUNC_F16_CREATE(tanh, tanhf)
+
+__global__ void cf_math_kernel_tail_relu_f16(__half * __restrict__ C, const __half * __restrict__ A, int N8)
+{
+  int index = threadIdx.x + blockDim.x * blockIdx.x;
+  if(index >= N8) return;
+
+  __half zero = __float2half_rn(0.0f);
+  C[index] = __hmax(A[index], zero);
+}
+
+#define CF_MATH_UNARY_F16_CREATE(name) \
+void cf_math_##name##_f16(cf_math_handle *handle, cf_math *C, cf_math *A) \
+{ \
+  int N = (int) C->elem_len; \
+ \
+  cf_u8 *ptr = (cf_u8 *) handle->storage.backend; \
+  \
+  __half * A_D = (__half *) (ptr + A->byte_offset); \
+  __half * C_D = (__half *) (ptr + C->byte_offset); \
+ \
+  int threads = N <= 256 ? 256 : N <= 512 ? 512 : 1024; \
+ \
+  int N8 = N / 8; \
+  if(N8 > 0) \
+  { \
+    int blocks = cuda::ceil_div(N8, threads); \
+    cf_math_kernel_##name##_f16<<<blocks, threads, 0, handle->workspace->stream>>>((uint4 *) C_D, (uint4 *) A_D, N8); \
+  } \
+ \
+  int tail_start = N8 * 8; \
+  if(tail_start < N)  \
+  { \
+    int tail_end = N - tail_start; \
+    int blocks = cuda::ceil_div(tail_end, threads); \
+    cf_math_kernel_tail_##name##_f16<<<blocks, threads, 0, handle->workspace->stream>>>(C_D, A_D, tail_end); \
+  } \
+} \
+
+CF_MATH_UNARY_F16_CREATE(neg)
+CF_MATH_UNARY_F16_CREATE(sqrt)
+CF_MATH_UNARY_F16_CREATE(exp)
+CF_MATH_UNARY_F16_CREATE(log)
+CF_MATH_UNARY_F16_CREATE(tanh)
+
+void cf_math_relu_f16(cf_math_handle *handle, cf_math *C, cf_math *A)
 {
   int N = (int) C->elem_len;
+  
 
   cf_u8 *ptr = (cf_u8 *) handle->storage.backend;
   
@@ -176,7 +292,7 @@ void cf_math_neg_f16(cf_math_handle *handle, cf_math *C, cf_math *A)
   if(N8 > 0)
   {
     int blocks = cuda::ceil_div(N8, threads);
-    cf_math_kernel_neg_f16<<<blocks, threads, 0, handle->workspace->stream>>>((uint4 *) C_D, (uint4 *) A_D, N8);
+    cf_math_kernel_relu_f16<<<blocks, threads, 0, handle->workspace->stream>>>((uint4 *) C_D, (uint4 *) A_D, N8);
   }
 
   int tail_start = N8 * 8;
@@ -184,11 +300,9 @@ void cf_math_neg_f16(cf_math_handle *handle, cf_math *C, cf_math *A)
   {
     int tail_end = N - tail_start;
     int blocks = cuda::ceil_div(tail_end, threads);
-    cf_math_kernel_tail_neg_f16<<<blocks, threads, 0, handle->workspace->stream>>>(C_D, A_D, tail_end);
+    cf_math_kernel_tail_relu_f16<<<blocks, threads, 0, handle->workspace->stream>>>(C_D, A_D, tail_end);
   }
 }
-
-
 
 #if(CF_MATH_USE_DNNL == 1)
 static cudnnDataType_t cf_math_cudnn_dtype(cf_math_dtype dtype)
@@ -338,56 +452,4 @@ cf_status cf_math_bind(cf_math_handle *handle, cf_math *math, cf_math_desc *desc
 cf_status cf_math_rebind(cf_math_handle *handle, cf_math *math, cf_math_desc *desc)
 {
   return cf_math_bind(handle, math, desc);
-}
-
-__global__ void cf_math_kernel_relu_f16(uint4 * __restrict__ C, const uint4 * __restrict__ A, int N8)
-{
-  int index = threadIdx.x + blockDim.x * blockIdx.x;
-  if(index >= N8) return;
-
-  __half2 zero = __float2half2_rn(0.0f);
-
-  uint4 a = A[index];
-  uint4 c;
-  c.x = cf_math_device_half2_to_u32(__hmax2(cf_math_device_u32_to_half2(a.x), zero));
-  c.y = cf_math_device_half2_to_u32(__hmax2(cf_math_device_u32_to_half2(a.y), zero));
-  c.z = cf_math_device_half2_to_u32(__hmax2(cf_math_device_u32_to_half2(a.z), zero));
-  c.w = cf_math_device_half2_to_u32(__hmax2(cf_math_device_u32_to_half2(a.w), zero));
-  C[index] = c;
-}
-
-__global__ void cf_math_kernel_tail_relu_f16(__half * __restrict__ C, const __half * __restrict__ A, int N8)
-{
-  int index = threadIdx.x + blockDim.x * blockIdx.x;
-  if(index >= N8) return;
-
-  __half zero = __float2half_rn(0.0f);
-  C[index] = __hmax(A[index], zero);
-}
-
-void cf_math_relu_f16(cf_math_handle *handle, cf_math *C, cf_math *A)
-{
-  int N = (int) C->elem_len;
-
-  cf_u8 *ptr = (cf_u8 *) handle->storage.backend;
-  
-  __half * A_D = (__half *) (ptr + A->byte_offset);
-  __half * C_D = (__half *) (ptr + C->byte_offset);
-
-  int threads = N <= 256 ? 256 : N <= 512 ? 512 : 1024;
-
-  int N8 = N / 8;
-  if(N8 > 0)
-  {
-    int blocks = cuda::ceil_div(N8, threads);
-    cf_math_kernel_relu_f16<<<blocks, threads, 0, handle->workspace->stream>>>((uint4 *) C_D, (uint4 *) A_D, N8);
-  }
-
-  int tail_start = N8 * 8;
-  if(tail_start < N) 
-  {
-    int tail_end = N - tail_start;
-    int blocks = cuda::ceil_div(tail_end, threads);
-    cf_math_kernel_tail_relu_f16<<<blocks, threads, 0, handle->workspace->stream>>>(C_D, A_D, tail_end);
-  }
 }
