@@ -20,6 +20,7 @@
 
 #include <cuda_bf16.h>
 #include <cuda_fp16.h>
+#include <vector_types.h>
 #include <cuda/cmath>
 
 #include <stdint.h>
@@ -176,26 +177,76 @@ cf_status cf_math_rebind(cf_math_handle *handle, cf_math *math, cf_math_desc *de
   return cf_math_bind(handle, math, desc);
 }
 
-void cf_math_unbind(cf_math *math)
+static __device__ __forceinline__ unsigned int cf_math_device_half2_to_u32(__half2 x)
 {
-  if(math == CF_NULL) return;
-  *math = (cf_math) {0};
+  union
+  {
+    unsigned int u;
+    __half2 h;
+  } v;
+  v.h = x;
+  return v.u;
 }
 
-__global__ void optimizing_add_kernel_f16(__half *A, __half *B, __half *C, int N)
+static __device__ __forceinline__ __half2 cf_math_device_u32_to_half2(unsigned int x)
+{
+  union
+  {
+    unsigned int u;
+    __half2 h;
+  } v;
+  v.u = x;
+  return v.h;
+}
+
+__global__ void cf_math_kernel_add_f16(uint4 * __restrict__ C, const uint4 * __restrict__ A, const uint4 * __restrict__ B, int N8)
 {
   int index = threadIdx.x + blockDim.x * blockIdx.x;
-  if(index >= N) return;
-  C[index] = A[index] + B[index]; 
+  if(index >= N8) return;
+
+  uint4 a = A[index];
+  uint4 b = B[index];
+  uint4 c;
+  c.x = cf_math_device_half2_to_u32(__hadd2(cf_math_device_u32_to_half2(a.x), cf_math_device_u32_to_half2(b.x)));
+  c.y = cf_math_device_half2_to_u32(__hadd2(cf_math_device_u32_to_half2(a.y), cf_math_device_u32_to_half2(b.y)));
+  c.z = cf_math_device_half2_to_u32(__hadd2(cf_math_device_u32_to_half2(a.z), cf_math_device_u32_to_half2(b.z)));
+  c.w = cf_math_device_half2_to_u32(__hadd2(cf_math_device_u32_to_half2(a.w), cf_math_device_u32_to_half2(b.w)));
+
+  C[index] = c;
+}
+
+__global__ void cf_math_kernel_tail_add_f16(__half * __restrict__ C, const __half * __restrict__ A, const __half * __restrict__ B, int N8)
+{
+  int index = threadIdx.x + blockDim.x * blockIdx.x;
+  if(index >= N8) return;
+
+  C[index] = __hadd(A[index], B[index]);
 }
 
 void cf_math_add_f16(cf_math_handle *handle, cf_math *C, cf_math *A, cf_math *B)
 {
   int N = (int) C->elem_len;
-  int thread_n = 256;
-  int block_n = cuda::ceil_div(N, thread_n);
-  __half *A_D = (__half *)(A->byte_offset + (cf_u8 *)handle->storage.backend);
-  __half *B_D = (__half *)(B->byte_offset + (cf_u8 *)handle->storage.backend);
-  __half *C_D = (__half *)(C->byte_offset + (cf_u8 *)handle->storage.backend);
-  optimizing_add_kernel_f16<<<block_n, thread_n, 0, handle->workspace->stream>>>(A_D, B_D, C_D, N);
+
+  cf_u8 *ptr = (cf_u8 *) handle->storage.backend;
+  
+  __half * A_D = (__half *) (ptr + A->byte_offset);
+  __half * B_D = (__half *) (ptr + B->byte_offset);
+  __half * C_D = (__half *) (ptr + C->byte_offset);
+
+  int threads = 256;
+
+  int N8 = N / 8;
+  if(N8 > 0)
+  {
+    int blocks = cuda::ceil_div(N8, threads);
+    cf_math_kernel_add_f16<<<blocks, threads, 0, handle->workspace->stream>>>((uint4 *) C_D, (uint4 *) A_D, (uint4 *) B_D, N8);
+  }
+
+  int tail_start = N8 * 8;
+  if(tail_start < N) 
+  {
+    int tail_end = N - tail_start;
+    int blocks = cuda::ceil_div(tail_end, threads);
+    cf_math_kernel_tail_add_f16<<<blocks, threads, 0, handle->workspace->stream>>>(C_D, A_D, B_D, tail_end);
+  }
 }
