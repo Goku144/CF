@@ -12,6 +12,7 @@
 #define CF_APP_DEFAULT_ELEMENTS (1u << 24)
 #define CF_APP_DEFAULT_ITERS 200
 #define CF_APP_DEFAULT_WARMUP 20
+#define CF_APP_REDUCE_TEST_ELEMENTS 1024u
 
 static int cf_app_fail_status(const char *step, cf_status status)
 {
@@ -472,6 +473,8 @@ int main(int argc, char **argv)
   __half *C_D = NULL;
   __half *R_D = NULL;
   cf_usize launched_items = 0;
+  cf_usize reduce_element_count = 0;
+  cf_usize saved_a_elem_len = 0;
   int threads = 256;
   int blocks = 0;
 
@@ -579,6 +582,7 @@ int main(int argc, char **argv)
   printf("iterations: %d\n", iterations);
   printf("warmup: %d\n", warmup);
   printf("launched items from C.elem_len: %zu\n", (size_t)launched_items);
+  printf("reduction test elements: %zu\n", (size_t)(element_count < (cf_usize)CF_APP_REDUCE_TEST_ELEMENTS ? element_count : (cf_usize)CF_APP_REDUCE_TEST_ELEMENTS));
   printf("\n");
 
   rc = cf_app_benchmark_f16_op("cf_math_add_f16", cf_math_add_f16, &handle, &workspace, &C, &A, &B, C_D, element_count, iterations, warmup);
@@ -701,13 +705,19 @@ int main(int argc, char **argv)
     goto destroy_desc;
   }
 
-  rc = cf_app_benchmark_f16_reduce_op("cf_math_reduce_sum_f16", cf_math_reduce_sum_f16, &handle, &workspace, &R, &A, R_D, element_count, iterations, warmup);
+  reduce_element_count = element_count < (cf_usize)CF_APP_REDUCE_TEST_ELEMENTS ? element_count : (cf_usize)CF_APP_REDUCE_TEST_ELEMENTS;
+  saved_a_elem_len = A.elem_len;
+  A.elem_len = reduce_element_count;
+
+  rc = cf_app_benchmark_f16_reduce_op("cf_math_reduce_sum_f16", cf_math_reduce_sum_f16, &handle, &workspace, &R, &A, R_D, reduce_element_count, iterations, warmup);
   if(rc != 0)
     goto destroy_desc;
 
-  rc = cf_app_benchmark_f16_reduce_op("cf_math_reduce_mean_f16", cf_math_reduce_mean_f16, &handle, &workspace, &R, &A, R_D, element_count, iterations, warmup);
+  rc = cf_app_benchmark_f16_reduce_op("cf_math_reduce_mean_f16", cf_math_reduce_mean_f16, &handle, &workspace, &R, &A, R_D, reduce_element_count, iterations, warmup);
   if(rc != 0)
     goto destroy_desc;
+
+  A.elem_len = saved_a_elem_len;
 
   rc = 0;
 

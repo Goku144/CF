@@ -355,12 +355,21 @@ void cf_math_reduce_sum_f16(cf_math_handle *handle, cf_math *C, cf_math *A)
 
   cudaStream_t stream = handle->workspace->stream;
 
-  cub::DeviceReduce::Sum(temp_storage, temp_storage_bytes, A_D, C_D, (int) A->elem_len, handle->workspace->stream);
+  cub::DeviceReduce::Sum(temp_storage, temp_storage_bytes, A_D, C_D, (int) A->elem_len, stream);
 }
+
+__global__ void cf_math_kernel_reduce_mean_f16(__half *C, int N)
+{
+  C[0] = __hdiv(C[0], __float2half((float)N));
+}
+
 
 void cf_math_reduce_mean_f16(cf_math_handle *handle, cf_math *C, cf_math *A)
 {
   cf_math_reduce_sum_f16(handle, C, A);
-  __half * ptr = ((__half *)handle->storage.backend + C->byte_offset);
-  *ptr = *ptr / (__half) A->elem_len;
+
+  cf_u8 *ptr = (cf_u8 *)handle->storage.backend;
+  __half *C_D = (__half *)(ptr + C->byte_offset);
+
+  cf_math_kernel_reduce_mean_f16<<<1, 1, 0, handle->workspace->stream>>>(C_D, (int)A->elem_len);
 }
