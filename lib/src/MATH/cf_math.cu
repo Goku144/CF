@@ -182,19 +182,20 @@ void cf_math_unbind(cf_math *math)
   *math = (cf_math) {0};
 }
 
-__global__ void optimizing_add_kernel_f16(__half *A, __half *B, __half *C)
+__global__ void optimizing_add_kernel_f16(__half *A, __half *B, __half *C, int N)
 {
   int index = threadIdx.x + blockDim.x * blockIdx.x;
+  if(index >= N) return;
   C[index] = A[index] + B[index]; 
 }
 
 void cf_math_add_f16(cf_math_handle *handle, cf_math *C, cf_math *A, cf_math *B)
 {
-  int N = (int) C->byte_len;
+  int N = (int) C->elem_len;
   int thread_n = 256;
   int block_n = cuda::ceil_div(N, thread_n);
-  __half *A_D = (__half *)(A->byte_offset + (cf_u64 *)handle->storage.backend);
-  __half *B_D = (__half *)(B->byte_offset + (cf_u64 *)handle->storage.backend);
-  __half *C_D = (__half *)(C->byte_offset + (cf_u64 *)handle->storage.backend);
-  optimizing_add_kernel_f16<<<block_n, thread_n, 0, handle->workspace->stream>>>(A_D, B_D, C_D);
+  __half *A_D = (__half *)(A->byte_offset + (cf_u8 *)handle->storage.backend);
+  __half *B_D = (__half *)(B->byte_offset + (cf_u8 *)handle->storage.backend);
+  __half *C_D = (__half *)(C->byte_offset + (cf_u8 *)handle->storage.backend);
+  optimizing_add_kernel_f16<<<block_n, thread_n, 0, handle->workspace->stream>>>(A_D, B_D, C_D, N);
 }

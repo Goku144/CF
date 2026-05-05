@@ -192,14 +192,16 @@ cf_status cf_math_handle_add(cf_math_handle *handle, cf_math *math)
   if(handle == CF_NULL || math == CF_NULL) return CF_ERR_NULL;
   if(math->desc == CF_NULL) return CF_ERR_STATE;
 
-  cf_usize len = (math->desc->dim[0] * math->desc->strides[0] * cf_math_type_size(math->desc->dtype) + 15) & ~(cf_usize)15;
+  cf_usize elem_len = (cf_usize)math->desc->dim[0] * (cf_usize)math->desc->strides[0];
+  cf_usize byte_len = elem_len * cf_math_type_size(math->desc->dtype);
+  byte_len = ((byte_len ? byte_len : 1) + 15) & ~(cf_usize)15;
 
-  if(len > SIZE_MAX - handle->storage.offset) return CF_ERR_OVERFLOW;
-  if(len + handle->storage.offset > handle->storage.byte_capacity) return CF_ERR_BOUNDS;
+  if(byte_len > SIZE_MAX - handle->storage.offset) return CF_ERR_OVERFLOW;
+  if(byte_len + handle->storage.offset > handle->storage.byte_capacity) return CF_ERR_BOUNDS;
 
   math->byte_offset = handle->storage.offset;
-  math->byte_len = ((len ? len : 1) + 15) & ~(cf_usize)15;
-  handle->storage.offset += math->byte_len;
+  math->elem_len = elem_len;
+  handle->storage.offset += byte_len;
   return CF_OK;
 }
 

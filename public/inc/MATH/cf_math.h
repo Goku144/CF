@@ -123,7 +123,7 @@ struct cf_math_grad_node
 struct cf_math
 {
   cf_usize byte_offset;
-  cf_usize byte_len;
+  cf_usize elem_len;
   cf_math_desc *desc;
   cf_math_grad_node *grad_fn;
 };

@@ -39,7 +39,7 @@ static cf_usize cf_app_parse_usize(const char *text, cf_usize fallback)
 
 static void *cf_app_add_f16_device_ptr(cf_math_handle *handle, cf_math *math)
 {
-  return (void *)(math->byte_offset + (cf_u64 *)handle->storage.backend);
+  return (void *)(math->byte_offset + (cf_u8 *)handle->storage.backend);
 }
 
 static __global__ void cf_app_init_half_inputs(__half *a, __half *b, cf_usize n)
@@ -173,7 +173,7 @@ int main(int argc, char **argv)
   B_D = (__half *)cf_app_add_f16_device_ptr(&handle, &B);
   C_D = (__half *)cf_app_add_f16_device_ptr(&handle, &C);
 
-  launched_items = C.byte_len;
+  launched_items = C.elem_len;
   blocks = (int)((launched_items + (cf_usize)threads - 1u) / (cf_usize)threads);
 
   cf_app_init_half_inputs<<<blocks, threads, 0, workspace.stream>>>(A_D, B_D, launched_items);
@@ -283,7 +283,7 @@ int main(int argc, char **argv)
   printf("elements: %zu\n", (size_t)element_count);
   printf("iterations: %d\n", iterations);
   printf("warmup: %d\n", warmup);
-  printf("launched items from C.byte_len: %zu\n", (size_t)launched_items);
+  printf("launched items from C.elem_len: %zu\n", (size_t)launched_items);
   printf("total time: %.3f ms\n", total_ms);
   printf("average time: %.6f ms\n", avg_ms);
   printf("logical bandwidth: %.3f GiB/s\n", logical_gib_s);
