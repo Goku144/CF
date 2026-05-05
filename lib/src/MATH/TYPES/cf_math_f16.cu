@@ -171,11 +171,21 @@ static __device__ __forceinline__ half2 cf_math_half2_sigmoid(half2 x)
 {
   __half lo_h = __low2half(x);
   __half hi_h = __high2half(x);
-    float one = 1;
     float lo = __half2float(lo_h);
     float hi = __half2float(hi_h);
-  __half lo_out = hrcp(__float2half(one + expf(-lo)));
-  __half hi_out = hrcp(__float2half(one + expf(-hi)));
+  __half lo_out = hrcp(__float2half(1.0f + expf(-lo)));
+  __half hi_out = hrcp(__float2half(1.0f + expf(-hi)));
+  return __halves2half2(lo_out, hi_out);
+}
+
+static __device__ __forceinline__ half2 cf_math_half2_gelu(half2 x)
+{
+  __half lo_h = __low2half(x);
+  __half hi_h = __high2half(x);
+    float lo = __half2float(lo_h);
+    float hi = __half2float(hi_h);
+  __half lo_out = __float2half((0.5f * lo) * (1 + tanhf(CF_MATH_SQRT_2_DIV_PI_F * (lo + 0.044715f * powf(lo, 3.0f)))));
+  __half hi_out = __float2half((0.5f * hi) * (1 + tanhf(CF_MATH_SQRT_2_DIV_PI_F * (hi + 0.044715f * powf(hi, 3.0f)))));
   return __halves2half2(lo_out, hi_out);
 }
 
@@ -201,6 +211,7 @@ CF_MATH_KERNEL_FUNC_F16_CREATE(exp)
 CF_MATH_KERNEL_FUNC_F16_CREATE(log)
 CF_MATH_KERNEL_FUNC_F16_CREATE(tanh)
 CF_MATH_KERNEL_FUNC_F16_CREATE(sigmoid)
+CF_MATH_KERNEL_FUNC_F16_CREATE(gelu)
 
 __global__ void cf_math_kernel_neg_f16(uint4 * __restrict__ C, const uint4 * __restrict__ A, int N8)
 {
@@ -263,9 +274,17 @@ __global__ void cf_math_kernel_tail_sigmoid_f16(__half * __restrict__ C, const _
   int index = threadIdx.x + blockDim.x * blockIdx.x;
   if(index >= N8) return;
 
-  float one = 1;
   float a_f = __half2float(A[index]);
-  C[index] = hrcp(__float2half(one + expf(-a_f)));
+  C[index] = hrcp(__float2half(1.0f + expf(-a_f)));
+}
+
+__global__ void cf_math_kernel_tail_gelu_f16(__half * __restrict__ C, const __half * __restrict__ A, int N8)
+{
+  int index = threadIdx.x + blockDim.x * blockIdx.x;
+  if(index >= N8) return;
+
+  float a_f = __half2float(A[index]);
+  C[index] = __float2half((0.5f * a_f) * (1.0f + tanhf(CF_MATH_SQRT_2_DIV_PI_F * (a_f + 0.044715f * powf(a_f, 3.0f)))));
 }
 
 #define CF_MATH_UNARY_F16_CREATE(name) \
@@ -303,3 +322,4 @@ CF_MATH_UNARY_F16_CREATE(log)
 CF_MATH_UNARY_F16_CREATE(tanh)
 CF_MATH_UNARY_F16_CREATE(relu)
 CF_MATH_UNARY_F16_CREATE(sigmoid)
+CF_MATH_UNARY_F16_CREATE(gelu)

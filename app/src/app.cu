@@ -547,6 +547,30 @@ int main(int argc, char **argv)
   if(rc != 0)
     goto destroy_desc;
 
+  cf_app_init_half_relu_input<<<blocks, threads, 0, workspace.stream>>>(A_D, launched_items);
+  cuda_state = cudaGetLastError();
+  if(cuda_state != cudaSuccess)
+  {
+    rc = cf_app_fail_cuda("cf_app_init_half_relu_input launch", cuda_state);
+    goto destroy_desc;
+  }
+
+  rc = cf_app_benchmark_f16_unary_op("cf_math_sigmoid_f16", cf_math_sigmoid_f16, &handle, &workspace, &D, &A, (__half *)cf_app_add_f16_device_ptr(&handle, &D), element_count, iterations, warmup);
+  if(rc != 0)
+    goto destroy_desc;
+
+  cf_app_init_half_relu_input<<<blocks, threads, 0, workspace.stream>>>(A_D, launched_items);
+  cuda_state = cudaGetLastError();
+  if(cuda_state != cudaSuccess)
+  {
+    rc = cf_app_fail_cuda("cf_app_init_half_relu_input launch", cuda_state);
+    goto destroy_desc;
+  }
+
+  rc = cf_app_benchmark_f16_unary_op("cf_math_gelu_f16", cf_math_gelu_f16, &handle, &workspace, &D, &A, (__half *)cf_app_add_f16_device_ptr(&handle, &D), element_count, iterations, warmup);
+  if(rc != 0)
+    goto destroy_desc;
+
   rc = 0;
 
 destroy_desc:

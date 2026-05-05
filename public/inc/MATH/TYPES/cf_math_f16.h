@@ -36,8 +36,6 @@ void cf_math_div_f16(cf_math_handle *handle, cf_math *C, cf_math *A, cf_math *B)
 
 void cf_math_neg_f16(cf_math_handle *handle, cf_math *C, cf_math *A);
 
-void cf_math_relu_f16(cf_math_handle *handle, cf_math *C, cf_math *A);
-
 void cf_math_sqrt_f16(cf_math_handle *handle, cf_math *C, cf_math *A);
 
 void cf_math_exp_f16(cf_math_handle *handle, cf_math *C, cf_math *A);
@@ -45,6 +43,12 @@ void cf_math_exp_f16(cf_math_handle *handle, cf_math *C, cf_math *A);
 void cf_math_log_f16(cf_math_handle *handle, cf_math *C, cf_math *A);
 
 void cf_math_tanh_f16(cf_math_handle *handle, cf_math *C, cf_math *A);
+
+void cf_math_relu_f16(cf_math_handle *handle, cf_math *C, cf_math *A);
+
+void cf_math_sigmoid_f16(cf_math_handle *handle, cf_math *C, cf_math *A);
+
+void cf_math_gelu_f16(cf_math_handle *handle, cf_math *C, cf_math *A);
 
 #ifdef __cplusplus
 }

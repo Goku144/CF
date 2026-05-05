@@ -30,6 +30,10 @@
 
 #define CF_ASSERT_TYPE_SIZE(x,y) assert(sizeof(x) == sizeof(y))
 
+#define CF_MATH_PI_F 3.14159265358979323846f
+
+#define CF_MATH_SQRT_2_DIV_PI_F 0.7978845608028654f
+
 /* Framework boolean aliases for readable public APIs. */
 #define CF_TRUE true
 #define CF_FALSE false
