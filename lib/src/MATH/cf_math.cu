@@ -217,6 +217,35 @@ __global__ void cf_math_kernel_##name##_f16(uint4 * __restrict__ C, const uint4 
 }\
 
 
+__global__ void cf_math_kernel_div_f16(uint4 * __restrict__ C, const uint4 * __restrict__ A, const uint4 * __restrict__ B, int N8)
+{
+  int index = threadIdx.x + blockDim.x * blockIdx.x;
+  if(index >= N8) return;
+
+  uint4 a = A[index];
+  uint4 b = B[index];
+  uint4 c;
+  c.x = cf_math_device_half2_to_u32(__hmul2(cf_math_device_u32_to_half2(a.x), h2rcp(cf_math_device_u32_to_half2(b.x))));
+  c.y = cf_math_device_half2_to_u32(__hmul2(cf_math_device_u32_to_half2(a.y), h2rcp(cf_math_device_u32_to_half2(b.y))));
+  c.z = cf_math_device_half2_to_u32(__hmul2(cf_math_device_u32_to_half2(a.z), h2rcp(cf_math_device_u32_to_half2(b.z))));
+  c.w = cf_math_device_half2_to_u32(__hmul2(cf_math_device_u32_to_half2(a.w), h2rcp(cf_math_device_u32_to_half2(b.w))));
+  C[index] = c;
+}
+
+__global__ void cf_math_kernel_neg_f16(uint4 * __restrict__ $A, const uint4 * __restrict__ A, int N8)
+{
+  int index = threadIdx.x + blockDim.x * blockIdx.x;
+  if(index >= N8) return;
+
+  uint4 a = A[index];
+  uint4 $a;
+  $a.x = cf_math_device_half2_to_u32(__hneg2(cf_math_device_u32_to_half2(a.x)));
+  $a.y = cf_math_device_half2_to_u32(__hneg2(cf_math_device_u32_to_half2(a.y)));
+  $a.z = cf_math_device_half2_to_u32(__hneg2(cf_math_device_u32_to_half2(a.z)));
+  $a.w = cf_math_device_half2_to_u32(__hneg2(cf_math_device_u32_to_half2(a.w)));
+  $A[index] = $a;
+}
+
 #define CF_MATH_KERNEL_TAIL_OP_CREATE(name, op)\
 __global__ void cf_math_kernel_tail_##name##_f16(__half * __restrict__ C, const __half * __restrict__ A, const __half * __restrict__ B, int N8)\
 {\
@@ -225,6 +254,22 @@ __global__ void cf_math_kernel_tail_##name##_f16(__half * __restrict__ C, const 
 \
   C[index] = op(A[index], B[index]);\
 }\
+
+__global__ void cf_math_kernel_tail_div_f16(__half * __restrict__ C, const __half * __restrict__ A, const __half * __restrict__ B, int N8)
+{
+  int index = threadIdx.x + blockDim.x * blockIdx.x;
+  if(index >= N8) return;
+
+  C[index] = __hdiv(A[index], B[index]);
+}
+
+__global__ void cf_math_kernel_tail_neg_f16(__half * __restrict__ $A, const __half * __restrict__ A, int N8)
+{
+  int index = threadIdx.x + blockDim.x * blockIdx.x;
+  if(index >= N8) return;
+
+  $A[index] = __hneg(A[index]);
+}
 
 #define CF_MATH_OP_CREATE(op)\
 void cf_math_##op##_f16(cf_math_handle *handle, cf_math *C, cf_math *A, cf_math *B)\
@@ -255,6 +300,33 @@ void cf_math_##op##_f16(cf_math_handle *handle, cf_math *C, cf_math *A, cf_math 
   }\
 }\
 
+void cf_math_neg_f16(cf_math_handle *handle, cf_math *$A, cf_math *A)
+{
+  int N = (int) $A->elem_len;
+
+  cf_u8 *ptr = (cf_u8 *) handle->storage.backend;
+  
+  __half * A_D = (__half *) (ptr + A->byte_offset);
+  __half * $A_D = (__half *) (ptr + $A->byte_offset);
+
+  int threads = N <= 256 ? 256 : N <= 512 ? 512 : 1024;
+
+  int N8 = N / 8;
+  if(N8 > 0)
+  {
+    int blocks = cuda::ceil_div(N8, threads);
+    cf_math_kernel_neg_f16<<<blocks, threads, 0, handle->workspace->stream>>>((uint4 *) $A_D, (uint4 *) A_D, N8);
+  }
+
+  int tail_start = N8 * 8;
+  if(tail_start < N) 
+  {
+    int tail_end = N - tail_start;
+    int blocks = cuda::ceil_div(tail_end, threads);
+    cf_math_kernel_tail_neg_f16<<<blocks, threads, 0, handle->workspace->stream>>>($A_D, A_D, tail_end);
+  }
+}
+
 CF_MATH_KERNEL_OP_CREATE(add, __hadd2)
 CF_MATH_KERNEL_OP_CREATE(sub, __hsub2)
 CF_MATH_KERNEL_OP_CREATE(mul, __hmul2)
@@ -266,3 +338,4 @@ CF_MATH_KERNEL_TAIL_OP_CREATE(mul, __hmul)
 CF_MATH_OP_CREATE(add)
 CF_MATH_OP_CREATE(sub)
 CF_MATH_OP_CREATE(mul)
+CF_MATH_OP_CREATE(div)
