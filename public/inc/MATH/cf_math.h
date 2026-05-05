@@ -237,7 +237,9 @@ void cf_math_mul_f16(cf_math_handle *handle, cf_math *C, cf_math *A, cf_math *B)
 
 void cf_math_div_f16(cf_math_handle *handle, cf_math *C, cf_math *A, cf_math *B);
 
-void cf_math_neg_f16(cf_math_handle *handle, cf_math *$A, cf_math *A);
+void cf_math_neg_f16(cf_math_handle *handle, cf_math *C, cf_math *A);
+
+void cf_math_relu_f16(cf_math_handle *handle, cf_math *C, cf_math *A);
 
 #ifdef __cplusplus
 }
