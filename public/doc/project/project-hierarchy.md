@@ -128,15 +128,16 @@ The detailed math hierarchy and function reference is documented in
 - `cf_model`
 - `cf_gradient` boundary
 
-AI currently provides the first layer above `cf_math`:
+AI currently provides the core structures above `cf_math`:
 
 - dense layer init/forward/destroy,
 - sequential model init/forward/destroy,
-- MSE and binary cross entropy forward loss,
-- manual-backward function declarations and stubs returning
-  `CF_ERR_UNSUPPORTED`.
+- high-speed `f16` training layer utilizing `cuBLASLt`, `cuDNN`, and custom fused kernels,
+- forward/backward passes for Cross Entropy Loss, LayerNorm, and Softmax,
+- weight updates via standard optimizers (AdamW, SGD),
+- manual-backward function definitions for dense layers.
 
-Dense/model/loss forward calls do not allocate hidden tensors and do not perform
+Dense/model/loss operations do not allocate hidden tensors and do not perform
 hidden host/device copies. Callers provide handlers and bound storage.
 
 ## Placeholder Modules
@@ -148,7 +149,6 @@ APIs yet:
 AI/cf_graph
 AI/cf_runtime
 AI/cf_tokenizer
-AI/cf_gradient backward math
 
 CONFIG/cf_config
 CONFIG/cf_json
@@ -163,7 +163,8 @@ SECURITY/cf_secure_mem
 ```
 
 The placeholders are intentional. They let the project keep a stable directory
-shape while future APIs are designed carefully.
+shape while future APIs are designed carefully. The future view includes building 
+Transformers, Attention layers, and Tokenizers directly on top of the new high-speed F16 math layer.
 
 ## Dependency Direction
 

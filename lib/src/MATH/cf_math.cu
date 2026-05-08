@@ -18,8 +18,6 @@
 
 #include "MATH/cf_math.h"
 
-
-
 #if(CF_MATH_USE_DNNL == 1)
 static cudnnDataType_t cf_math_cudnn_dtype(cf_math_dtype dtype)
 {
@@ -53,6 +51,20 @@ static cudaDataType_t cf_math_cuda_dtype(cf_math_dtype dtype)
   }
 }
 
+static cudnnDataType_t cf_math_cudnn_dtype(cf_math_dtype dtype)
+{
+  switch (dtype)
+  {
+    case CF_MATH_DTYPE_I8:   return CUDNN_DATA_INT8;
+    case CF_MATH_DTYPE_I32:  return CUDNN_DATA_INT32;
+    case CF_MATH_DTYPE_BF16: return CUDNN_DATA_BFLOAT16;
+    case CF_MATH_DTYPE_F16:  return CUDNN_DATA_HALF;
+    case CF_MATH_DTYPE_F32:  return CUDNN_DATA_FLOAT;
+    case CF_MATH_DTYPE_F64:  return CUDNN_DATA_DOUBLE;
+    default: return CUDNN_DATA_FLOAT;
+  }
+}
+
 #if(CF_MATH_USE_DNNL == 1)
 static dnnl_data_type_t cf_math_dnnl_dtype(cf_math_dtype dtype)
 {
@@ -70,59 +82,177 @@ static dnnl_data_type_t cf_math_dnnl_dtype(cf_math_dtype dtype)
 }
 #endif
 
-cf_status cf_math_desc_create(cf_math_desc *desc, int rank, const int *dim, cf_math_dtype dtype, cf_math_desc_type desc_type)
+static cf_status cf_math_cublaslt_desc_create(cf_math_cublaslt_desc *desc, int rank, const int *dim, const int *strides, cf_math_dtype dtype)
+{
+  if (desc == CF_NULL || dim == CF_NULL || strides == CF_NULL) return CF_ERR_NULL;
+
+  *desc = (cf_math_cublaslt_desc) {0};
+
+  if (rank < 2) return CF_OK;
+
+  cublasStatus_t state;
+  cudaDataType_t cuda_dtype = cf_math_cuda_dtype(dtype);
+
+  int64_t rows = dim[rank - 2];
+  int64_t cols = dim[rank - 1];
+  int64_t ld = strides[rank - 2];
+
+  cublasLtOrder_t order = CUBLASLT_ORDER_ROW;
+  cublasOperation_t trans = CUBLAS_OP_N;
+
+  state = cublasLtMatrixLayoutCreate(&desc->layout, cuda_dtype, rows, cols, ld);
+  if (state != CUBLAS_STATUS_SUCCESS) goto fail;
+
+  state = cublasLtMatrixLayoutSetAttribute(desc->layout, CUBLASLT_MATRIX_LAYOUT_ORDER, &order, sizeof(order));
+  if (state != CUBLAS_STATUS_SUCCESS) goto fail;
+
+  state = cublasLtMatmulDescCreate( &desc->op, CUBLAS_COMPUTE_32F, CUDA_R_32F);
+  if (state != CUBLAS_STATUS_SUCCESS) goto fail;
+
+  state = cublasLtMatmulDescSetAttribute( desc->op, CUBLASLT_MATMUL_DESC_TRANSA, &trans, sizeof(trans));
+  if (state != CUBLAS_STATUS_SUCCESS) goto fail;
+
+  state = cublasLtMatmulDescSetAttribute( desc->op, CUBLASLT_MATMUL_DESC_TRANSB, &trans, sizeof(trans));
+  if (state != CUBLAS_STATUS_SUCCESS) goto fail;
+
+  state = cublasLtMatmulPreferenceCreate(&desc->preference);
+  if (state != CUBLAS_STATUS_SUCCESS) goto fail;
+
+  return CF_OK;
+
+fail:
+  if (desc->preference != CF_NULL)
+    cublasLtMatmulPreferenceDestroy(desc->preference);
+
+  if (desc->op != CF_NULL)
+    cublasLtMatmulDescDestroy(desc->op);
+
+  if (desc->layout != CF_NULL)
+    cublasLtMatrixLayoutDestroy(desc->layout);
+
+  *desc = (cf_math_cublaslt_desc) {0};
+  return CF_ERR_CUDA;
+}
+
+
+static cf_status cf_math_cudnn_desc_create(cf_math_cudnn_desc *desc, int rank, const int *dim, const int *strides, cf_math_dtype dtype)
+{
+  if (desc == CF_NULL || dim == CF_NULL || strides == CF_NULL) return CF_ERR_NULL;
+
+  *desc = (cf_math_cudnn_desc) {0};
+
+  cudnnStatus_t state;
+  cudnnDataType_t cudnn_dtype = cf_math_cudnn_dtype(dtype);
+
+  state = cudnnCreateTensorDescriptor(&desc->tensor);
+  if (state != CUDNN_STATUS_SUCCESS) goto fail;
+
+  state = cudnnSetTensorNdDescriptor(desc->tensor, cudnn_dtype, rank, dim, strides);
+  if (state != CUDNN_STATUS_SUCCESS) goto fail;
+
+  state = cudnnCreateFilterDescriptor(&desc->filter);
+  if (state != CUDNN_STATUS_SUCCESS) goto fail;
+
+  state = cudnnCreateConvolutionDescriptor(&desc->conv);
+  if (state != CUDNN_STATUS_SUCCESS) goto fail;
+
+  state = cudnnCreateActivationDescriptor(&desc->activation);
+  if (state != CUDNN_STATUS_SUCCESS) goto fail;
+
+  state = cudnnCreatePoolingDescriptor(&desc->pooling);
+  if (state != CUDNN_STATUS_SUCCESS) goto fail;
+
+  state = cudnnCreateReduceTensorDescriptor(&desc->reduce);
+  if (state != CUDNN_STATUS_SUCCESS) goto fail;
+
+  state = cudnnCreateOpTensorDescriptor(&desc->opTensor);
+  if (state != CUDNN_STATUS_SUCCESS) goto fail;
+
+  return CF_OK;
+
+fail:
+  if (desc->opTensor != CF_NULL)
+    cudnnDestroyOpTensorDescriptor(desc->opTensor);
+
+  if (desc->reduce != CF_NULL)
+    cudnnDestroyReduceTensorDescriptor(desc->reduce);
+
+  if (desc->pooling != CF_NULL)
+    cudnnDestroyPoolingDescriptor(desc->pooling);
+
+  if (desc->activation != CF_NULL)
+    cudnnDestroyActivationDescriptor(desc->activation);
+
+  if (desc->conv != CF_NULL)
+    cudnnDestroyConvolutionDescriptor(desc->conv);
+
+  if (desc->filter != CF_NULL)
+    cudnnDestroyFilterDescriptor(desc->filter);
+
+  if (desc->tensor != CF_NULL)
+    cudnnDestroyTensorDescriptor(desc->tensor);
+
+  *desc = (cf_math_cudnn_desc) {0};
+  return CF_ERR_CUDA;
+}
+
+static void cf_math_cublaslt_desc_destroy(cf_math_cublaslt_desc *desc)
+{
+  if (desc == CF_NULL) return;
+
+  if (desc->preference != CF_NULL) cublasLtMatmulPreferenceDestroy(desc->preference);
+
+  if (desc->op != CF_NULL) cublasLtMatmulDescDestroy(desc->op);
+
+  if (desc->layout != CF_NULL) cublasLtMatrixLayoutDestroy(desc->layout);
+
+  *desc = (cf_math_cublaslt_desc) {0};
+}
+
+static void cf_math_cudnn_desc_destroy(cf_math_cudnn_desc *desc)
+{
+  if (desc == CF_NULL) return;
+
+  if (desc->opTensor != CF_NULL) cudnnDestroyOpTensorDescriptor(desc->opTensor);
+
+  if (desc->reduce != CF_NULL) cudnnDestroyReduceTensorDescriptor(desc->reduce);
+
+  if (desc->pooling != CF_NULL) cudnnDestroyPoolingDescriptor(desc->pooling);
+
+  if (desc->activation != CF_NULL) cudnnDestroyActivationDescriptor(desc->activation);
+
+  if (desc->conv != CF_NULL) cudnnDestroyConvolutionDescriptor(desc->conv);
+
+  if (desc->filter != CF_NULL) cudnnDestroyFilterDescriptor(desc->filter);
+
+  if (desc->tensor != CF_NULL) cudnnDestroyTensorDescriptor(desc->tensor);
+
+  *desc = (cf_math_cudnn_desc) {0};
+}
+
+cf_status cf_math_desc_create(cf_math_desc *desc, int rank, const int *dim, cf_math_dtype dtype)
 {
   if(desc == CF_NULL || dim == CF_NULL) return CF_ERR_NULL;
+  if(rank <= 0 || rank > CF_MATH_MAX_RANK) return CF_ERR_INVALID;
+
   cf_status state = CF_OK;
   *desc = {0};
 
   desc->rank = rank;
   desc->dtype = dtype;
-  desc->desc_type = desc_type;
 
-  for (int i = 0; i < rank; i++)
-  {
-    desc->dim[i] = dim[i];
-  }
+  for (int i = 0; i < rank; i++) desc->dim[i] = dim[i];
+
   desc->strides[rank - 1] = 1;
-  for (int i = rank - 2; i >= 0; i--)
-    desc->strides[i] = desc->strides[i + 1] * desc->dim[i + 1];
+  for (int i = rank - 2; i >= 0; i--) desc->strides[i] = desc->strides[i + 1] * desc->dim[i + 1];
 
-  switch (desc_type)
-  {
-    case CF_MATH_DESC_NONE:
-    break;
+  state = cf_math_cublaslt_desc_create(&desc->cublastlt, rank, desc->dim, desc->strides, dtype);
+  if (state != CF_OK) goto fail;
 
-    case CF_MATH_DESC_CUDNN:
-#if(CF_MATH_USE_DNNL == 1)
-      if(cudnnCreateTensorDescriptor(&desc->desc.cudnn_tensor) != CUDNN_STATUS_SUCCESS) { state = CF_ERR_CUDA; goto fail; }
-      if(cudnnSetTensorNdDescriptor(desc->desc.cudnn_tensor, cf_math_cudnn_dtype(dtype), rank, desc->dim, desc->strides) != CUDNN_STATUS_SUCCESS) { state = CF_ERR_CUDA; goto fail; }
-#endif
-    break;
+  state = cf_math_cudnn_desc_create(&desc->cudnn, rank, desc->dim, desc->strides, dtype);
+  if (state != CF_OK) goto fail;
 
-    case CF_MATH_DESC_LT:
-      if(cublasLtMatrixLayoutCreate(&desc->desc.lt_layout, cf_math_cuda_dtype(dtype), dim[0], dim[1], desc->strides[0]) != CUBLAS_STATUS_SUCCESS) { state = CF_ERR_CUDA; goto fail; }
-    break;
-
-    case CF_MATH_DESC_DNNL:
-    {
-#if(CF_MATH_USE_DNNL == 1)
-      dnnl_dims_t dnnl_dim = {0};
-      dnnl_dims_t dnnl_strides = {0};
-      for (int i = 0; i < rank; i++)
-      {
-        dnnl_dim[i] = (dnnl_dim_t) dim[i];
-        dnnl_strides[i] = (dnnl_dim_t) desc->strides[i];
-      }
-      if(dnnl_memory_desc_create_with_strides(&desc->desc.dnnl_desc, rank, dnnl_dim, cf_math_dnnl_dtype(dtype), dnnl_strides) != dnnl_success) { state = CF_ERR_INTERNAL; goto fail; }
-#endif
-    }
-    break;
-
-    default: state = CF_ERR_INVALID;
-  }
-
-  return state;
+  return CF_OK;
 
 fail:
   cf_math_desc_destroy(desc);
@@ -132,24 +262,8 @@ fail:
 void cf_math_desc_destroy(cf_math_desc *desc)
 {
   if(desc == CF_NULL) return;
-
-  switch (desc->desc_type)
-  {
-    case CF_MATH_DESC_CUDNN:
-      if(desc->desc.cudnn_tensor != CF_NULL) cudnnDestroyTensorDescriptor(desc->desc.cudnn_tensor);
-    break;
-
-    case CF_MATH_DESC_LT:
-      if(desc->desc.lt_layout != CF_NULL) cublasLtMatrixLayoutDestroy(desc->desc.lt_layout);
-    break;
-
-    case CF_MATH_DESC_DNNL:
-#if(CF_MATH_USE_DNNL == 1)
-      if(desc->desc.dnnl_desc != CF_NULL) dnnl_memory_desc_destroy(desc->desc.dnnl_desc);
-#endif
-    break;
-  }
-
+  cf_math_cublaslt_desc_destroy(&desc->cublastlt);
+  cf_math_cudnn_desc_destroy(&desc->cudnn);
   *desc = (cf_math_desc) {0};
 }
 

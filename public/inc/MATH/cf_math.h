@@ -26,6 +26,8 @@
 #define CF_MATH_MAX_RANK 8
 #define CF_MATH_HIGHEST_RANK CF_MATH_MAX_RANK
 
+typedef struct cf_math_cublaslt_desc cf_math_cublaslt_desc ;
+typedef struct cf_math_cudnn_desc cf_math_cudnn_desc;
 typedef struct cf_math_grad_node cf_math_grad_node;
 typedef struct cf_math_desc cf_math_desc;
 typedef struct cf_math cf_math;
@@ -81,22 +83,24 @@ typedef enum cf_math_op_kind
   CF_MATH_OP_ATTENTION
 } cf_math_op_kind;
 
-typedef enum cf_math_desc_type
+struct cf_math_cublaslt_desc 
 {
-  CF_MATH_DESC_NONE = 0,
-  CF_MATH_DESC_CUDNN,
-  CF_MATH_DESC_LT,
-  CF_MATH_DESC_DNNL,
-} cf_math_desc_type;
+  cublasLtMatrixLayout_t layout;
+  cublasLtMatmulDesc_t op;
+  cublasLtMatmulPreference_t preference;
+  cublasLtMatmulAlgo_t algo;
+};
 
-typedef union cf_math_descriptor
+struct cf_math_cudnn_desc 
 {
-  cudnnTensorDescriptor_t cudnn_tensor;
-  cublasLtMatrixLayout_t lt_layout;
-#if(CF_MATH_USE_DNNL == 1)
-  dnnl_memory_desc_t dnnl_desc; 
-#endif
-} cf_math_descriptor;
+  cudnnTensorDescriptor_t tensor;
+  cudnnFilterDescriptor_t filter;
+  cudnnConvolutionDescriptor_t conv;
+  cudnnActivationDescriptor_t activation;
+  cudnnPoolingDescriptor_t pooling;
+  cudnnReduceTensorDescriptor_t reduce;
+  cudnnOpTensorDescriptor_t opTensor;
+};
 
 struct cf_math_desc
 {
@@ -104,8 +108,8 @@ struct cf_math_desc
   int dim[CF_MATH_MAX_RANK];
   int strides[CF_MATH_MAX_RANK];
 
-  cf_math_desc_type desc_type;
-  cf_math_descriptor desc;
+  cf_math_cublaslt_desc cublastlt;
+  cf_math_cudnn_desc cudnn;
 
   cf_math_dtype dtype;
 };
@@ -190,15 +194,14 @@ cf_usize cf_math_min_usize(cf_usize a, cf_usize b);
 cf_usize cf_math_max_usize(cf_usize a, cf_usize b);
 
 /**
- * @brief Initialize a tensor descriptor and optionally create a backend descriptor.
+ * @brief Initialize a tensor descriptor and create reusable backend descriptors when applicable.
  * @param desc Descriptor object to initialize.
  * @param rank Number of active dimensions in `dim`.
  * @param dim Tensor dimensions.
  * @param dtype Element data type.
- * @param desc_type Backend descriptor type to create, or `CF_MATH_DESC_NONE`.
  * @return `CF_OK` on success, or an error status when backend descriptor creation fails.
  */
-cf_status cf_math_desc_create(cf_math_desc *desc, int rank, const int *dim, cf_math_dtype dtype, cf_math_desc_type desc_type);
+cf_status cf_math_desc_create(cf_math_desc *desc, int rank, const int *dim, cf_math_dtype dtype);
 
 /**
  * @brief Destroy the active backend descriptor and clear the descriptor object.

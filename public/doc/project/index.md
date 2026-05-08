@@ -56,5 +56,11 @@ compilation.
 on machines without a usable CUDA device. The old broad math benchmark test has
 been removed while the handler-based math layer is rebuilt.
 
+## Development Status
+
+The framework is actively being extended with a high-speed `f16` AI training layer. 
+This includes custom fused kernels, `cuBLASLt`, and `cuDNN` backends to support 
+state-of-the-art transformer and diffusion models in the future.
+
 For the current math tensor design, start with
 [CF Math Layer Guide](cf-math-layer.md).

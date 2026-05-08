@@ -777,19 +777,19 @@ function-by-function and struct-by-struct reference for `cf_math`.
 At a high level, the public math API now includes:
 
 - primitive AES/rotate/size helpers,
-- dtype/layout/device metadata,
+- dtype, rank, dimension, stride, and backend descriptor metadata,
 - non-owning `cf_math` views,
-- reusable `cf_math_metadata` shape descriptions,
-- shared CUDA context and workspace lifecycle,
-- handler-backed `cf_math_arena` storage,
-- CPU arena-backed pooled storage,
+- reusable `cf_math_desc` shape descriptions,
+- shared CUDA context and workspace lifecycle through `cf_math_context` and `cf_math_workspace`,
+- handler-backed arena storage through `cf_math_handle`,
 - hot-path in-place elementwise operations,
 - unary, scalar, reduction, and matmul operation families,
+- optimized f16 training kernels for layer norm, softmax, cross entropy, AdamW, and zero grad,
 - readable `cf_math` shape printing,
-- bind, unbind, and rebind lifecycle helpers.
+- descriptor creation, binding, reset, and destroy lifecycle helpers.
 
 The current implementation is the Layer 0 math foundation used by AI dense
-layers, forward losses, and future manual gradients.
+layers, forward losses, and manual f16 training kernels.
 
 ### Primitive Math Helpers
 
@@ -806,73 +806,67 @@ cf_usize cf_math_max_usize(cf_usize a, cf_usize b);
 These helpers cover AES finite-field multiplication, bit rotation, and size
 min/max.
 
-### Metadata, Handler, And Context Lifecycle
+### Descriptor, Handler, And Context Lifecycle
 
 ```c
-cf_status cf_math_cuda_context_init(cf_math_cuda_context *ctx, cf_usize bytes, int device_id);
-cf_status cf_math_cuda_context_destroy(cf_math_cuda_context *ctx);
-cf_status cf_math_cuda_context_reserve(cf_math_cuda_context *ctx, cf_usize bytes);
-
-cf_status cf_math_metadata_init(...);
+cf_status cf_math_context_create(cf_math_context *ctx, int id_or_tnum, cf_math_device device);
+void cf_math_context_destroy(cf_math_context *ctx);
+cf_status cf_math_workspace_create(cf_math_workspace *workspace, cf_usize capacity, cf_math_device device);
+void cf_math_workspace_destroy(cf_math_workspace *workspace);
+cf_status cf_math_desc_create(cf_math_desc *desc, int rank, const int *dim, cf_math_dtype dtype);
+void cf_math_desc_destroy(cf_math_desc *desc);
 cf_status cf_math_print_shape(const cf_math *x);
-cf_status cf_math_handle_init(...);
-cf_status cf_math_handle_reserve(cf_math_handle_t *handler, cf_usize bytes);
-cf_status cf_math_handle_alloc(cf_math_handle_t *handler, cf_usize bytes, void **ptr);
-void cf_math_handle_reset(cf_math_handle_t *handler);
-cf_status cf_math_handle_destroy(cf_math_handle_t *handler);
-
-cf_status cf_math_bind(cf_math *x, cf_math_handle_t *handler, cf_math_metadata *metadata);
-cf_status cf_math_unbind(cf_math *x);
-cf_status cf_math_rebind(cf_math *x, cf_math_handle_t *handler, cf_math_metadata *metadata);
+cf_status cf_math_handle_create(cf_math_handle *handle, cf_math_context *ctx, cf_math_workspace *workspace, cf_usize capacity, cf_math_device device);
+cf_status cf_math_handle_add(cf_math_handle *handle, cf_math *math);
+void cf_math_handle_reset(cf_math_handle *handle);
+void cf_math_handle_destroy(cf_math_handle *handle);
+cf_status cf_math_bind(cf_math_handle *handle, cf_math *math, cf_math_desc *desc);
 ```
 
-These functions create CUDA runtime state, reusable metadata, and handler-owned
-`cf_math_arena` storage. A handler points at a shared CUDA context instead of
-copying backend handles. `cf_math` itself is a non-owning view over a handler
-slice. Unbinding automatically returns a slice to the handler free-list when no
-other view references it.
+These functions create CUDA runtime state, reusable descriptors, stream-backed
+workspace, and handler-owned arena storage. `cf_math` itself is a non-owning view
+over a byte slice in the handler backend.
 
 ### Operation Families
 
 ```c
-cf_status cf_math_op(cf_math_op_kind op, cf_math *op1, const cf_math *op2);
-cf_status cf_math_op_check(cf_math_op_kind op, const cf_math *op1, const cf_math *op2);
-cf_status cf_math_op_out(cf_math_op_kind op, cf_math *out, const cf_math *a, const cf_math *b);
-cf_status cf_math_unary(cf_math_op_kind op, cf_math *x);
-cf_status cf_math_unary_out(cf_math_op_kind op, cf_math *out, const cf_math *x);
-cf_status cf_math_scalar(cf_math_op_kind op, cf_math *x, double scalar);
-cf_status cf_math_scalar_out(cf_math_op_kind op, cf_math *out, const cf_math *x, double scalar);
-cf_status cf_math_reduce_sum(cf_math *out, const cf_math *x);
-cf_status cf_math_reduce_mean(cf_math *out, const cf_math *x);
-cf_status cf_math_matmul(cf_math *out, const cf_math *a, const cf_math *b);
+void cf_math_add_f16(cf_math_handle *handle, cf_math *C, cf_math *A, cf_math *B);
+void cf_math_relu_f16(cf_math_handle *handle, cf_math *C, cf_math *A);
+void cf_math_reduce_sum_f16(cf_math_handle *handle, cf_math *C, cf_math *A);
+void cf_math_matmul_f16(cf_math_handle *handle, cf_math *C, cf_math *A, cf_math *B);
+void cf_math_layer_norm_stats_f16(cf_math_handle *handle, cf_math *Out, cf_math *Mean, cf_math *Var, cf_math *In, cf_math *Weight, cf_math *Bias, float eps);
+void cf_math_softmax_f16(cf_math_handle *handle, cf_math *Out, cf_math *In, int dim);
+void cf_math_cross_entropy_f16(cf_math_handle *handle, cf_math *Loss, cf_math *Logits, cf_math *Targets);
+void cf_math_adamw_update_f16(cf_math_handle *handle, cf_math *Weight, cf_math *Grad, cf_math *M, cf_math *V, float lr, float beta1, float beta2, float eps, float weight_decay, int step);
 ```
 
-Core V1 forward math operations over bound `cf_math` views.
+The current CUDA-facing f16 math API is direct and hot-path oriented. Functions
+return `void` and assume the caller already validated descriptors, binding, and
+workspace capacity.
 
-Implemented v1 operation families:
+Implemented f16 operation families:
 
-- In-place and out-of-place binary add/sub/mul/div.
+- Out-of-place binary add/sub/mul/div.
 - Unary neg/relu/gelu/exp/log/sqrt/sigmoid/tanh.
-- Scalar add/sub/mul/div.
 - Sum and mean reductions into one-element outputs.
-- 2D row-major matmul.
-
-Implemented v1 dtypes:
-
-- Binary/scalar/reduction: `F32`, `F64`, `I32`.
-- Unary activations/math: `F32`, `F64`.
-- Matmul: `F32`, `F64`.
+- 2D row-major matmul, transposed-B matmul, and linear+bias.
+- Layer norm forward, stats-caching forward, and backward.
+- Last-dimension softmax.
+- Mean cross entropy and logits backward using f16 class-index targets.
+- AdamW parameter update and async zero grad.
 
 Critical points:
 
-- `cf_math_op` is the hot in-place API. The caller owns compatibility checks
-  for dtype, device, binding, length, and lifetime.
-- `cf_math_op_check` is the explicit preflight helper for graph/layer setup.
-- CPU storage uses flat typed loops.
-- CUDA storage uses custom kernels for elementwise/unary/scalar/reduction and
-  cuBLAS for matmul when CUDA is available.
+- Elementwise and optimizer kernels use packed `uint4` groups of eight halves
+  plus scalar tail kernels.
+- Row-wise training kernels use packed chunks when row width is safely aligned
+  and otherwise use scalar loads inside the same kernel so reductions cover the
+  full row.
+- Softmax, cross entropy, and layer norm reductions accumulate in float and
+  write f16 outputs.
 - There are no hidden allocations or host/device copies inside operations.
-- Unsupported operations or dtypes return `CF_ERR_UNSUPPORTED`.
+- Cross entropy forward uses `handle->workspace->scratchpad` for row losses and
+  CUB reduction storage.
 
 ## AI
 
