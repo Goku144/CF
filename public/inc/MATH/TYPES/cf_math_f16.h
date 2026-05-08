@@ -57,6 +57,8 @@ void cf_math_reduce_sum_f16(cf_math_handle *handle, cf_math *C, cf_math *A);
 
 void cf_math_reduce_mean_f16(cf_math_handle *handle, cf_math *C, cf_math *A);
 
+void cf_math_norm_f16(cf_math_handle *handle, cf_math *C, cf_math *A, const float scalar);
+
 /**
  * @brief Run f16 matrix multiplication with the existing cuBLASLt descriptors.
  * @param handle CUDA math handle that owns storage, workspace, and stream.

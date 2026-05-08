@@ -1,4 +1,5 @@
 #include <cuda_runtime.h>
+#include <cuda_fp16.h>
 #include <stdio.h>
 
 #include "MATH/cf_math.h"
@@ -25,6 +26,11 @@ static cf_u16 *app_image_device_ptr(const cf_math_handle *handle, const cf_math 
   return (cf_u16 *)((cf_uptr)handle->storage.backend + (cf_uptr)image->byte_offset);
 }
 
+static __half *app_f16_device_ptr(const cf_math_handle *handle, const cf_math *math)
+{
+  return (__half *)((cf_uptr)handle->storage.backend + (cf_uptr)math->byte_offset);
+}
+
 int main(int argc, char **argv)
 {
   const char *image_path = argc > 1 ? argv[1] : "public/img/test_image.jpg";
@@ -35,10 +41,18 @@ int main(int argc, char **argv)
   cf_math_workspace workspace = {0};
   cf_math_handle handle = {0};
   cf_math raw_image = {0};
+  cf_math_desc norm_desc = {0};
+  cf_math norm_input = {0};
+  cf_math norm_output = {0};
   cf_u16 first_pixels[10] = {0};
+  __half norm_input_host[10] = {0};
+  __half norm_output_host[10] = {0};
   cf_u16 *device_ptr = CF_NULL;
+  __half *norm_input_ptr = CF_NULL;
+  __half *norm_output_ptr = CF_NULL;
   cf_usize pixel_count = 0;
   cf_usize copy_size = 0;
+  int norm_dim[4] = {1, 1, 1, 10};
   int exit_code = 1;
 
   printf("Starting image transfer test for %s\n", image_path);
@@ -95,9 +109,56 @@ int main(int argc, char **argv)
     printf("Pixel %zu: %u\n", i, (unsigned)first_pixels[i]);
   }
 
+  if (app_check_cf_status("cf_math_desc_create(norm_desc)",
+                          cf_math_desc_create(&norm_desc, 4, norm_dim, CF_MATH_DTYPE_F16)))
+    goto done;
+
+  if (app_check_cf_status("cf_math_bind(norm_input)",
+                          cf_math_bind(&handle, &norm_input, &norm_desc)))
+    goto done;
+
+  if (app_check_cf_status("cf_math_bind(norm_output)",
+                          cf_math_bind(&handle, &norm_output, &norm_desc)))
+    goto done;
+
+  for (cf_usize i = 0; i < pixel_count; ++i) {
+    norm_input_host[i] = __float2half((float)first_pixels[i]);
+  }
+
+  norm_input_ptr = app_f16_device_ptr(&handle, &norm_input);
+  norm_output_ptr = app_f16_device_ptr(&handle, &norm_output);
+
+  if (app_check_cuda_status("cudaMemcpyAsync(norm_input)",
+                            cudaMemcpyAsync(norm_input_ptr,
+                                            norm_input_host,
+                                            copy_size,
+                                            cudaMemcpyHostToDevice,
+                                            handle.workspace->stream)))
+    goto done;
+
+  cf_math_norm_f16(&handle, &norm_output, &norm_input, 65535.0f);
+
+  if (app_check_cuda_status("cudaMemcpyAsync(norm_output)",
+                            cudaMemcpyAsync(norm_output_host,
+                                            norm_output_ptr,
+                                            copy_size,
+                                            cudaMemcpyDeviceToHost,
+                                            handle.workspace->stream)))
+    goto done;
+
+  if (app_check_cuda_status("cudaStreamSynchronize(norm_f16)",
+                            cudaStreamSynchronize(handle.workspace->stream)))
+    goto done;
+
+  printf("--- First %zu pixels normalized with cf_math_norm_f16 / 65535 ---\n", pixel_count);
+  for (cf_usize i = 0; i < pixel_count; ++i) {
+    printf("Norm %zu: %.6f\n", i, __half2float(norm_output_host[i]));
+  }
+
   exit_code = 0;
 
 done:
+  cf_math_desc_destroy(&norm_desc);
   cf_math_handle_destroy(&handle);
   cf_math_workspace_destroy(&workspace);
   cf_math_context_destroy(&ctx);

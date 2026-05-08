@@ -212,10 +212,8 @@ static __device__ __forceinline__ half2 cf_math_half2_gelu(half2 x)
 
 static __device__ __forceinline__ half2 cf_math_half2_norm(half2 x, float scalar)
 {
-  __half lo_h = __low2half(x);
-  __half hi_h = __high2half(x);
-  __half norm_rcp = hrcp(__float2half(scalar));
-  return __halves2half2(__hmul(lo_h, norm_rcp), __hmul(hi_h, norm_rcp));
+  half2 norm_rcp = __float2half2_rn(1.0f / scalar);
+  return __hmul2(x, norm_rcp);
 }
 
 #define CF_MATH_KERNEL_FUNC_F16_CREATE(name) \
@@ -352,7 +350,7 @@ __global__ void cf_math_kernel_tail_norm_f16(__half * __restrict__ C, const __ha
   if(index >= N8) return;
 
   float a_f = __half2float(A[index]);
-  C[index] = __float2half(a_f / scalar);
+  C[index] = __float2half(a_f * (1.0f / scalar));
 }
 
 #define CF_MATH_UNARY_F16_CREATE(name) \
