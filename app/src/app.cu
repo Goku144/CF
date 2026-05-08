@@ -27,7 +27,7 @@ static cf_u16 *app_image_device_ptr(const cf_math_handle *handle, const cf_math 
 
 int main(int argc, char **argv)
 {
-  const char *image_path = argc > 1 ? argv[1] : "test_image.jpg";
+  const char *image_path = argc > 1 ? argv[1] : "public/doc/test_image.jpg";
   const cf_usize workspace_capacity = 16 * 1024 * 1024;
   const cf_usize storage_capacity = 16 * 1024 * 1024;
 
