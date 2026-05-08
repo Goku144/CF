@@ -19,6 +19,8 @@
 #if !defined(CF_TOKENIZER_H)
 #define CF_TOKENIZER_H
 
+#include "RUNTIME/cf_status.h"
+
 typedef struct cf_math_handle cf_math_handle;
 typedef struct cf_math cf_math;
 
@@ -26,7 +28,7 @@ typedef struct cf_math cf_math;
 extern "C" {
 #endif
 
-void cf_load_and_transfer_image_u16(cf_math_handle *handle, cf_math *RawImage, const char* filename);
+cf_status cf_tokenizer_load_and_transfer_image_u16(cf_math_handle *handle, cf_math *raw_image, const char *filename);
 
 #ifdef __cplusplus
 }

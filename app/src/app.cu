@@ -27,9 +27,9 @@ static cf_u16 *app_image_device_ptr(const cf_math_handle *handle, const cf_math 
 
 int main(int argc, char **argv)
 {
-  const char *image_path = argc > 1 ? argv[1] : "public/doc/test_image.jpg";
-  const cf_usize workspace_capacity = 16 * 1024 * 1024;
-  const cf_usize storage_capacity = 16 * 1024 * 1024;
+  const char *image_path = argc > 1 ? argv[1] : "public/img/test_image.jpg";
+  const cf_usize workspace_capacity = 64 * 1024 * 1024;
+  const cf_usize storage_capacity = 64 * 1024 * 1024;
 
   cf_math_context ctx = {0};
   cf_math_workspace workspace = {0};
@@ -55,7 +55,9 @@ int main(int argc, char **argv)
                           cf_math_handle_create(&handle, &ctx, &workspace, storage_capacity, CF_MATH_DEVICE_CUDA)))
     goto done;
 
-  cf_load_and_transfer_image_u16(&handle, &raw_image, image_path);
+  if (app_check_cf_status("cf_tokenizer_load_and_transfer_image_u16",
+                          cf_tokenizer_load_and_transfer_image_u16(&handle, &raw_image, image_path)))
+    goto done;
 
   if (app_check_cuda_status("cudaStreamSynchronize",
                             cudaStreamSynchronize(handle.workspace->stream)))
@@ -96,11 +98,6 @@ int main(int argc, char **argv)
   exit_code = 0;
 
 done:
-  if (device_ptr != CF_NULL && handle.workspace != CF_NULL) {
-    cudaFreeAsync(device_ptr, handle.workspace->stream);
-    cudaStreamSynchronize(handle.workspace->stream);
-  }
-
   cf_math_handle_destroy(&handle);
   cf_math_workspace_destroy(&workspace);
   cf_math_context_destroy(&ctx);
