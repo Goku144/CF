@@ -1,24 +1,32 @@
 /*
- * CF Framework — CPU-only digit predictor
+ * CF Framework — CPU-only digit predictor (no GPU required)
  * Copyright (C) 2026 Orion
  *
- * No CUDA / GPU required. Loads saved checkpoint .bin files (raw __half bytes)
- * and runs the full forward pass in float32 entirely on the CPU.
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ *
+ * Reads saved .bin checkpoint files (raw IEEE 754 half-precision bytes written
+ * by app/src/app.cu) and runs the complete forward pass entirely in float32
+ * on the CPU. No CUDA, no framework library link required.
+ *
+ * Uses RUNTIME/cf_types.h for framework-standard primitive aliases.
+ * All I/O stays as raw POSIX fopen/fread because predict_cpu does not link
+ * the framework library; cf_types.h is the only dependency that is safe to
+ * pull in without linking.
  *
  * Architecture:
  *   input  [1, 28, 28]   float32, normalized 0..1
- *   conv   [16, 1, 3x3]  pad=1, stride=1  → [16, 28, 28]
- *   relu                               → [16, 28, 28]
- *   maxpool 2x2, stride=2              → [16, 14, 14]
- *   flatten                            → [3136]
- *   linear [3136, 16] + bias[16]       → [16]
- *   softmax                            → [16]
+ *   conv   [16, 1, 3x3]  pad=1, stride=1  -> [16, 28, 28]
+ *   relu                               -> [16, 28, 28]
+ *   maxpool 2x2, stride=2              -> [16, 14, 14]
+ *   flatten                            -> [3136]
+ *   linear [3136, 16] + bias[16]       -> [16]
+ *   softmax                            -> [16]
  *   argmax of [0..9]
  *
  * Weight files (raw little-endian IEEE 754 half-precision):
- *   layer1_weights_stepN.bin  — conv weights  [16,1,3,3]  = 144 halves
- *   dense_weights_stepN.bin   — dense weights [3136,16]   = 50176 halves
- *   dense_bias_stepN.bin      — dense bias    [16]        = 16 halves
+ *   layer1_weights_stepN.bin  -- conv weights  [16,1,3,3] = 144 halves
+ *   dense_weights_stepN.bin   -- dense weights [3136,16]  = 50176 halves
+ *   dense_bias_stepN.bin      -- dense bias    [16]       = 16 halves
  *
  * Usage:
  *   ./app/build/predict_cpu <image> <conv_w.bin> <dense_w.bin> <dense_b.bin>
@@ -27,8 +35,10 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include "RUNTIME/stb_image.h"
 
+/* Framework type aliases -- header-only, no library link needed */
+#include "RUNTIME/cf_types.h"
+
 #include <math.h>
-#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -51,18 +61,18 @@
 /* IEEE 754 half-precision → float32                                    */
 /* ------------------------------------------------------------------ */
 
-static float f16_to_f32(uint16_t h)
+static float f16_to_f32(cf_u16 h)
 {
-  uint32_t sign = (uint32_t)((h >> 15) & 1u);
-  uint32_t exp  = (uint32_t)((h >> 10) & 0x1Fu);
-  uint32_t mant = (uint32_t)(h & 0x3FFu);
-  uint32_t f;
+  cf_u32 sign = (cf_u32)((h >> 15) & 1u);
+  cf_u32 exp  = (cf_u32)((h >> 10) & 0x1Fu);
+  cf_u32 mant = (cf_u32)(h & 0x3FFu);
+  cf_u32 f;
 
   if(exp == 0u) {
     if(mant == 0u) {
       f = sign << 31;
     } else {
-      /* Subnormal half → normalised float */
+      /* Subnormal half -> normalised float */
       exp = 1u;
       while(!(mant & 0x400u)) { mant <<= 1; --exp; }
       mant &= 0x3FFu;
@@ -84,25 +94,25 @@ static float f16_to_f32(uint16_t h)
 /* Weight loading helpers                                               */
 /* ------------------------------------------------------------------ */
 
-static float *load_f16_weights(const char *path, size_t n_elems)
+static float *load_f16_weights(const char *path, cf_usize n_elems)
 {
   FILE *f = fopen(path, "rb");
-  if(f == NULL) { fprintf(stderr, "predict_cpu: cannot open %s\n", path); return NULL; }
+  if(f == CF_NULL) { fprintf(stderr, "predict_cpu: cannot open %s\n", path); return CF_NULL; }
 
-  size_t bytes = n_elems * sizeof(uint16_t);
-  uint16_t *raw = (uint16_t *)malloc(bytes);
-  if(raw == NULL) { fclose(f); return NULL; }
+  cf_usize bytes = n_elems * sizeof(cf_u16);
+  cf_u16 *raw = (cf_u16 *)malloc(bytes);
+  if(raw == CF_NULL) { fclose(f); return CF_NULL; }
 
   if(fread(raw, 1, bytes, f) != bytes) {
-    fprintf(stderr, "predict_cpu: short read on %s (expected %zu bytes)\n", path, bytes);
-    free(raw); fclose(f); return NULL;
+    fprintf(stderr, "predict_cpu: short read on %s (expected %zu bytes)\n", path, (cf_usize)bytes);
+    free(raw); fclose(f); return CF_NULL;
   }
   fclose(f);
 
   float *out = (float *)malloc(n_elems * sizeof(float));
-  if(out == NULL) { free(raw); return NULL; }
+  if(out == CF_NULL) { free(raw); return CF_NULL; }
 
-  for(size_t i = 0; i < n_elems; ++i) out[i] = f16_to_f32(raw[i]);
+  for(cf_usize i = 0; i < n_elems; ++i) out[i] = f16_to_f32(raw[i]);
   free(raw);
   return out;
 }
@@ -111,17 +121,17 @@ static float *load_f16_weights(const char *path, size_t n_elems)
 /* Image loading                                                         */
 /* ------------------------------------------------------------------ */
 
-static int load_image(const char *path, float *out_pixels)
+static cf_bool load_image(const char *path, float *out_pixels)
 {
   int w = 0, h = 0, c = 0;
-  uint16_t *raw = stbi_load_16(path, &w, &h, &c, 1);
-  if(raw == NULL || w <= 0 || h <= 0) {
+  cf_u16 *raw = stbi_load_16(path, &w, &h, &c, 1);
+  if(raw == CF_NULL || w <= 0 || h <= 0) {
     fprintf(stderr, "predict_cpu: cannot load image: %s\n", path);
-    if(raw != NULL) stbi_image_free(raw);
-    return 0;
+    if(raw != CF_NULL) stbi_image_free(raw);
+    return CF_FALSE;
   }
 
-  /* Nearest-neighbour resize to 28×28 */
+  /* Nearest-neighbour resize to 28x28 */
   for(int y = 0; y < IMAGE_H; ++y) {
     int sy = (y * h) / IMAGE_H;
     for(int x = 0; x < IMAGE_W; ++x) {
@@ -131,7 +141,7 @@ static int load_image(const char *path, float *out_pixels)
   }
 
   stbi_image_free(raw);
-  return 1;
+  return CF_TRUE;
 }
 
 /* ------------------------------------------------------------------ */

@@ -1,13 +1,19 @@
+/*
+ * CF Framework — MNIST Digit Trainer & Predictor
+ * Copyright (C) 2026 Orion
+ *
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
 #include <cuda_fp16.h>
 #include <cuda_runtime.h>
-
-#include <stdint.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <sys/stat.h>
+#include <sys/stat.h>  /* mkdir(2) */
 
 #include "MATH/cf_math.h"
+#include "RUNTIME/cf_log.h"
+#include "RUNTIME/cf_io.h"
+#include "RUNTIME/cf_types.h"
+#include "MEMORY/cf_memory.h"
 #include "RUNTIME/stb_image.h"
 
 #define DIGIT_BATCH_SIZE 64
@@ -21,7 +27,7 @@
 
 typedef struct {
   char path[256];
-  uint8_t label;
+  cf_u8 label;
 } sample_t;
 
 typedef struct {
@@ -68,19 +74,19 @@ typedef struct {
 static const char *g_train_csv = "public/train.csv";
 static const char *g_test_csv = "public/test.csv";
 static const char *g_dataset_root = "public";
-static uint32_t g_rng_state = 0x12345678u;
+static cf_u32 g_rng_state = 0x12345678u;
 
 static int app_check_cf_status(const char *step, cf_status state)
 {
   if(state == CF_OK) return 0;
-  printf("%s failed: %s\n", step, cf_status_as_char(state));
+  CF_LOG_ERROR("%s failed: %s", step, cf_status_as_char(state));
   return 1;
 }
 
 static int app_check_cuda_status(const char *step, cudaError_t state)
 {
   if(state == cudaSuccess) return 0;
-  printf("%s failed: %s\n", step, cudaGetErrorString(state));
+  CF_LOG_ERROR("%s failed: %s", step, cudaGetErrorString(state));
   return 1;
 }
 
@@ -387,35 +393,36 @@ static void digit_forward(cf_math_handle *handle, digit_tensors *t)
 
 static int cf_math_save_weights(cf_math_handle *handle, const cf_math *weights, const char *path)
 {
-  FILE *file = NULL;
   __half *host = NULL;
-  size_t bytes = weights->elem_len * sizeof(__half);
+  cf_usize bytes = weights->elem_len * sizeof(__half);
+  int ok = 0;
 
-  if(app_check_cuda_status("cudaStreamSynchronize(save)", cudaStreamSynchronize(handle->workspace->stream))) return 0;
+  if(app_check_cuda_status("cudaStreamSynchronize(save)",
+      cudaStreamSynchronize(handle->workspace->stream))) return 0;
 
   host = (__half *)malloc(bytes);
-  if(host == NULL) return 0;
+  if(host == NULL) { CF_LOG_ERROR("save_weights: OOM for %s", path); return 0; }
 
-  if(app_check_cf_status("cf_math_copy_to_host(save)", cf_math_copy_to_host(handle, weights, host, bytes))) {
-    free(host);
-    return 0;
+  if(app_check_cf_status("cf_math_copy_to_host(save)",
+      cf_math_copy_to_host(handle, weights, host, bytes))) {
+    free(host); return 0;
   }
 
-  file = fopen(path, "wb");
-  if(file == NULL) {
-    free(host);
-    return 0;
+  /* Use cf_io_write_file with a non-owning cf_bytes view */
+  cf_bytes view;
+  view.data      = (void *)host;
+  view.elem_size = sizeof(cf_u8);
+  view.len       = bytes;
+
+  cf_status io_st = cf_io_write_file(path, view);
+  if(io_st != CF_OK) {
+    CF_LOG_ERROR("cf_io_write_file(%s) failed: %s", path, cf_status_as_char(io_st));
+  } else {
+    ok = 1;
   }
 
-  if(fwrite(host, 1, bytes, file) != bytes) {
-    fclose(file);
-    free(host);
-    return 0;
-  }
-
-  fclose(file);
   free(host);
-  return 1;
+  return ok;
 }
 
 static void app_save_checkpoints(cf_math_handle *handle, digit_tensors *t, const char *save_dir, int step)
@@ -423,39 +430,49 @@ static void app_save_checkpoints(cf_math_handle *handle, digit_tensors *t, const
   char path[512];
 
   snprintf(path, sizeof(path), "%s/layer1_weights_step%d.bin", save_dir, step);
-  if(!cf_math_save_weights(handle, &t->conv_w, path)) printf("checkpoint failed: %s\n", path);
+  if(!cf_math_save_weights(handle, &t->conv_w, path)) CF_LOG_WARN("checkpoint failed: %s", path);
 
   snprintf(path, sizeof(path), "%s/dense_weights_step%d.bin", save_dir, step);
-  if(!cf_math_save_weights(handle, &t->dense_w, path)) printf("checkpoint failed: %s\n", path);
+  if(!cf_math_save_weights(handle, &t->dense_w, path)) CF_LOG_WARN("checkpoint failed: %s", path);
 
   snprintf(path, sizeof(path), "%s/dense_bias_step%d.bin", save_dir, step);
-  if(!cf_math_save_weights(handle, &t->dense_b, path)) printf("checkpoint failed: %s\n", path);
+  if(!cf_math_save_weights(handle, &t->dense_b, path)) CF_LOG_WARN("checkpoint failed: %s", path);
 
-  printf("checkpoints saved to %s at step %d\n", save_dir, step);
+  CF_LOG_INFO("checkpoints saved to %s at step %d", save_dir, step);
 }
 
 static int app_load_weights_from_file(cf_math_handle *handle, cf_math *weights, const char *path)
 {
-  FILE *file = NULL;
-  __half *host = NULL;
-  size_t bytes = weights->elem_len * sizeof(__half);
+  cf_usize bytes = weights->elem_len * sizeof(__half);
   int ok = 0;
 
-  host = (__half *)malloc(bytes);
-  if(host == NULL) { printf("load_weights: out of memory for %s\n", path); return 0; }
-
-  file = fopen(path, "rb");
-  if(file == NULL) { printf("load_weights: cannot open %s\n", path); free(host); return 0; }
-
-  if(fread(host, 1, bytes, file) == bytes) {
-    cudaError_t state = cudaMemcpyAsync(app_device_ptr(handle, weights), host, bytes, cudaMemcpyHostToDevice, handle->workspace->stream);
-    ok = (app_check_cuda_status("cudaMemcpyAsync(load_weights)", state) == 0);
-  } else {
-    printf("load_weights: short read on %s (expected %zu bytes)\n", path, bytes);
+  /* Read the whole .bin file into a framework-managed buffer */
+  cf_buffer buf;
+  cf_status buf_st = cf_buffer_init(&buf, bytes);
+  if(buf_st != CF_OK) {
+    CF_LOG_ERROR("load_weights: cf_buffer_init failed for %s", path);
+    return 0;
   }
 
-  fclose(file);
-  free(host);
+  cf_status io_st = cf_io_read_file(&buf, path);
+  if(io_st != CF_OK) {
+    CF_LOG_ERROR("load_weights: cf_io_read_file(%s) failed: %s", path, cf_status_as_char(io_st));
+    cf_buffer_destroy(&buf);
+    return 0;
+  }
+
+  if(buf.len != bytes) {
+    CF_LOG_ERROR("load_weights: %s size mismatch (got %zu, want %zu)", path, buf.len, bytes);
+    cf_buffer_destroy(&buf);
+    return 0;
+  }
+
+  cudaError_t cst = cudaMemcpyAsync(
+    app_device_ptr(handle, weights), buf.data, bytes,
+    cudaMemcpyHostToDevice, handle->workspace->stream);
+  ok = (app_check_cuda_status("cudaMemcpyAsync(load_weights)", cst) == 0);
+
+  cf_buffer_destroy(&buf);
   return ok;
 }
 
@@ -693,8 +710,8 @@ void train_digit_recognizer(cf_math_handle *handle, int total_steps, const char 
   cf_math_grad_node conv_node;
   cf_math_grad_node dense_w_node;
   cf_math_grad_node dense_b_node;
-  uint16_t *images_cpu = NULL;
-  uint8_t *labels_cpu = NULL;
+  cf_u16 *images_cpu = CF_NULL;
+  cf_u8  *labels_cpu = CF_NULL;
   int *train_order = NULL;
   int train_cursor = 0;
   float loss_host = 0.0f;
@@ -704,11 +721,11 @@ void train_digit_recognizer(cf_math_handle *handle, int total_steps, const char 
   mkdir(save_dir, 0755);
 
   if(!load_csv(g_train_csv, &train, &train_count)) {
-    printf("Failed to load training CSV: %s\n", g_train_csv);
+    CF_LOG_ERROR("Failed to load training CSV: %s", g_train_csv);
     return;
   }
   if(!load_csv(g_test_csv, &test, &test_count)) {
-    printf("Warning: failed to load test CSV: %s\n", g_test_csv);
+    CF_LOG_WARN("Failed to load test CSV: %s", g_test_csv);
   }
 
   if(!app_desc_create(&descs)) goto done;
@@ -725,8 +742,8 @@ void train_digit_recognizer(cf_math_handle *handle, int total_steps, const char 
   if(!app_init_param(handle, &tensors.dense_w, 0.001f)) goto done;
   if(!app_init_zero_param(handle, &tensors.dense_b)) goto done;
 
-  if(app_check_cuda_status("cudaMallocHost(images)", cudaMallocHost((void **)&images_cpu, DIGIT_BATCH_SIZE * DIGIT_IMAGE_PIXELS * sizeof(uint16_t)))) goto done;
-  if(app_check_cuda_status("cudaMallocHost(labels)", cudaMallocHost((void **)&labels_cpu, DIGIT_BATCH_SIZE * sizeof(uint8_t)))) goto done;
+  if(app_check_cuda_status("cudaMallocHost(images)", cudaMallocHost((void **)&images_cpu, DIGIT_BATCH_SIZE * DIGIT_IMAGE_PIXELS * sizeof(cf_u16)))) goto done;
+  if(app_check_cuda_status("cudaMallocHost(labels)", cudaMallocHost((void **)&labels_cpu, DIGIT_BATCH_SIZE * sizeof(cf_u8)))) goto done;
 
   for(int step = 1; step <= total_steps; ++step) {
     app_next_train_batch(train, train_count, train_order, &train_cursor, images_cpu, labels_cpu, DIGIT_BATCH_SIZE);
@@ -735,8 +752,8 @@ void train_digit_recognizer(cf_math_handle *handle, int total_steps, const char 
     cf_math_zero_grad_f16(handle, &tensors.dense_w);
     cf_math_zero_grad_f16(handle, &tensors.dense_b);
 
-    if(app_check_cuda_status("cudaMemcpyAsync(images)", cudaMemcpyAsync(app_device_ptr(handle, &tensors.input_raw), images_cpu, DIGIT_BATCH_SIZE * DIGIT_IMAGE_PIXELS * sizeof(uint16_t), cudaMemcpyHostToDevice, handle->workspace->stream))) goto done;
-    if(app_check_cuda_status("cudaMemcpyAsync(labels)", cudaMemcpyAsync(app_device_ptr(handle, &tensors.labels), labels_cpu, DIGIT_BATCH_SIZE * sizeof(uint8_t), cudaMemcpyHostToDevice, handle->workspace->stream))) goto done;
+    if(app_check_cuda_status("cudaMemcpyAsync(images)", cudaMemcpyAsync(app_device_ptr(handle, &tensors.input_raw), images_cpu, DIGIT_BATCH_SIZE * DIGIT_IMAGE_PIXELS * sizeof(cf_u16), cudaMemcpyHostToDevice, handle->workspace->stream))) goto done;
+    if(app_check_cuda_status("cudaMemcpyAsync(labels)", cudaMemcpyAsync(app_device_ptr(handle, &tensors.labels), labels_cpu, DIGIT_BATCH_SIZE * sizeof(cf_u8), cudaMemcpyHostToDevice, handle->workspace->stream))) goto done;
 
     app_normalize_u16_to_f16(handle, &tensors.input, &tensors.input_raw);
     digit_forward(handle, &tensors);
@@ -757,7 +774,7 @@ void train_digit_recognizer(cf_math_handle *handle, int total_steps, const char 
     if(app_check_cf_status("cf_math_copy_to_host(loss)", cf_math_copy_to_host(handle, &tensors.loss, &loss_host, sizeof(loss_host)))) goto done;
     int batch_correct = app_count_batch_correct(handle, &tensors, labels_cpu);
     if(batch_correct < 0) goto done;
-    printf("step %d/%d loss %.6f acc %.2f%%\n", step, total_steps, loss_host, 100.0f * (float)batch_correct / (float)DIGIT_BATCH_SIZE);
+    CF_LOG_INFO("step %d/%d  loss %.6f  acc %.2f%%", step, total_steps, loss_host, 100.0f * (float)batch_correct / (float)DIGIT_BATCH_SIZE);
 
     if((step % 512) == 0 || step == total_steps) {
       app_save_checkpoints(handle, &tensors, save_dir, step);
@@ -798,7 +815,7 @@ int main(int argc, char **argv)
   if(argc > 4) g_test_csv = argv[4];
   if(argc > 5) g_dataset_root = argv[5];
 
-  printf("Digit trainer: steps=%d save_dir=%s train_csv=%s test_csv=%s dataset_root=%s\n", total_steps, save_dir, g_train_csv, g_test_csv, g_dataset_root);
+  CF_LOG_INFO("Digit trainer: steps=%d save_dir=%s train_csv=%s test_csv=%s dataset_root=%s", total_steps, save_dir, g_train_csv, g_test_csv, g_dataset_root);
   if(app_check_cf_status("cf_math_context_create", cf_math_context_create(&ctx, 0, CF_MATH_DEVICE_CUDA))) goto done;
   if(app_check_cf_status("cf_math_workspace_create", cf_math_workspace_create(&workspace, workspace_capacity, CF_MATH_DEVICE_CUDA))) goto done;
   if(app_check_cf_status("cf_math_handle_create", cf_math_handle_create(&handle, &ctx, &workspace, storage_capacity, CF_MATH_DEVICE_CUDA))) goto done;
