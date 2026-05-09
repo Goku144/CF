@@ -47,8 +47,8 @@
 /* Constants matching the CUDA trainer                                  */
 /* ------------------------------------------------------------------ */
 
-#define IMAGE_H    28
-#define IMAGE_W    28
+#define IMAGE_H    800
+#define IMAGE_W    800
 #define IMAGE_PIX  (IMAGE_H * IMAGE_W)   /* 784 */
 #define CONV_CH    16                    /* output channels of conv1 */
 #define POOL_H     14
