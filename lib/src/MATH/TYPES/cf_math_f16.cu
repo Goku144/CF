@@ -216,6 +216,27 @@ static __device__ __forceinline__ half2 cf_math_half2_norm(half2 x, float scalar
   return __hmul2(x, norm_rcp);
 }
 
+static __device__ __forceinline__ half2 cf_math_half2_relu_backward(half2 dOut, half2 in)
+{
+  __half zero = __float2half_rn(0.0f);
+
+  __half lo_in = __low2half(in);
+  __half hi_in = __high2half(in);
+  __half lo_out = __low2half(dOut);
+  __half hi_out = __high2half(dOut);
+
+  __half lo = __half2float(lo_in) > 0.0f ? lo_out : zero;
+  __half hi = __half2float(hi_in) > 0.0f ? hi_out : zero;
+
+  return __halves2half2(lo, hi);
+}
+
+static __device__ __forceinline__ half2 cf_math_half2_sgd_update(half2 weight, half2 grad, float lr)
+{
+  half2 neg_lr = __float2half2_rn(-lr);
+  return __hfma2(grad, neg_lr, weight);
+}
+
 #define CF_MATH_KERNEL_FUNC_F16_CREATE(name) \
 __global__ void cf_math_kernel_##name##_f16(uint4 * __restrict__ C, const uint4 * __restrict__ A, int N8)\
 { \
@@ -289,6 +310,185 @@ __global__ void cf_math_kernel_norm_f16(uint4 * __restrict__ C,  const uint4 * _
   C[index] = c;
 }
 
+__global__ void cf_math_kernel_relu_backward_f16(uint4 * __restrict__ dIn, const uint4 * __restrict__ dOut, const uint4 * __restrict__ In, int N8)
+{
+  int index = threadIdx.x + blockDim.x * blockIdx.x;
+  if(index >= N8) return;
+
+  uint4 dy = dOut[index];
+  uint4 x = In[index];
+  uint4 dx;
+  dx.x = cf_math_device_half2_to_u32(cf_math_half2_relu_backward(cf_math_device_u32_to_half2(dy.x), cf_math_device_u32_to_half2(x.x)));
+  dx.y = cf_math_device_half2_to_u32(cf_math_half2_relu_backward(cf_math_device_u32_to_half2(dy.y), cf_math_device_u32_to_half2(x.y)));
+  dx.z = cf_math_device_half2_to_u32(cf_math_half2_relu_backward(cf_math_device_u32_to_half2(dy.z), cf_math_device_u32_to_half2(x.z)));
+  dx.w = cf_math_device_half2_to_u32(cf_math_half2_relu_backward(cf_math_device_u32_to_half2(dy.w), cf_math_device_u32_to_half2(x.w)));
+  dIn[index] = dx;
+}
+
+__global__ void cf_math_kernel_sgd_update_f16(uint4 * __restrict__ Weight, const uint4 * __restrict__ Grad, float lr, int N8)
+{
+  int index = threadIdx.x + blockDim.x * blockIdx.x;
+  if(index >= N8) return;
+
+  uint4 w = Weight[index];
+  uint4 g = Grad[index];
+  uint4 out;
+  out.x = cf_math_device_half2_to_u32(cf_math_half2_sgd_update(cf_math_device_u32_to_half2(w.x), cf_math_device_u32_to_half2(g.x), lr));
+  out.y = cf_math_device_half2_to_u32(cf_math_half2_sgd_update(cf_math_device_u32_to_half2(w.y), cf_math_device_u32_to_half2(g.y), lr));
+  out.z = cf_math_device_half2_to_u32(cf_math_half2_sgd_update(cf_math_device_u32_to_half2(w.z), cf_math_device_u32_to_half2(g.z), lr));
+  out.w = cf_math_device_half2_to_u32(cf_math_half2_sgd_update(cf_math_device_u32_to_half2(w.w), cf_math_device_u32_to_half2(g.w), lr));
+  Weight[index] = out;
+}
+
+__global__ void cf_math_kernel_reduce_sum_rows_f16(__half * __restrict__ C, const __half * __restrict__ A, int rows, int cols)
+{
+  __shared__ float smem[256 * 8];
+
+  int col8 = blockIdx.x;
+  int lane = threadIdx.x;
+  int col = col8 * 8;
+
+  float acc[8] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+
+  for(int row = lane; row < rows; row += blockDim.x)
+  {
+    uint4 chunk = *((const uint4 *)(A + row * cols + col));
+    __half2 h0 = cf_math_device_u32_to_half2(chunk.x);
+    __half2 h1 = cf_math_device_u32_to_half2(chunk.y);
+    __half2 h2 = cf_math_device_u32_to_half2(chunk.z);
+    __half2 h3 = cf_math_device_u32_to_half2(chunk.w);
+
+    float2 f0 = __half22float2(h0);
+    float2 f1 = __half22float2(h1);
+    float2 f2 = __half22float2(h2);
+    float2 f3 = __half22float2(h3);
+
+    acc[0] += f0.x;
+    acc[1] += f0.y;
+    acc[2] += f1.x;
+    acc[3] += f1.y;
+    acc[4] += f2.x;
+    acc[5] += f2.y;
+    acc[6] += f3.x;
+    acc[7] += f3.y;
+  }
+
+  #pragma unroll
+  for(int i = 0; i < 8; i++)
+  {
+    smem[lane * 8 + i] = acc[i];
+  }
+
+  __syncthreads();
+
+  for(int stride = blockDim.x >> 1; stride > 0; stride >>= 1)
+  {
+    if(lane < stride)
+    {
+      #pragma unroll
+      for(int i = 0; i < 8; i++)
+      {
+        smem[lane * 8 + i] += smem[(lane + stride) * 8 + i];
+      }
+    }
+
+    __syncthreads();
+  }
+
+  if(lane == 0)
+  {
+    __half out[8];
+
+    #pragma unroll
+    for(int i = 0; i < 8; i++)
+    {
+      out[i] = __float2half_rn(smem[i]);
+    }
+
+    *((uint4 *)(C + col)) = *(uint4 *)&out;
+  }
+}
+
+__global__ void cf_math_kernel_fused_cross_entropy(__half *dY,float *batch_losses,float *loss,const __half *P,const uint8_t *targets,int rows,float inv_batch_size)
+{
+  __shared__ float loss_smem[1024];
+
+  int row = threadIdx.x;
+  float row_loss = 0.0f;
+
+  if(row < rows)
+  {
+    uint8_t target_class = targets[row];
+    int row_offset = row * 16;
+
+    const uint4 *P_row = (const uint4 *)(&P[row_offset]);
+    uint4 *dY_row = (uint4 *)(&dY[row_offset]);
+
+    uint4 chunk0 = P_row[0];
+    uint4 chunk1 = P_row[1];
+
+    __half *h0 = (__half *)&chunk0;
+    __half *h1 = (__half *)&chunk1;
+
+    __half out_grad0[8];
+    __half out_grad1[8];
+
+    const float epsilon = 1e-7f;
+
+    #pragma unroll
+    for(int i = 0; i < 8; i++)
+    {
+      float p = __half2float(h0[i]);
+      float t = (i == target_class) ? 1.0f : 0.0f;
+
+      out_grad0[i] = __float2half_rn((p - t) * inv_batch_size);
+
+      if(t == 1.0f)
+      {
+        row_loss = -logf(p + epsilon);
+      }
+    }
+
+    #pragma unroll
+    for(int i = 0; i < 8; i++)
+    {
+      int class_idx = i + 8;
+      float p = __half2float(h1[i]);
+      float t = (class_idx == target_class) ? 1.0f : 0.0f;
+
+      out_grad1[i] = __float2half_rn((p - t) * inv_batch_size);
+
+      if(t == 1.0f)
+      {
+        row_loss = -logf(p + epsilon);
+      }
+    }
+
+    dY_row[0] = *(uint4 *)&out_grad0;
+    dY_row[1] = *(uint4 *)&out_grad1;
+
+    batch_losses[row] = row_loss;
+  }
+  loss_smem[row] = row_loss;
+
+  __syncthreads();
+
+  for(int stride = blockDim.x >> 1; stride > 0; stride >>= 1)
+  {
+    if(row < stride)
+    {
+      loss_smem[row] += loss_smem[row + stride];
+    }
+
+    __syncthreads();
+  }
+
+  if(row == 0)
+  {
+    *loss = loss_smem[0] * inv_batch_size;
+  }
+}
+
 #define CF_MATH_KERNEL_TAIL_FUNC_F16_CREATE(name, func) \
 __global__ void cf_math_kernel_tail_##name##_f16(__half * __restrict__ C, const __half * __restrict__ A, int N8) \
 { \
@@ -353,6 +553,58 @@ __global__ void cf_math_kernel_tail_norm_f16(__half * __restrict__ C, const __ha
   C[index] = __float2half(a_f * (1.0f / scalar));
 }
 
+__global__ void cf_math_kernel_tail_relu_backward_f16(__half * __restrict__ dIn, const __half * __restrict__ dOut, const __half * __restrict__ In, int N)
+{
+  int index = threadIdx.x + blockDim.x * blockIdx.x;
+  if(index >= N) return;
+
+  dIn[index] = __half2float(In[index]) > 0.0f ? dOut[index] : __float2half_rn(0.0f);
+}
+
+__global__ void cf_math_kernel_tail_sgd_update_f16(__half * __restrict__ Weight, const __half * __restrict__ Grad, float lr, int N)
+{
+  int index = threadIdx.x + blockDim.x * blockIdx.x;
+  if(index >= N) return;
+
+  Weight[index] = __hfma(Grad[index], __float2half_rn(-lr), Weight[index]);
+}
+
+__global__ void cf_math_kernel_tail_reduce_sum_rows_f16(__half * __restrict__ C, const __half * __restrict__ A, int rows, int cols, int tail_start, int tail_cols)
+{
+  __shared__ float smem[256];
+
+  int tail_col = blockIdx.x;
+  int lane = threadIdx.x;
+  int col = tail_start + tail_col;
+
+  if(tail_col >= tail_cols) return;
+
+  float acc = 0.0f;
+  for(int row = lane; row < rows; row += blockDim.x)
+  {
+    acc += __half2float(A[row * cols + col]);
+  }
+
+  smem[lane] = acc;
+
+  __syncthreads();
+
+  for(int stride = blockDim.x >> 1; stride > 0; stride >>= 1)
+  {
+    if(lane < stride)
+    {
+      smem[lane] += smem[lane + stride];
+    }
+
+    __syncthreads();
+  }
+
+  if(lane == 0)
+  {
+    C[col] = __float2half_rn(smem[0]);
+  }
+}
+
 #define CF_MATH_UNARY_F16_CREATE(name) \
 void cf_math_##name##_f16(cf_math_handle *handle, cf_math *C, cf_math *A) \
 { \
@@ -389,33 +641,6 @@ CF_MATH_UNARY_F16_CREATE(tanh)
 CF_MATH_UNARY_F16_CREATE(relu)
 CF_MATH_UNARY_F16_CREATE(sigmoid)
 CF_MATH_UNARY_F16_CREATE(gelu)
-
-void cf_math_norm_f16(cf_math_handle *handle, cf_math *C, cf_math *A, const float scalar)
-{
-  int N = (int) C->elem_len;
-
-  cf_u8 *ptr = (cf_u8 *) handle->storage.backend;
-
-  __half * A_D = (__half *) (ptr + A->byte_offset);
-  __half * C_D = (__half *) (ptr + C->byte_offset);
-
-  int threads = N <= 256 ? 256 : N <= 512 ? 512 : 1024;
-
-  int N8 = N / 8;
-  if(N8 > 0)
-  {
-    int blocks = cuda::ceil_div(N8, threads);
-    cf_math_kernel_norm_f16<<<blocks, threads, 0, handle->workspace->stream>>>((uint4 *) C_D, (uint4 *) A_D, scalar, N8);
-  }
-
-  int tail_start = N8 * 8;
-  if(tail_start < N) 
-  {
-    int tail_end = N - tail_start;
-    int blocks = cuda::ceil_div(tail_end, threads);
-    cf_math_kernel_tail_norm_f16<<<blocks, threads, 0, handle->workspace->stream>>>(C_D + tail_start, A_D + tail_start, scalar, tail_end);
-  }
-}
 
 void cf_math_reduce_sum_f16(cf_math_handle *handle, cf_math *C, cf_math *A)
 {
@@ -463,32 +688,33 @@ void cf_math_matmul_f16(cf_math_handle *handle, cf_math *C, cf_math *A, cf_math 
   float alpha = 1.0f;
   float beta = 0.0f;
 
-  cublasLtMatmul(
-    handle->ctx->context.cuda.cublasLt,
+  cublasLtMatmul(handle->ctx->context.cuda.cublasLt, C->desc->cublastlt.op, &alpha, A_D, A->desc->cublastlt.layout, B_D,
+     B->desc->cublastlt.layout, &beta, C_D, C->desc->cublastlt.layout, C_D, C->desc->cublastlt.layout, CF_NULL,
+     handle->workspace->scratchpad, handle->workspace->scratchpad_size, handle->workspace->stream);
+}
 
-    C->desc->cublastlt.op,
+void cf_math_matmul_trans_a_f16(cf_math_handle *handle, cf_math *C, cf_math *A, cf_math *B)
+{
+  cf_u8 *ptr = (cf_u8 *)handle->storage.backend;
 
-    &alpha,
-    A_D,
-    A->desc->cublastlt.layout,
+  __half *A_D = (__half *)(ptr + A->byte_offset);
+  __half *B_D = (__half *)(ptr + B->byte_offset);
+  __half *C_D = (__half *)(ptr + C->byte_offset);
 
-    B_D,
-    B->desc->cublastlt.layout,
+  float alpha = 1.0f;
+  float beta = 0.0f;
 
-    &beta,
-    C_D,
-    C->desc->cublastlt.layout,
+  cublasOperation_t transa = CUBLAS_OP_T;
 
-    C_D,
-    C->desc->cublastlt.layout,
+  cublasLtMatmulDescSetAttribute(C->desc->cublastlt.op, CUBLASLT_MATMUL_DESC_TRANSA, &transa, sizeof(transa));
 
-    CF_NULL,
+  cublasLtMatmul(handle->ctx->context.cuda.cublasLt, C->desc->cublastlt.op, &alpha, A_D, A->desc->cublastlt.layout, B_D, B->desc->cublastlt.layout,
+    &beta, C_D, C->desc->cublastlt.layout, C_D, C->desc->cublastlt.layout, CF_NULL, handle->workspace->scratchpad, handle->workspace->scratchpad_size,
+    handle->workspace->stream);
 
-    handle->workspace->scratchpad,
-    handle->workspace->scratchpad_size,
+  transa = CUBLAS_OP_N;
 
-    handle->workspace->stream
-  );
+  cublasLtMatmulDescSetAttribute(C->desc->cublastlt.op, CUBLASLT_MATMUL_DESC_TRANSA, &transa, sizeof(transa));
 }
 
 void cf_math_matmul_trans_b_f16(cf_math_handle *handle, cf_math *C, cf_math *A, cf_math *B)
@@ -504,49 +730,83 @@ void cf_math_matmul_trans_b_f16(cf_math_handle *handle, cf_math *C, cf_math *A, 
 
   cublasOperation_t transb = CUBLAS_OP_T;
 
-  cublasLtMatmulDescSetAttribute(
-      C->desc->cublastlt.op,
-      CUBLASLT_MATMUL_DESC_TRANSB,
-      &transb,
-      sizeof(transb)
-  );
+  cublasLtMatmulDescSetAttribute(C->desc->cublastlt.op, CUBLASLT_MATMUL_DESC_TRANSB, &transb, sizeof(transb));
 
-  cublasLtMatmul(
-      handle->ctx->context.cuda.cublasLt,
-      C->desc->cublastlt.op,
-
-      &alpha,
-      A_D,
-      A->desc->cublastlt.layout,
-
-      B_D,
-      B->desc->cublastlt.layout,
-
-      &beta,
-      C_D,
-      C->desc->cublastlt.layout,
-
-      C_D,
-      C->desc->cublastlt.layout,
-
-      CF_NULL,
-
-      handle->workspace->scratchpad,
-      handle->workspace->scratchpad_size,
-
-      handle->workspace->stream
-  );
+  cublasLtMatmul(handle->ctx->context.cuda.cublasLt, C->desc->cublastlt.op, &alpha, A_D, A->desc->cublastlt.layout, B_D, B->desc->cublastlt.layout,
+    &beta, C_D, C->desc->cublastlt.layout, C_D, C->desc->cublastlt.layout, CF_NULL, handle->workspace->scratchpad, handle->workspace->scratchpad_size,
+    handle->workspace->stream);
 
   transb = CUBLAS_OP_N;
 
-  cublasLtMatmulDescSetAttribute(
-      C->desc->cublastlt.op,
-      CUBLASLT_MATMUL_DESC_TRANSB,
-      &transb,
-      sizeof(transb)
-  );
+  cublasLtMatmulDescSetAttribute(C->desc->cublastlt.op, CUBLASLT_MATMUL_DESC_TRANSB, &transb, sizeof(transb));
 }
 
+// layer 0
+
+void cf_math_zero_grad_f16(cf_math_handle *handle, cf_math *Grad)
+{
+  cf_math_zero_f16(handle, Grad->grad_fn->grad);
+}
+
+// layer 1
+
+void cf_math_conv2d_f16(
+  cf_math_handle *handle,
+  cf_math *Out,
+  cf_math *In,
+  cf_math *Weight,
+  int pad_h,
+  int pad_w,
+  int stride_h,
+  int stride_w,
+  int dilation_h,
+  int dilation_w)
+{
+  cf_u8 *ptr = (cf_u8 *)handle->storage.backend;
+
+  __half *In_D = (__half *)(ptr + In->byte_offset);
+  __half *Weight_D = (__half *)(ptr + Weight->byte_offset);
+  __half *Out_D = (__half *)(ptr + Out->byte_offset);
+
+  float alpha = 1.0f;
+  float beta = 0.0f;
+
+  cudnnHandle_t cudnn = handle->ctx->context.cuda.cudnn;
+
+  cudnnSetStream(cudnn, handle->workspace->stream);
+
+  cudnnSetConvolution2dDescriptor(Out->desc->cudnn.conv, pad_h, pad_w, stride_h, stride_w, dilation_h, dilation_w, CUDNN_CROSS_CORRELATION, CUDNN_DATA_FLOAT);
+
+  cudnnSetConvolutionMathType(Out->desc->cudnn.conv, CUDNN_TENSOR_OP_MATH);
+
+  cudnnConvolutionFwdAlgo_t algo = CUDNN_CONVOLUTION_FWD_ALGO_IMPLICIT_PRECOMP_GEMM;
+
+  cudnnConvolutionForward(cudnn, &alpha, In->desc->cudnn.tensor, In_D, Weight->desc->cudnn.filter, Weight_D, Out->desc->cudnn.conv, algo, handle->workspace->scratchpad,
+     handle->workspace->scratchpad_size, &beta, Out->desc->cudnn.tensor, Out_D);
+}
+
+void cf_math_pooling_f16(cf_math_handle *handle, cf_math *Out, cf_math *In, int mode, int window_h, int window_w, int pad_h, int pad_w, int stride_h, int stride_w)
+{
+  cf_u8 *ptr = (cf_u8 *)handle->storage.backend;
+
+  __half *In_D = (__half *)(ptr + In->byte_offset);
+  __half *Out_D = (__half *)(ptr + Out->byte_offset);
+
+  float alpha = 1.0f;
+  float beta = 0.0f;
+
+  cudnnHandle_t cudnn = handle->ctx->context.cuda.cudnn;
+
+  cudnnSetStream(cudnn, handle->workspace->stream);
+
+  cudnnPoolingMode_t pooling_mode = mode == CF_MATH_POOLING_MAX ? CUDNN_POOLING_MAX : CUDNN_POOLING_AVERAGE_COUNT_EXCLUDE_PADDING;
+
+  cudnnSetPooling2dDescriptor(Out->desc->cudnn.pooling, pooling_mode, CUDNN_PROPAGATE_NAN, window_h, window_w, pad_h, pad_w, stride_h, stride_w);
+
+  cudnnPoolingForward(cudnn, Out->desc->cudnn.pooling, &alpha, In->desc->cudnn.tensor, In_D, &beta, Out->desc->cudnn.tensor, Out_D );
+}
+
+// layer 2
 
 void cf_math_linear_bias_f16(cf_math_handle *handle, cf_math *Output, cf_math *Input, cf_math *Weight, cf_math *Bias)
 {
@@ -565,76 +825,330 @@ void cf_math_linear_bias_f16(cf_math_handle *handle, cf_math *Output, cf_math *I
 
   cublasLtMatmulDescSetAttribute(Output->desc->cublastlt.op, CUBLASLT_MATMUL_DESC_BIAS_POINTER, &Bias_D, sizeof(Bias_D));
 
-  cublasLtMatmul(handle->ctx->context.cuda.cublasLt, Output->desc->cublastlt.op,
-      &alpha,
-      Input_D,
-      Input->desc->cublastlt.layout,
-
-      Weight_D,
-      Weight->desc->cublastlt.layout,
-
-      &beta,
-      Output_D,
-      Output->desc->cublastlt.layout,
-
-      Output_D,
-      Output->desc->cublastlt.layout,
-
-      CF_NULL,
-
-      handle->workspace->scratchpad,
-      handle->workspace->scratchpad_size,
-      handle->workspace->stream
-  );
+  cublasLtMatmul(handle->ctx->context.cuda.cublasLt, Output->desc->cublastlt.op, &alpha, Input_D, Input->desc->cublastlt.layout,
+    Weight_D, Weight->desc->cublastlt.layout, &beta, Output_D, Output->desc->cublastlt.layout, Output_D, Output->desc->cublastlt.layout,
+     CF_NULL, handle->workspace->scratchpad, handle->workspace->scratchpad_size, handle->workspace->stream);
 
   epilogue = CUBLASLT_EPILOGUE_DEFAULT;
-  cublasLtMatmulDescSetAttribute(
-      Output->desc->cublastlt.op,
-      CUBLASLT_MATMUL_DESC_EPILOGUE,
-      &epilogue,
-      sizeof(epilogue)
-  );
+  cublasLtMatmulDescSetAttribute(Output->desc->cublastlt.op, CUBLASLT_MATMUL_DESC_EPILOGUE, &epilogue, sizeof(epilogue));
 }
 
-void cf_math_layer_norm_f16(cf_math_handle *handle, cf_math *Out, cf_math *In, cf_math *Weight, cf_math *Bias, float eps)
+void cf_math_norm_f16(cf_math_handle *handle, cf_math *C, cf_math *A, const float scalar)
 {
-  // TODO: Custom kernel. cub::BlockReduce for mean/var. Accumulate in FP32.
-  (void)handle; (void)Out; (void)In; (void)Weight; (void)Bias; (void)eps;
+  int N = (int) C->elem_len;
+
+  cf_u8 *ptr = (cf_u8 *) handle->storage.backend;
+
+  __half * A_D = (__half *) (ptr + A->byte_offset);
+  __half * C_D = (__half *) (ptr + C->byte_offset);
+
+  int threads = N <= 256 ? 256 : N <= 512 ? 512 : 1024;
+
+  int N8 = N / 8;
+  if(N8 > 0)
+  {
+    int blocks = cuda::ceil_div(N8, threads);
+    cf_math_kernel_norm_f16<<<blocks, threads, 0, handle->workspace->stream>>>((uint4 *) C_D, (uint4 *) A_D, scalar, N8);
+  }
+
+  int tail_start = N8 * 8;
+  if(tail_start < N)
+  {
+    int tail_end = N - tail_start;
+    int blocks = cuda::ceil_div(tail_end, threads);
+    cf_math_kernel_tail_norm_f16<<<blocks, threads, 0, handle->workspace->stream>>>(C_D + tail_start, A_D + tail_start, scalar, tail_end);
+  }
 }
 
-void cf_math_layer_norm_backward_f16(cf_math_handle *handle, cf_math *dIn, cf_math *dWeight, cf_math *dBias, cf_math *dOut, cf_math *In, cf_math *Weight, cf_math *Mean, cf_math *Var, float eps)
+// layer 3
+
+int cf_math_argmax_f16(cf_math_handle *handle, cf_math *A)
 {
-  // TODO: Custom fused kernel
-  (void)handle; (void)dIn; (void)dWeight; (void)dBias; (void)dOut; (void)In; (void)Weight; (void)Mean; (void)Var; (void)eps;
+  typedef cub::KeyValuePair<int, __half> argmax_result;
+
+  int N = (int)A->elem_len;
+  if(N <= 0) return -1;
+
+  cf_u8 *ptr = (cf_u8 *)handle->storage.backend;
+  __half *A_D = (__half *)(ptr + A->byte_offset);
+
+  cf_u8 *workspace = (cf_u8 *)handle->workspace->scratchpad;
+  cf_usize result_bytes = (sizeof(argmax_result) + 255) & ~(cf_usize)255;
+  if(handle->workspace->scratchpad_size <= result_bytes) return -1;
+
+  argmax_result *Result_D = (argmax_result *)workspace;
+  void *temp_storage = workspace + result_bytes;
+  size_t temp_storage_bytes = (size_t)(handle->workspace->scratchpad_size - result_bytes);
+  cudaStream_t stream = handle->workspace->stream;
+
+  cub::DeviceReduce::ArgMax(temp_storage, temp_storage_bytes, A_D, Result_D, N, stream);
+
+  argmax_result result;
+  cudaMemcpyAsync(&result, Result_D, sizeof(result), cudaMemcpyDeviceToHost, stream);
+  cudaStreamSynchronize(stream);
+
+  return result.key;
 }
 
 void cf_math_softmax_f16(cf_math_handle *handle, cf_math *Out, cf_math *In, int dim)
 {
-  // TODO: Custom kernel. Max trick, Exp, Sum trick.
-  (void)handle; (void)Out; (void)In; (void)dim;
+  int rank = In->desc->rank;
+  if(dim < 0) dim += rank;
+  if(dim < 0 || dim >= rank) return;
+
+  cf_u8 *ptr = (cf_u8 *)handle->storage.backend;
+  __half *In_D = (__half *)(ptr + In->byte_offset);
+  __half *Out_D = (__half *)(ptr + Out->byte_offset);
+
+  int axis_len = In->desc->dim[dim];
+  if(axis_len <= 0) return;
+
+  int inner = In->desc->strides[dim];
+  int outer = (int)(In->elem_len / ((cf_usize)axis_len * (cf_usize)inner));
+  if(outer <= 0 || inner <= 0) return;
+
+  cudnnHandle_t cudnn = handle->ctx->context.cuda.cudnn;
+  cudnnSetStream(cudnn, handle->workspace->stream);
+
+  cudnnTensorDescriptor_t tensor;
+  cudnnCreateTensorDescriptor(&tensor);
+  cudnnSetTensor4dDescriptor(tensor, CUDNN_TENSOR_NCHW, CUDNN_DATA_HALF, outer, axis_len, inner, 1);
+
+  float alpha = 1.0f;
+  float beta = 0.0f;
+
+  cudnnSoftmaxForward(cudnn, CUDNN_SOFTMAX_ACCURATE, CUDNN_SOFTMAX_MODE_CHANNEL, &alpha, tensor, In_D, &beta, tensor, Out_D);
+
+  cudnnDestroyTensorDescriptor(tensor);
 }
 
-void cf_math_cross_entropy_f16(cf_math_handle *handle, cf_math *Loss, cf_math *Logits, cf_math *Targets)
+// layer 4
+
+void cf_math_fused_cross_entropy(cf_math_handle *handle, cf_math *dY, cf_math *batch_L, cf_math *loss, cf_math *P, cf_math *T)
 {
-  // TODO: Custom fused kernel (LogSoftmax + NLL)
-  (void)handle; (void)Loss; (void)Logits; (void)Targets;
+  if(P->desc->rank < 2 || P->desc->dim[P->desc->rank - 1] != 16) return;
+
+  cf_u8 *ptr = (cf_u8 *)handle->storage.backend;
+
+  __half *dY_D = (__half *)(ptr + dY->byte_offset);
+  float *batch_L_D = (float *)(ptr + batch_L->byte_offset);
+  float *loss_D = (float *)(ptr + loss->byte_offset);
+  const __half *P_D = (const __half *)(ptr + P->byte_offset);
+  const uint8_t *T_D = (const uint8_t *)(ptr + T->byte_offset);
+
+  int rows = P->desc->dim[0];
+  if(rows <= 0 || rows > 1024) return;
+
+  int threads = 1;
+  while(threads < rows) threads <<= 1;
+
+  const float inv_batch_size = 1.0f / (float)rows;
+
+  cf_math_kernel_fused_cross_entropy<<<1, threads, 0, handle->workspace->stream>>>(dY_D,batch_L_D,loss_D,P_D,T_D,rows,inv_batch_size);
 }
 
-void cf_math_cross_entropy_backward_f16(cf_math_handle *handle, cf_math *dLogits, cf_math *Logits, cf_math *Targets)
+// layer 5: backward helpers
+
+void cf_math_reduce_sum_rows_f16(cf_math_handle *handle, cf_math *C, cf_math *A)
 {
-  // TODO: Custom kernel (Probs - Targets)
-  (void)handle; (void)dLogits; (void)Logits; (void)Targets;
+  int cols = (int)C->elem_len;
+  int rows = (int)(A->elem_len / C->elem_len);
+
+  cf_u8 *ptr = (cf_u8 *)handle->storage.backend;
+
+  __half *A_D = (__half *)(ptr + A->byte_offset);
+  __half *C_D = (__half *)(ptr + C->byte_offset);
+
+  int threads = 256;
+
+  int cols8 = cols % 8 == 0 ? cols / 8 : 0;
+  if(cols8 > 0)
+  {
+    cf_math_kernel_reduce_sum_rows_f16<<<cols8, threads, 0, handle->workspace->stream>>>(C_D, A_D, rows, cols);
+  }
+
+  int tail_start = cols8 * 8;
+  if(tail_start < cols)
+  {
+    int tail_cols = cols - tail_start;
+    cf_math_kernel_tail_reduce_sum_rows_f16<<<tail_cols, threads, 0, handle->workspace->stream>>>(C_D, A_D, rows, cols, tail_start, tail_cols);
+  }
 }
 
-void cf_math_adamw_update_f16(cf_math_handle *handle, cf_math *Weight, cf_math *Grad, cf_math *M, cf_math *V, float lr, float beta1, float beta2, float eps, float weight_decay, int step)
+void cf_math_relu_backward_f16(cf_math_handle *handle, cf_math *dIn, cf_math *dOut, cf_math *In)
 {
-  // TODO: Custom fused kernel using float4 vectorization if contiguous
-  (void)handle; (void)Weight; (void)Grad; (void)M; (void)V; (void)lr; (void)beta1; (void)beta2; (void)eps; (void)weight_decay; (void)step;
+  int N = (int)dIn->elem_len;
+
+  cf_u8 *ptr = (cf_u8 *)handle->storage.backend;
+
+  __half *dIn_D = (__half *)(ptr + dIn->byte_offset);
+  __half *dOut_D = (__half *)(ptr + dOut->byte_offset);
+  __half *In_D = (__half *)(ptr + In->byte_offset);
+
+  int threads = N <= 256 ? 256 : N <= 512 ? 512 : 1024;
+
+  int N8 = N / 8;
+  if(N8 > 0)
+  {
+    int blocks = cuda::ceil_div(N8, threads);
+    cf_math_kernel_relu_backward_f16<<<blocks, threads, 0, handle->workspace->stream>>>((uint4 *)dIn_D, (uint4 *)dOut_D, (uint4 *)In_D, N8);
+  }
+
+  int tail_start = N8 * 8;
+  if(tail_start < N)
+  {
+    int tail_end = N - tail_start;
+    int blocks = cuda::ceil_div(tail_end, threads);
+    cf_math_kernel_tail_relu_backward_f16<<<blocks, threads, 0, handle->workspace->stream>>>(dIn_D + tail_start, dOut_D + tail_start, In_D + tail_start, tail_end);
+  }
 }
 
-// layer 0
-
-void cf_math_zero_grad_f16(cf_math_handle *handle, cf_math *Grad)
+void cf_math_sgd_update_f16(cf_math_handle *handle, cf_math *Weight, cf_math *Grad, float lr)
 {
-  cf_math_zero_f16(handle, Grad->grad_fn->grad);
+  int N = (int)Weight->elem_len;
+
+  cf_u8 *ptr = (cf_u8 *)handle->storage.backend;
+
+  __half *Weight_D = (__half *)(ptr + Weight->byte_offset);
+  __half *Grad_D = (__half *)(ptr + Grad->byte_offset);
+
+  int threads = N <= 256 ? 256 : N <= 512 ? 512 : 1024;
+
+  int N8 = N / 8;
+  if(N8 > 0)
+  {
+    int blocks = cuda::ceil_div(N8, threads);
+    cf_math_kernel_sgd_update_f16<<<blocks, threads, 0, handle->workspace->stream>>>((uint4 *)Weight_D, (uint4 *)Grad_D, lr, N8);
+  }
+
+  int tail_start = N8 * 8;
+  if(tail_start < N)
+  {
+    int tail_end = N - tail_start;
+    int blocks = cuda::ceil_div(tail_end, threads);
+    cf_math_kernel_tail_sgd_update_f16<<<blocks, threads, 0, handle->workspace->stream>>>(Weight_D + tail_start, Grad_D + tail_start, lr, tail_end);
+  }
+}
+
+void cf_math_pooling_backward_f16(
+  cf_math_handle *handle,
+  cf_math *dIn,
+  cf_math *dOut,
+  cf_math *Out,
+  cf_math *In,
+  int mode,
+  int window_h,
+  int window_w,
+  int pad_h,
+  int pad_w,
+  int stride_h,
+  int stride_w)
+{
+  cf_u8 *ptr = (cf_u8 *)handle->storage.backend;
+
+  __half *dIn_D = (__half *)(ptr + dIn->byte_offset);
+  __half *dOut_D = (__half *)(ptr + dOut->byte_offset);
+  __half *Out_D = (__half *)(ptr + Out->byte_offset);
+  __half *In_D = (__half *)(ptr + In->byte_offset);
+
+  float alpha = 1.0f;
+  float beta = 0.0f;
+
+  cudnnHandle_t cudnn = handle->ctx->context.cuda.cudnn;
+
+  cudnnSetStream(cudnn, handle->workspace->stream);
+
+  cudnnPoolingMode_t pooling_mode = mode == CF_MATH_POOLING_MAX ? CUDNN_POOLING_MAX : CUDNN_POOLING_AVERAGE_COUNT_EXCLUDE_PADDING;
+
+  cudnnSetPooling2dDescriptor(Out->desc->cudnn.pooling, pooling_mode, CUDNN_PROPAGATE_NAN, window_h, window_w, pad_h, pad_w, stride_h, stride_w);
+
+  cudnnPoolingBackward(cudnn, Out->desc->cudnn.pooling, &alpha, Out->desc->cudnn.tensor, Out_D, dOut->desc->cudnn.tensor, dOut_D,
+    In->desc->cudnn.tensor, In_D, &beta, dIn->desc->cudnn.tensor, dIn_D);
+}
+
+void cf_math_conv2d_backward_data_f16(
+  cf_math_handle *handle,
+  cf_math *dIn,
+  cf_math *dOut,
+  cf_math *Weight,
+  int pad_h,
+  int pad_w,
+  int stride_h,
+  int stride_w,
+  int dilation_h,
+  int dilation_w)
+{
+  cf_u8 *ptr = (cf_u8 *)handle->storage.backend;
+
+  __half *dIn_D = (__half *)(ptr + dIn->byte_offset);
+  __half *dOut_D = (__half *)(ptr + dOut->byte_offset);
+  __half *Weight_D = (__half *)(ptr + Weight->byte_offset);
+
+  float alpha = 1.0f;
+  float beta = 0.0f;
+
+  cudnnHandle_t cudnn = handle->ctx->context.cuda.cudnn;
+
+  cudnnSetStream(cudnn, handle->workspace->stream);
+
+  cudnnSetConvolution2dDescriptor(dOut->desc->cudnn.conv, pad_h, pad_w, stride_h, stride_w, dilation_h, dilation_w, CUDNN_CROSS_CORRELATION, CUDNN_DATA_FLOAT);
+
+  cudnnSetConvolutionMathType(dOut->desc->cudnn.conv, CUDNN_TENSOR_OP_MATH);
+
+  cudnnConvolutionBwdDataAlgo_t algo = CUDNN_CONVOLUTION_BWD_DATA_ALGO_1;
+
+  cudnnConvolutionBackwardData(cudnn, &alpha, Weight->desc->cudnn.filter, Weight_D, dOut->desc->cudnn.tensor, dOut_D,
+    dOut->desc->cudnn.conv, algo, handle->workspace->scratchpad, handle->workspace->scratchpad_size, &beta, dIn->desc->cudnn.tensor, dIn_D);
+}
+
+void cf_math_conv2d_backward_filter_f16(
+  cf_math_handle *handle,
+  cf_math *dWeight,
+  cf_math *dOut,
+  cf_math *In,
+  int pad_h,
+  int pad_w,
+  int stride_h,
+  int stride_w,
+  int dilation_h,
+  int dilation_w)
+{
+  cf_u8 *ptr = (cf_u8 *)handle->storage.backend;
+
+  __half *dWeight_D = (__half *)(ptr + dWeight->byte_offset);
+  __half *dOut_D = (__half *)(ptr + dOut->byte_offset);
+  __half *In_D = (__half *)(ptr + In->byte_offset);
+
+  float alpha = 1.0f;
+  float beta = 0.0f;
+
+  cudnnHandle_t cudnn = handle->ctx->context.cuda.cudnn;
+
+  cudnnSetStream(cudnn, handle->workspace->stream);
+
+  cudnnSetConvolution2dDescriptor(dOut->desc->cudnn.conv, pad_h, pad_w, stride_h, stride_w, dilation_h, dilation_w, CUDNN_CROSS_CORRELATION, CUDNN_DATA_FLOAT);
+
+  cudnnSetConvolutionMathType(dOut->desc->cudnn.conv, CUDNN_TENSOR_OP_MATH);
+
+  cudnnConvolutionBwdFilterAlgo_t algo = CUDNN_CONVOLUTION_BWD_FILTER_ALGO_1;
+
+  cudnnConvolutionBackwardFilter(cudnn, &alpha, In->desc->cudnn.tensor, In_D, dOut->desc->cudnn.tensor, dOut_D,
+    dOut->desc->cudnn.conv, algo, handle->workspace->scratchpad, handle->workspace->scratchpad_size, &beta, dWeight->desc->cudnn.filter, dWeight_D);
+}
+
+void cf_math_conv2d_backward_bias_f16(cf_math_handle *handle, cf_math *dBias, cf_math *dOut)
+{
+  cf_u8 *ptr = (cf_u8 *)handle->storage.backend;
+
+  __half *dBias_D = (__half *)(ptr + dBias->byte_offset);
+  __half *dOut_D = (__half *)(ptr + dOut->byte_offset);
+
+  float alpha = 1.0f;
+  float beta = 0.0f;
+
+  cudnnHandle_t cudnn = handle->ctx->context.cuda.cudnn;
+
+  cudnnSetStream(cudnn, handle->workspace->stream);
+
+  cudnnConvolutionBackwardBias(cudnn, &alpha, dOut->desc->cudnn.tensor, dOut_D, &beta, dBias->desc->cudnn.tensor, dBias_D);
 }

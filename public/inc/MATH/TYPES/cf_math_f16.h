@@ -22,6 +22,9 @@
 #define CF_GELU_COEFF_A 0.79788456f
 #define CF_GELU_COEFF_B 0.03567741f
 
+#define CF_MATH_POOLING_MAX 0
+#define CF_MATH_POOLING_AVG 1
+
 typedef struct cf_math_handle cf_math_handle;
 typedef struct cf_math cf_math;
 
@@ -29,35 +32,161 @@ typedef struct cf_math cf_math;
 extern "C" {
 #endif
 
+/**
+ * @brief Add two f16 tensors elementwise.
+ * @param handle CUDA math handle that owns storage, workspace, and stream.
+ * @param C Output tensor.
+ * @param A Left input tensor.
+ * @param B Right input tensor.
+ * @return Nothing. This hot-path function assumes valid shapes and storage.
+ */
 void cf_math_add_f16(cf_math_handle *handle, cf_math *C, cf_math *A, cf_math *B);
 
+/**
+ * @brief Subtract two f16 tensors elementwise.
+ * @param handle CUDA math handle that owns storage, workspace, and stream.
+ * @param C Output tensor.
+ * @param A Left input tensor.
+ * @param B Right input tensor.
+ * @return Nothing. This hot-path function assumes valid shapes and storage.
+ */
 void cf_math_sub_f16(cf_math_handle *handle, cf_math *C, cf_math *A, cf_math *B);
 
+/**
+ * @brief Multiply two f16 tensors elementwise.
+ * @param handle CUDA math handle that owns storage, workspace, and stream.
+ * @param C Output tensor.
+ * @param A Left input tensor.
+ * @param B Right input tensor.
+ * @return Nothing. This hot-path function assumes valid shapes and storage.
+ */
 void cf_math_mul_f16(cf_math_handle *handle, cf_math *C, cf_math *A, cf_math *B);
 
+/**
+ * @brief Divide two f16 tensors elementwise.
+ * @param handle CUDA math handle that owns storage, workspace, and stream.
+ * @param C Output tensor.
+ * @param A Left input tensor.
+ * @param B Right input tensor.
+ * @return Nothing. This hot-path function assumes valid shapes and storage.
+ */
 void cf_math_div_f16(cf_math_handle *handle, cf_math *C, cf_math *A, cf_math *B);
 
+/**
+ * @brief Negate an f16 tensor elementwise.
+ * @param handle CUDA math handle that owns storage, workspace, and stream.
+ * @param C Output tensor.
+ * @param A Input tensor.
+ * @return Nothing. This hot-path function assumes valid shapes and storage.
+ */
 void cf_math_neg_f16(cf_math_handle *handle, cf_math *C, cf_math *A);
 
+/**
+ * @brief Compute square root over an f16 tensor elementwise.
+ * @param handle CUDA math handle that owns storage, workspace, and stream.
+ * @param C Output tensor.
+ * @param A Input tensor.
+ * @return Nothing. This hot-path function assumes valid shapes and storage.
+ */
 void cf_math_sqrt_f16(cf_math_handle *handle, cf_math *C, cf_math *A);
 
+/**
+ * @brief Compute exponential over an f16 tensor elementwise.
+ * @param handle CUDA math handle that owns storage, workspace, and stream.
+ * @param C Output tensor.
+ * @param A Input tensor.
+ * @return Nothing. This hot-path function assumes valid shapes and storage.
+ */
 void cf_math_exp_f16(cf_math_handle *handle, cf_math *C, cf_math *A);
 
+/**
+ * @brief Compute natural logarithm over an f16 tensor elementwise.
+ * @param handle CUDA math handle that owns storage, workspace, and stream.
+ * @param C Output tensor.
+ * @param A Input tensor.
+ * @return Nothing. This hot-path function assumes valid shapes and storage.
+ */
 void cf_math_log_f16(cf_math_handle *handle, cf_math *C, cf_math *A);
 
+/**
+ * @brief Compute tanh over an f16 tensor elementwise.
+ * @param handle CUDA math handle that owns storage, workspace, and stream.
+ * @param C Output tensor.
+ * @param A Input tensor.
+ * @return Nothing. This hot-path function assumes valid shapes and storage.
+ */
 void cf_math_tanh_f16(cf_math_handle *handle, cf_math *C, cf_math *A);
 
+/**
+ * @brief Apply ReLU to an f16 tensor elementwise.
+ * @param handle CUDA math handle that owns storage, workspace, and stream.
+ * @param C Output tensor.
+ * @param A Input tensor.
+ * @return Nothing. This hot-path function assumes valid shapes and storage.
+ */
 void cf_math_relu_f16(cf_math_handle *handle, cf_math *C, cf_math *A);
 
+/**
+ * @brief Apply sigmoid to an f16 tensor elementwise.
+ * @param handle CUDA math handle that owns storage, workspace, and stream.
+ * @param C Output tensor.
+ * @param A Input tensor.
+ * @return Nothing. This hot-path function assumes valid shapes and storage.
+ */
 void cf_math_sigmoid_f16(cf_math_handle *handle, cf_math *C, cf_math *A);
 
+/**
+ * @brief Apply GELU to an f16 tensor elementwise.
+ * @param handle CUDA math handle that owns storage, workspace, and stream.
+ * @param C Output tensor.
+ * @param A Input tensor.
+ * @return Nothing. This hot-path function assumes valid shapes and storage.
+ */
 void cf_math_gelu_f16(cf_math_handle *handle, cf_math *C, cf_math *A);
 
+/**
+ * @brief Reduce all elements of an f16 tensor into one f16 sum.
+ * @param handle CUDA math handle that owns storage, workspace, and stream.
+ * @param C One-element output tensor.
+ * @param A Input tensor.
+ * @return Nothing. This hot-path function assumes valid shapes, storage, and workspace.
+ */
 void cf_math_reduce_sum_f16(cf_math_handle *handle, cf_math *C, cf_math *A);
 
+/**
+ * @brief Reduce all elements of an f16 tensor into one f16 mean.
+ * @param handle CUDA math handle that owns storage, workspace, and stream.
+ * @param C One-element output tensor.
+ * @param A Input tensor.
+ * @return Nothing. This hot-path function assumes valid shapes, storage, and workspace.
+ */
 void cf_math_reduce_mean_f16(cf_math_handle *handle, cf_math *C, cf_math *A);
 
+/**
+ * @brief Scale an f16 tensor by the reciprocal of a scalar.
+ * @param handle CUDA math handle that owns storage, workspace, and stream.
+ * @param C Output tensor.
+ * @param A Input tensor.
+ * @param scalar Scalar divisor.
+ * @return Nothing. This hot-path function assumes valid shapes and storage.
+ */
 void cf_math_norm_f16(cf_math_handle *handle, cf_math *C, cf_math *A, const float scalar);
+
+/**
+ * @brief Return the index of the largest element in an f16 tensor.
+ * @param handle CUDA math handle that owns storage, workspace, and stream.
+ * @param A Input tensor.
+ * @return Index of the maximum element, or -1 when the tensor/workspace is invalid.
+ */
+int cf_math_argmax_f16(cf_math_handle *handle, cf_math *A);
+
+/**
+ * @brief Set an f16 tensor to zero asynchronously.
+ * @param handle CUDA math handle that owns storage, workspace, and stream.
+ * @param C Tensor to clear.
+ * @return Nothing.
+ */
+void cf_math_zero_f16(cf_math_handle *handle, cf_math *C);
 
 /**
  * @brief Run f16 matrix multiplication with the existing cuBLASLt descriptors.
@@ -68,6 +197,16 @@ void cf_math_norm_f16(cf_math_handle *handle, cf_math *C, cf_math *A, const floa
  * @return Nothing. This hot-path function assumes valid shapes and storage.
  */
 void cf_math_matmul_f16(cf_math_handle *handle, cf_math *C, cf_math *A, cf_math *B);
+
+/**
+ * @brief Run f16 matrix multiplication with A interpreted as transposed.
+ * @param handle CUDA math handle that owns storage, workspace, and stream.
+ * @param C Output matrix view.
+ * @param A Left input matrix view to read as transposed.
+ * @param B Right input matrix view.
+ * @return Nothing. This hot-path function assumes valid shapes and storage.
+ */
+void cf_math_matmul_trans_a_f16(cf_math_handle *handle, cf_math *C, cf_math *A, cf_math *B);
 
 /**
  * @brief Run f16 matrix multiplication with B interpreted as transposed.
@@ -91,48 +230,6 @@ void cf_math_matmul_trans_b_f16(cf_math_handle *handle, cf_math *C, cf_math *A, 
 void cf_math_linear_bias_f16(cf_math_handle *handle, cf_math *Output, cf_math *Input, cf_math *Weight, cf_math *Bias);
 
 /**
- * @brief Apply last-dimension f16 layer normalization.
- * @param handle CUDA math handle that owns storage, workspace, and stream.
- * @param Out Output tensor with the same shape as `In`.
- * @param In Input tensor, normalized over its last dimension.
- * @param Weight Scale vector with length equal to the last dimension.
- * @param Bias Bias vector with length equal to the last dimension.
- * @param eps Small value added to variance before reciprocal square root.
- * @return Nothing. This hot-path function assumes valid shapes and storage.
- */
-void cf_math_layer_norm_f16(cf_math_handle *handle, cf_math *Out, cf_math *In, cf_math *Weight, cf_math *Bias, float eps);
-
-/**
- * @brief Apply f16 layer normalization and cache per-row mean and variance.
- * @param handle CUDA math handle that owns storage, workspace, and stream.
- * @param Out Output tensor with the same shape as `In`.
- * @param Mean Per-row mean tensor with `In->elem_len / cols` elements.
- * @param Var Per-row variance tensor with `In->elem_len / cols` elements.
- * @param In Input tensor, normalized over its last dimension.
- * @param Weight Scale vector with length equal to the last dimension.
- * @param Bias Bias vector with length equal to the last dimension.
- * @param eps Small value added to variance before reciprocal square root.
- * @return Nothing. This hot-path function assumes valid shapes and storage.
- */
-void cf_math_layer_norm_stats_f16(cf_math_handle *handle, cf_math *Out, cf_math *Mean, cf_math *Var, cf_math *In, cf_math *Weight, cf_math *Bias, float eps);
-
-/**
- * @brief Backpropagate f16 layer normalization using cached row mean/variance.
- * @param handle CUDA math handle that owns storage, workspace, and stream.
- * @param dIn Output gradient with respect to `In`.
- * @param dWeight Output gradient with respect to `Weight`.
- * @param dBias Output gradient with respect to `Bias`.
- * @param dOut Incoming output gradient.
- * @param In Forward input tensor.
- * @param Weight Forward scale vector.
- * @param Mean Cached per-row mean from `cf_math_layer_norm_stats_f16`.
- * @param Var Cached per-row variance from `cf_math_layer_norm_stats_f16`.
- * @param eps Small value added to variance before reciprocal square root.
- * @return Nothing. This hot-path function assumes valid shapes and storage.
- */
-void cf_math_layer_norm_backward_f16(cf_math_handle *handle, cf_math *dIn, cf_math *dWeight, cf_math *dBias, cf_math *dOut, cf_math *In, cf_math *Weight, cf_math *Mean, cf_math *Var, float eps);
-
-/**
  * @brief Compute f16 softmax over the last dimension.
  * @param handle CUDA math handle that owns storage, workspace, and stream.
  * @param Out Output tensor with the same shape as `In`.
@@ -143,41 +240,45 @@ void cf_math_layer_norm_backward_f16(cf_math_handle *handle, cf_math *dIn, cf_ma
 void cf_math_softmax_f16(cf_math_handle *handle, cf_math *Out, cf_math *In, int dim);
 
 /**
- * @brief Compute mean cross entropy from f16 logits and f16 class indices.
+ * @brief Compute fused cross entropy loss and softmax gradient.
  * @param handle CUDA math handle that owns storage, workspace, and stream.
- * @param Loss One-element output tensor that receives mean loss.
- * @param Logits Row-major logits tensor, classes on the last dimension.
- * @param Targets One f16 class index per row.
- * @return Nothing. This hot-path function assumes valid shapes, storage, and workspace.
+ * @param dY Output tensor that receives `(P - one_hot(T)) / batch_size`.
+ * @param batch_L Per-row loss output tensor.
+ * @param loss One-element output tensor that receives mean loss.
+ * @param P Row-major softmax probabilities tensor.
+ * @param T One u8 target class index per row.
+ * @return Nothing. Current implementation infers batch size from `P` and expects 16 padded classes.
  */
-void cf_math_cross_entropy_f16(cf_math_handle *handle, cf_math *Loss, cf_math *Logits, cf_math *Targets);
+void cf_math_fused_cross_entropy(cf_math_handle *handle, cf_math *dY, cf_math *batch_L, cf_math *loss, cf_math *P, cf_math *T);
 
 /**
- * @brief Compute f16 cross entropy gradient with respect to logits.
+ * @brief Reduce a row-major f16 matrix over rows into one value per column.
  * @param handle CUDA math handle that owns storage, workspace, and stream.
- * @param dLogits Output tensor with the same shape as `Logits`.
- * @param Logits Row-major logits tensor, classes on the last dimension.
- * @param Targets One f16 class index per row.
- * @return Nothing. Writes `(softmax(Logits) - one_hot(Targets)) / rows`.
+ * @param C Output vector with one element per column.
+ * @param A Input row-major matrix.
+ * @return Nothing. This hot-path function assumes `A->elem_len` is divisible by `C->elem_len`.
  */
-void cf_math_cross_entropy_backward_f16(cf_math_handle *handle, cf_math *dLogits, cf_math *Logits, cf_math *Targets);
+void cf_math_reduce_sum_rows_f16(cf_math_handle *handle, cf_math *C, cf_math *A);
 
 /**
- * @brief Apply an in-place f16 AdamW optimizer step.
+ * @brief Backpropagate through ReLU over an f16 tensor.
+ * @param handle CUDA math handle that owns storage, workspace, and stream.
+ * @param dIn Output gradient with respect to the ReLU input.
+ * @param dOut Incoming gradient with respect to the ReLU output.
+ * @param In Forward ReLU input tensor.
+ * @return Nothing. This hot-path function assumes valid shapes and storage.
+ */
+void cf_math_relu_backward_f16(cf_math_handle *handle, cf_math *dIn, cf_math *dOut, cf_math *In);
+
+/**
+ * @brief Apply an in-place SGD update to an f16 tensor.
  * @param handle CUDA math handle that owns storage, workspace, and stream.
  * @param Weight Parameter tensor updated in place.
  * @param Grad Gradient tensor.
- * @param M First moment tensor updated in place.
- * @param V Second moment tensor updated in place.
  * @param lr Learning rate.
- * @param beta1 First moment decay.
- * @param beta2 Second moment decay.
- * @param eps Denominator epsilon.
- * @param weight_decay Decoupled weight decay.
- * @param step One-based optimizer step used for bias correction.
  * @return Nothing. This hot-path function assumes valid shapes and storage.
  */
-void cf_math_adamw_update_f16(cf_math_handle *handle, cf_math *Weight, cf_math *Grad, cf_math *M, cf_math *V, float lr, float beta1, float beta2, float eps, float weight_decay, int step);
+void cf_math_sgd_update_f16(cf_math_handle *handle, cf_math *Weight, cf_math *Grad, float lr);
 
 /**
  * @brief Set an f16 gradient tensor to zero asynchronously.
@@ -186,6 +287,154 @@ void cf_math_adamw_update_f16(cf_math_handle *handle, cf_math *Weight, cf_math *
  * @return Nothing.
  */
 void cf_math_zero_grad_f16(cf_math_handle *handle, cf_math *Grad);
+
+/**
+ * @brief Apply f16 2D convolution over NCHW tensors using cuDNN.
+ * @param handle CUDA math handle that owns storage, workspace, and stream.
+ * @param Out Output tensor.
+ * @param In Input tensor.
+ * @param Weight Convolution filter tensor.
+ * @param pad_h Height padding.
+ * @param pad_w Width padding.
+ * @param stride_h Height stride.
+ * @param stride_w Width stride.
+ * @param dilation_h Height dilation.
+ * @param dilation_w Width dilation.
+ * @return Nothing. This hot-path function assumes valid shapes, descriptors, and storage.
+ */
+void cf_math_conv2d_f16(
+  cf_math_handle *handle,
+  cf_math *Out,
+  cf_math *In,
+  cf_math *Weight,
+  int pad_h,
+  int pad_w,
+  int stride_h,
+  int stride_w,
+  int dilation_h,
+  int dilation_w
+);
+
+/**
+ * @brief Apply f16 2D pooling over NCHW tensors using cuDNN.
+ * @param handle CUDA math handle that owns storage, workspace, and stream.
+ * @param Out Output tensor shaped [N, C, OH, OW].
+ * @param In Input tensor shaped [N, C, H, W].
+ * @param mode CF_MATH_POOLING_MAX or CF_MATH_POOLING_AVG.
+ * @param window_h Pooling window height.
+ * @param window_w Pooling window width.
+ * @param pad_h Height padding.
+ * @param pad_w Width padding.
+ * @param stride_h Height stride.
+ * @param stride_w Width stride.
+ * @return Nothing. This hot-path function assumes valid shapes and storage.
+ */
+void cf_math_pooling_f16(
+  cf_math_handle *handle,
+  cf_math *Out,
+  cf_math *In,
+  int mode,
+  int window_h,
+  int window_w,
+  int pad_h,
+  int pad_w,
+  int stride_h,
+  int stride_w
+);
+
+/**
+ * @brief Backpropagate f16 2D pooling over NCHW tensors using cuDNN.
+ * @param handle CUDA math handle that owns storage, workspace, and stream.
+ * @param dIn Output gradient with respect to `In`.
+ * @param dOut Incoming gradient with respect to `Out`.
+ * @param Out Forward pooling output tensor.
+ * @param In Forward pooling input tensor.
+ * @param mode CF_MATH_POOLING_MAX or CF_MATH_POOLING_AVG.
+ * @param window_h Pooling window height.
+ * @param window_w Pooling window width.
+ * @param pad_h Height padding.
+ * @param pad_w Width padding.
+ * @param stride_h Height stride.
+ * @param stride_w Width stride.
+ * @return Nothing. This hot-path function assumes valid shapes and storage.
+ */
+void cf_math_pooling_backward_f16(
+  cf_math_handle *handle,
+  cf_math *dIn,
+  cf_math *dOut,
+  cf_math *Out,
+  cf_math *In,
+  int mode,
+  int window_h,
+  int window_w,
+  int pad_h,
+  int pad_w,
+  int stride_h,
+  int stride_w
+);
+
+/**
+ * @brief Compute f16 convolution input gradients using cuDNN.
+ * @param handle CUDA math handle that owns storage, workspace, and stream.
+ * @param dIn Output gradient with respect to convolution input.
+ * @param dOut Incoming gradient with respect to convolution output.
+ * @param Weight Forward convolution filter tensor.
+ * @param pad_h Height padding.
+ * @param pad_w Width padding.
+ * @param stride_h Height stride.
+ * @param stride_w Width stride.
+ * @param dilation_h Height dilation.
+ * @param dilation_w Width dilation.
+ * @return Nothing. This hot-path function assumes valid shapes, descriptors, and storage.
+ */
+void cf_math_conv2d_backward_data_f16(
+  cf_math_handle *handle,
+  cf_math *dIn,
+  cf_math *dOut,
+  cf_math *Weight,
+  int pad_h,
+  int pad_w,
+  int stride_h,
+  int stride_w,
+  int dilation_h,
+  int dilation_w
+);
+
+/**
+ * @brief Compute f16 convolution filter gradients using cuDNN.
+ * @param handle CUDA math handle that owns storage, workspace, and stream.
+ * @param dWeight Output gradient with respect to convolution filters.
+ * @param dOut Incoming gradient with respect to convolution output.
+ * @param In Forward convolution input tensor.
+ * @param pad_h Height padding.
+ * @param pad_w Width padding.
+ * @param stride_h Height stride.
+ * @param stride_w Width stride.
+ * @param dilation_h Height dilation.
+ * @param dilation_w Width dilation.
+ * @return Nothing. This hot-path function assumes valid shapes, descriptors, and storage.
+ */
+void cf_math_conv2d_backward_filter_f16(
+  cf_math_handle *handle,
+  cf_math *dWeight,
+  cf_math *dOut,
+  cf_math *In,
+  int pad_h,
+  int pad_w,
+  int stride_h,
+  int stride_w,
+  int dilation_h,
+  int dilation_w
+);
+
+/**
+ * @brief Compute f16 convolution bias gradients using cuDNN.
+ * @param handle CUDA math handle that owns storage, workspace, and stream.
+ * @param dBias Output gradient with respect to convolution bias.
+ * @param dOut Incoming gradient with respect to convolution output.
+ * @return Nothing. This hot-path function assumes valid shapes, descriptors, and storage.
+ */
+void cf_math_conv2d_backward_bias_f16(cf_math_handle *handle, cf_math *dBias, cf_math *dOut);
 
 #ifdef __cplusplus
 }

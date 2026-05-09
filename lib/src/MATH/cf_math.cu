@@ -18,6 +18,8 @@
 
 #include "MATH/cf_math.h"
 
+#include <string.h>
+
 #if(CF_MATH_USE_DNNL == 1)
 static cudnnDataType_t cf_math_cudnn_dtype(cf_math_dtype dtype)
 {
@@ -63,6 +65,24 @@ static cudnnDataType_t cf_math_cudnn_dtype(cf_math_dtype dtype)
     case CF_MATH_DTYPE_F64:  return CUDNN_DATA_DOUBLE;
     default: return CUDNN_DATA_FLOAT;
   }
+}
+
+static cf_usize cf_math_dtype_size(cf_math_dtype dtype)
+{
+  switch (dtype)
+  {
+    case CF_MATH_DTYPE_BOOL: return sizeof(cf_bool);
+    case CF_MATH_DTYPE_I8: return sizeof(cf_i8);
+    case CF_MATH_DTYPE_U8: return sizeof(cf_u8);
+    case CF_MATH_DTYPE_I32: return sizeof(cf_i32);
+    case CF_MATH_DTYPE_FP8E5M2: return sizeof(cf_u8);
+    case CF_MATH_DTYPE_FP8E4M3: return sizeof(cf_u8);
+    case CF_MATH_DTYPE_BF16: return sizeof(cf_u16);
+    case CF_MATH_DTYPE_F16: return sizeof(cf_u16);
+    case CF_MATH_DTYPE_F32: return sizeof(float);
+    case CF_MATH_DTYPE_F64: return sizeof(double);
+  }
+  return 0;
 }
 
 #if(CF_MATH_USE_DNNL == 1)
@@ -152,6 +172,12 @@ static cf_status cf_math_cudnn_desc_create(cf_math_cudnn_desc *desc, int rank, c
 
   state = cudnnCreateFilterDescriptor(&desc->filter);
   if (state != CUDNN_STATUS_SUCCESS) goto fail;
+
+  if (rank == 4 || rank == 5)
+  {
+    state = cudnnSetFilterNdDescriptor(desc->filter, cudnn_dtype, CUDNN_TENSOR_NCHW, rank, dim);
+    if (state != CUDNN_STATUS_SUCCESS) goto fail;
+  }
 
   state = cudnnCreateConvolutionDescriptor(&desc->conv);
   if (state != CUDNN_STATUS_SUCCESS) goto fail;
@@ -282,4 +308,32 @@ cf_status cf_math_bind(cf_math_handle *handle, cf_math *math, cf_math_desc *desc
 cf_status cf_math_rebind(cf_math_handle *handle, cf_math *math, cf_math_desc *desc)
 {
   return cf_math_bind(handle, math, desc);
+}
+
+cf_status cf_math_copy_to_host(cf_math_handle *handle, const cf_math *src, void *dst, cf_usize dst_bytes)
+{
+  if(handle == CF_NULL || src == CF_NULL || src->desc == CF_NULL || dst == CF_NULL) return CF_ERR_NULL;
+
+  cf_usize elem_size = cf_math_dtype_size(src->desc->dtype);
+  if(elem_size == 0) return CF_ERR_INVALID;
+  if(src->elem_len > SIZE_MAX / elem_size) return CF_ERR_OVERFLOW;
+
+  cf_usize bytes = src->elem_len * elem_size;
+  if(dst_bytes < bytes) return CF_ERR_BOUNDS;
+
+  const cf_u8 *src_ptr = (const cf_u8 *)handle->storage.backend + src->byte_offset;
+
+  switch(handle->device)
+  {
+    case CF_MATH_DEVICE_CPU:
+      memcpy(dst, src_ptr, bytes);
+      return CF_OK;
+
+    case CF_MATH_DEVICE_CUDA:
+      if(cudaMemcpyAsync(dst, src_ptr, bytes, cudaMemcpyDeviceToHost, handle->workspace->stream) != cudaSuccess) return CF_ERR_CUDA_COPY;
+      if(cudaStreamSynchronize(handle->workspace->stream) != cudaSuccess) return CF_ERR_CUDA;
+      return CF_OK;
+  }
+
+  return CF_ERR_INVALID;
 }

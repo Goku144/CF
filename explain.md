@@ -1,73 +1,130 @@
-# Cypher F16 Math Mental Model
+# CUDA MNIST Digit Recognizer
 
-## Core View
+## Core Shape
 
-`cf_math` is a non-owning view into storage owned by `cf_math_handle`.
-Shape and backend descriptor information lives in `cf_math_desc`.
-
-```text
-cf_math_context    owns CUDA/cuBLAS/cuDNN backend handles
-cf_math_workspace  owns stream and scratchpad
-cf_math_handle     owns arena storage and points at context/workspace
-cf_math_desc       owns rank, dims, strides, dtype, and backend descriptors
-cf_math            points at one byte slice plus one descriptor
-```
-
-Hot math calls do not allocate output tensors and do not copy between host and
-device. The caller binds every input, output, gradient, optimizer state, and
-cache tensor before launching work.
-
-## Implemented F16 Functions
-
-The f16 backend now covers:
-
-- packed binary ops: `add`, `sub`, `mul`, `div`
-- packed unary ops: `neg`, `sqrt`, `exp`, `log`, `tanh`, `relu`, `sigmoid`, `gelu`
-- reductions: `reduce_sum`, `reduce_mean`
-- cuBLASLt paths: `matmul`, `matmul_trans_b`, `linear_bias`
-- training kernels: `layer_norm`, `layer_norm_stats`, `layer_norm_backward`
-- row losses: `softmax`, `cross_entropy`, `cross_entropy_backward`
-- optimizer utilities: `adamw_update`, `zero_grad`
-
-## Optimization Shape
-
-Flat elementwise kernels use `uint4`, where one packed load carries eight f16
-values. If the element count is not divisible by eight, a scalar tail kernel
-finishes the leftovers.
-
-Row-wise kernels such as layer norm, softmax, and cross entropy cannot split the
-row into separate fast/tail launches because the row statistics must see every
-column. If the row width is divisible by eight, they use packed chunks; otherwise
-they use scalar loads inside the same CUDA block to keep row starts safely
-aligned. Either way, each row reduces once with CUB shared storage.
-
-Layer norm, softmax, cross entropy, and layer norm backward accumulate row
-statistics in float. Outputs are stored back as f16. This keeps the half I/O
-bandwidth while avoiding the worst mean/variance and log-sum-exp errors.
-
-## Training Contracts
-
-Layer norm normalizes the last dimension. `cf_math_layer_norm_stats_f16` writes
-row-wise `Mean` and `Var`; `cf_math_layer_norm_backward_f16` consumes those
-cached tensors.
-
-Softmax is last-dimension only. Cross entropy expects one f16 class index per
-row and writes one scalar mean loss. Cross entropy backward computes:
+The app trainer in `app/src/app.cu` uses a fixed MNIST-style classifier:
 
 ```text
-dLogits = (softmax(Logits) - one_hot(Targets)) / rows
+raw input      [64, 1, 28, 28]  cf_u16 staging storage
+normalized     [64, 1, 28, 28]  f16
+conv weights   [16, 1, 3, 3]    f16
+conv output    [64, 16, 28, 28] f16
+relu output    [64, 16, 28, 28] f16
+max pool       [64, 16, 14, 14] f16
+flatten view   [64, 3136]       f16, same memory as pool output
+dense weights  [3136, 16]       f16
+dense bias     [16]             f16
+logits         [64, 16]         f16
+probabilities  [64, 16]         f16
 ```
 
-AdamW updates `Weight`, `M`, and `V` in place with bias correction from the
-one-based `step`. Zero grad is an async device memset over the gradient tensor.
+The true digit classes are `0..9`. Output classes `10..15` are padding only, so
+the dense output width stays aligned to 16 values for Tensor Core-friendly
+storage and math. Prediction ignores padded classes and only returns `0..9`.
 
-## Benchmark App
+## Mixed Precision
 
-`app/src/app.cu` initializes device-resident f16 tensors and times both the
-basic math kernels and the training kernels. Large runs use `cols = 1024`; small
-runs use `cols = element_count`, so a command like this exercises non-divisible
-row tails:
+Tensor storage and transfers use f16 where possible. The raw image staging
+tensor reuses 16-bit storage for `cf_u16` pixels, then a CUDA normalization
+kernel converts each pixel to:
+
+```text
+__half((float)pixel / 65535.0f)
+```
+
+cuDNN convolution and cuBLASLt matrix operations are configured through
+`cf_math` to use FP32 accumulation while reading and writing f16 tensors. The
+cross-entropy kernel stores gradients as f16 but computes row loss and gradient
+scaling in float.
+
+## Dataset Pipeline
+
+The default dataset files are:
+
+```text
+public/train.csv
+public/test.csv
+public/train/0..9/*.png
+public/test/0..9/*.png
+```
+
+CSV rows use:
+
+```text
+filepath,label
+train/0/16585.png,0
+```
+
+Paths are relative to the dataset root, which defaults to `public`. The app
+loads the CSV into `sample_t { path[256], label }`, then `get_next_batch`
+sequentially fills pinned CPU memory with 64 images and labels. PNG files are
+read with `stbi_load_16`, forced to grayscale, and resized to 28x28 with
+nearest-neighbor if needed.
+
+To replace the batch loader, keep the same pinned-memory contract:
+
+```c
+void get_next_batch(sample_t *dataset, int dataset_size,
+                    uint16_t *images_cpu, uint8_t *labels_cpu,
+                    int batch_size);
+```
+
+Fill `images_cpu` with `batch_size * 28 * 28` grayscale `uint16_t` pixels and
+`labels_cpu` with values in `0..9`.
+
+## Training Flow
+
+Each step runs:
+
+```text
+zero grads
+copy pinned image and label batch to GPU
+normalize cf_u16 -> f16
+conv2d -> relu -> max pool -> linear+bias -> softmax
+fused cross entropy
+dense dX, dense dW, dense db
+pool backward -> relu backward -> conv data/filter backward
+SGD update for conv weights, dense weights, dense bias
+```
+
+`cf_math_fused_cross_entropy` now infers the batch size from the probability
+tensor shape and supports `[64,16]`, scaling gradients by `1.0f / batch`.
+
+## Checkpoints
+
+Checkpoints are written every 512 steps and at the final step. Paths are built
+with `snprintf` and remain relative to the supplied save directory:
+
+```text
+<save_dir>/layer1_weights_step<step>.bin
+<save_dir>/dense_weights_step<step>.bin
+<save_dir>/dense_bias_step<step>.bin
+```
+
+Files contain raw `__half` bytes copied from device memory after synchronizing
+the CUDA stream. There is no header; shape and dtype are defined by the model
+contract above.
+
+## Running
+
+Default smoke run:
 
 ```sh
-./app/build/app 1031 10 2
+./app/build/app 2 checkpoints
+```
+
+Full argument form:
+
+```sh
+./app/build/app <steps> <save_dir> <train_csv> <test_csv> <dataset_root>
+```
+
+Defaults are:
+
+```text
+steps        2
+save_dir     checkpoints
+train_csv    public/train.csv
+test_csv     public/test.csv
+dataset_root public
 ```

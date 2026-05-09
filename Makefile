@@ -81,7 +81,7 @@ endif
 app: runApp
 
 runApp: app/build/app
-	@./$<
+	@./$< 2 checkpoints
 
 app/build/app: app/bin/app.o $(OBJS_C) $(OBJS_ASM) $(OBJS_CUDA)
 	@mkdir -p $(dir $@)

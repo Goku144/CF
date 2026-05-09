@@ -228,6 +228,17 @@ cf_status cf_math_bind(cf_math_handle *handle, cf_math *math, cf_math_desc *desc
 cf_status cf_math_rebind(cf_math_handle *handle, cf_math *math, cf_math_desc *desc);
 
 /**
+ * @brief Copy a tensor view from its backing storage into caller-owned host memory.
+ * @param handle Storage handle that owns the tensor backing memory.
+ * @param src Source tensor view.
+ * @param dst Host destination buffer.
+ * @param dst_bytes Capacity of `dst` in bytes.
+ * @return `CF_OK` on success, or an error status when arguments, capacity, or
+ * backend copies fail.
+ */
+cf_status cf_math_copy_to_host(cf_math_handle *handle, const cf_math *src, void *dst, cf_usize dst_bytes);
+
+/**
  * @brief Clear a math object's descriptor, byte offset, and gradient binding.
  * @param math Math object to clear.
  */
