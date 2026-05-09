@@ -81,7 +81,8 @@ endif
 app: runApp
 
 runApp: app/build/app
-	@./$< 2 checkpoints
+	@mkdir -p public/checkpoints
+	@./$< 2 public/checkpoints
 
 app/build/app: app/bin/app.o $(OBJS_C) $(OBJS_ASM) $(OBJS_CUDA)
 	@mkdir -p $(dir $@)
@@ -90,6 +91,16 @@ app/build/app: app/bin/app.o $(OBJS_C) $(OBJS_ASM) $(OBJS_CUDA)
 app/bin/app.o: app/src/app.cu
 	@mkdir -p $(dir $@)
 	@$(NVCC) $(FLAG_CUDA) $(INC) -c $< -o $@
+
+######################
+# Build CPU predictor #
+######################
+
+predict_cpu: app/build/predict_cpu
+
+app/build/predict_cpu: app/src/predict_cpu.c
+	@mkdir -p $(dir $@)
+	@$(CC) -Wall -Wextra -O2 $(INC) $< -o $@ -lm
 
 ############
 # Build Lib
@@ -134,4 +145,4 @@ tests/bin/test.o: tests/src/test.c
 clean:
 	rm -rf lib/bin app/bin app/build tests/bin tests/build
 
-.PHONY: app runApp lib test runTests clean
+.PHONY: app runApp lib test runTests predict_cpu clean

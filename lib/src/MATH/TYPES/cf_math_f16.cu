@@ -489,6 +489,156 @@ __global__ void cf_math_kernel_fused_cross_entropy(__half *dY,float *batch_losse
   }
 }
 
+__global__ void cf_math_kernel_linear_bias_f16(
+  __half * __restrict__ Output,
+  const __half * __restrict__ Input,
+  const __half * __restrict__ Weight,
+  const __half * __restrict__ Bias,
+  int rows,
+  int inner,
+  int cols)
+{
+  int col = blockIdx.x * blockDim.x + threadIdx.x;
+  int row = blockIdx.y;
+
+  if(row >= rows || col >= cols) return;
+
+  float acc = Bias == NULL ? 0.0f : __half2float(Bias[col]);
+
+  for(int k = 0; k < inner; ++k)
+  {
+    acc += __half2float(Input[row * inner + k]) * __half2float(Weight[k * cols + col]);
+  }
+
+  Output[row * cols + col] = __float2half_rn(acc);
+}
+
+__global__ void cf_math_kernel_matmul_f16(
+  __half * __restrict__ C,
+  const __half * __restrict__ A,
+  const __half * __restrict__ B,
+  int rows,
+  int inner,
+  int cols)
+{
+  int col = blockIdx.x * blockDim.x + threadIdx.x;
+  int row = blockIdx.y;
+
+  if(row >= rows || col >= cols) return;
+
+  float acc = 0.0f;
+
+  for(int k = 0; k < inner; ++k)
+  {
+    acc += __half2float(A[row * inner + k]) * __half2float(B[k * cols + col]);
+  }
+
+  C[row * cols + col] = __float2half_rn(acc);
+}
+
+__global__ void cf_math_kernel_matmul_trans_a_f16(
+  __half * __restrict__ C,
+  const __half * __restrict__ A,
+  const __half * __restrict__ B,
+  int a_rows,
+  int rows,
+  int cols)
+{
+  int col = blockIdx.x * blockDim.x + threadIdx.x;
+  int row = blockIdx.y;
+
+  if(row >= rows || col >= cols) return;
+
+  float acc = 0.0f;
+
+  for(int k = 0; k < a_rows; ++k)
+  {
+    acc += __half2float(A[k * rows + row]) * __half2float(B[k * cols + col]);
+  }
+
+  C[row * cols + col] = __float2half_rn(acc);
+}
+
+__global__ void cf_math_kernel_matmul_trans_b_f16(
+  __half * __restrict__ C,
+  const __half * __restrict__ A,
+  const __half * __restrict__ B,
+  int rows,
+  int inner,
+  int b_cols)
+{
+  int col = blockIdx.x * blockDim.x + threadIdx.x;
+  int row = blockIdx.y;
+
+  if(row >= rows || col >= b_cols) return;
+
+  float acc = 0.0f;
+
+  for(int k = 0; k < inner; ++k)
+  {
+    acc += __half2float(A[row * inner + k]) * __half2float(B[col * inner + k]);
+  }
+
+  C[row * b_cols + col] = __float2half_rn(acc);
+}
+
+static void cf_math_launch_matmul_f16_fallback(
+  cf_math_handle *handle,
+  __half *C_D,
+  const __half *A_D,
+  const __half *B_D,
+  int rows,
+  int inner,
+  int cols)
+{
+  dim3 threads(16, 1);
+  dim3 blocks(cuda::ceil_div(cols, (int)threads.x), rows);
+  cf_math_kernel_matmul_f16<<<blocks, threads, 0, handle->workspace->stream>>>(C_D, A_D, B_D, rows, inner, cols);
+}
+
+static void cf_math_launch_matmul_trans_a_f16_fallback(
+  cf_math_handle *handle,
+  __half *C_D,
+  const __half *A_D,
+  const __half *B_D,
+  int a_rows,
+  int rows,
+  int cols)
+{
+  dim3 threads(16, 1);
+  dim3 blocks(cuda::ceil_div(cols, (int)threads.x), rows);
+  cf_math_kernel_matmul_trans_a_f16<<<blocks, threads, 0, handle->workspace->stream>>>(C_D, A_D, B_D, a_rows, rows, cols);
+}
+
+static void cf_math_launch_matmul_trans_b_f16_fallback(
+  cf_math_handle *handle,
+  __half *C_D,
+  const __half *A_D,
+  const __half *B_D,
+  int rows,
+  int inner,
+  int cols)
+{
+  dim3 threads(16, 1);
+  dim3 blocks(cuda::ceil_div(cols, (int)threads.x), rows);
+  cf_math_kernel_matmul_trans_b_f16<<<blocks, threads, 0, handle->workspace->stream>>>(C_D, A_D, B_D, rows, inner, cols);
+}
+
+static void cf_math_launch_linear_bias_f16_fallback(
+  cf_math_handle *handle,
+  __half *Output_D,
+  const __half *Input_D,
+  const __half *Weight_D,
+  const __half *Bias_D,
+  int rows,
+  int inner,
+  int cols)
+{
+  dim3 threads(16, 1);
+  dim3 blocks(cuda::ceil_div(cols, (int)threads.x), rows);
+  cf_math_kernel_linear_bias_f16<<<blocks, threads, 0, handle->workspace->stream>>>(Output_D, Input_D, Weight_D, Bias_D, rows, inner, cols);
+}
+
 #define CF_MATH_KERNEL_TAIL_FUNC_F16_CREATE(name, func) \
 __global__ void cf_math_kernel_tail_##name##_f16(__half * __restrict__ C, const __half * __restrict__ A, int N8) \
 { \
@@ -688,9 +838,17 @@ void cf_math_matmul_f16(cf_math_handle *handle, cf_math *C, cf_math *A, cf_math 
   float alpha = 1.0f;
   float beta = 0.0f;
 
-  cublasLtMatmul(handle->ctx->context.cuda.cublasLt, C->desc->cublastlt.op, &alpha, A_D, A->desc->cublastlt.layout, B_D,
+  cublasStatus_t state = cublasLtMatmul(handle->ctx->context.cuda.cublasLt, C->desc->cublastlt.op, &alpha, A_D, A->desc->cublastlt.layout, B_D,
      B->desc->cublastlt.layout, &beta, C_D, C->desc->cublastlt.layout, C_D, C->desc->cublastlt.layout, CF_NULL,
      handle->workspace->scratchpad, handle->workspace->scratchpad_size, handle->workspace->stream);
+
+  if(state != CUBLAS_STATUS_SUCCESS)
+  {
+    int rows = C->desc->dim[C->desc->rank - 2];
+    int cols = C->desc->dim[C->desc->rank - 1];
+    int inner = A->desc->dim[A->desc->rank - 1];
+    cf_math_launch_matmul_f16_fallback(handle, C_D, A_D, B_D, rows, inner, cols);
+  }
 }
 
 void cf_math_matmul_trans_a_f16(cf_math_handle *handle, cf_math *C, cf_math *A, cf_math *B)
@@ -706,15 +864,26 @@ void cf_math_matmul_trans_a_f16(cf_math_handle *handle, cf_math *C, cf_math *A, 
 
   cublasOperation_t transa = CUBLAS_OP_T;
 
-  cublasLtMatmulDescSetAttribute(C->desc->cublastlt.op, CUBLASLT_MATMUL_DESC_TRANSA, &transa, sizeof(transa));
+  cublasStatus_t state = cublasLtMatmulDescSetAttribute(C->desc->cublastlt.op, CUBLASLT_MATMUL_DESC_TRANSA, &transa, sizeof(transa));
 
-  cublasLtMatmul(handle->ctx->context.cuda.cublasLt, C->desc->cublastlt.op, &alpha, A_D, A->desc->cublastlt.layout, B_D, B->desc->cublastlt.layout,
-    &beta, C_D, C->desc->cublastlt.layout, C_D, C->desc->cublastlt.layout, CF_NULL, handle->workspace->scratchpad, handle->workspace->scratchpad_size,
-    handle->workspace->stream);
+  if(state == CUBLAS_STATUS_SUCCESS)
+  {
+    state = cublasLtMatmul(handle->ctx->context.cuda.cublasLt, C->desc->cublastlt.op, &alpha, A_D, A->desc->cublastlt.layout, B_D, B->desc->cublastlt.layout,
+      &beta, C_D, C->desc->cublastlt.layout, C_D, C->desc->cublastlt.layout, CF_NULL, handle->workspace->scratchpad, handle->workspace->scratchpad_size,
+      handle->workspace->stream);
+  }
+
+  if(state != CUBLAS_STATUS_SUCCESS)
+  {
+    int a_rows = A->desc->dim[A->desc->rank - 2];
+    int rows = C->desc->dim[C->desc->rank - 2];
+    int cols = C->desc->dim[C->desc->rank - 1];
+    cf_math_launch_matmul_trans_a_f16_fallback(handle, C_D, A_D, B_D, a_rows, rows, cols);
+  }
 
   transa = CUBLAS_OP_N;
 
-  cublasLtMatmulDescSetAttribute(C->desc->cublastlt.op, CUBLASLT_MATMUL_DESC_TRANSA, &transa, sizeof(transa));
+  (void)cublasLtMatmulDescSetAttribute(C->desc->cublastlt.op, CUBLASLT_MATMUL_DESC_TRANSA, &transa, sizeof(transa));
 }
 
 void cf_math_matmul_trans_b_f16(cf_math_handle *handle, cf_math *C, cf_math *A, cf_math *B)
@@ -730,21 +899,33 @@ void cf_math_matmul_trans_b_f16(cf_math_handle *handle, cf_math *C, cf_math *A, 
 
   cublasOperation_t transb = CUBLAS_OP_T;
 
-  cublasLtMatmulDescSetAttribute(C->desc->cublastlt.op, CUBLASLT_MATMUL_DESC_TRANSB, &transb, sizeof(transb));
+  cublasStatus_t state = cublasLtMatmulDescSetAttribute(C->desc->cublastlt.op, CUBLASLT_MATMUL_DESC_TRANSB, &transb, sizeof(transb));
 
-  cublasLtMatmul(handle->ctx->context.cuda.cublasLt, C->desc->cublastlt.op, &alpha, A_D, A->desc->cublastlt.layout, B_D, B->desc->cublastlt.layout,
-    &beta, C_D, C->desc->cublastlt.layout, C_D, C->desc->cublastlt.layout, CF_NULL, handle->workspace->scratchpad, handle->workspace->scratchpad_size,
-    handle->workspace->stream);
+  if(state == CUBLAS_STATUS_SUCCESS)
+  {
+    state = cublasLtMatmul(handle->ctx->context.cuda.cublasLt, C->desc->cublastlt.op, &alpha, A_D, A->desc->cublastlt.layout, B_D, B->desc->cublastlt.layout,
+      &beta, C_D, C->desc->cublastlt.layout, C_D, C->desc->cublastlt.layout, CF_NULL, handle->workspace->scratchpad, handle->workspace->scratchpad_size,
+      handle->workspace->stream);
+  }
+
+  if(state != CUBLAS_STATUS_SUCCESS)
+  {
+    int rows = C->desc->dim[C->desc->rank - 2];
+    int cols = C->desc->dim[C->desc->rank - 1];
+    int inner = A->desc->dim[A->desc->rank - 1];
+    cf_math_launch_matmul_trans_b_f16_fallback(handle, C_D, A_D, B_D, rows, inner, cols);
+  }
 
   transb = CUBLAS_OP_N;
 
-  cublasLtMatmulDescSetAttribute(C->desc->cublastlt.op, CUBLASLT_MATMUL_DESC_TRANSB, &transb, sizeof(transb));
+  (void)cublasLtMatmulDescSetAttribute(C->desc->cublastlt.op, CUBLASLT_MATMUL_DESC_TRANSB, &transb, sizeof(transb));
 }
 
 // layer 0
 
 void cf_math_zero_grad_f16(cf_math_handle *handle, cf_math *Grad)
 {
+  if(Grad == CF_NULL || Grad->grad_fn == CF_NULL || Grad->grad_fn->grad == CF_NULL) return;
   cf_math_zero_f16(handle, Grad->grad_fn->grad);
 }
 
@@ -814,23 +995,37 @@ void cf_math_linear_bias_f16(cf_math_handle *handle, cf_math *Output, cf_math *I
 
   __half *Input_D = (__half *)(ptr + Input->byte_offset);
   __half *Weight_D = (__half *)(ptr + Weight->byte_offset);
-  __half *Bias_D = (__half *)(ptr + Bias->byte_offset);
+  __half *Bias_D = Bias == CF_NULL ? CF_NULL : (__half *)(ptr + Bias->byte_offset);
   __half *Output_D = (__half *)(ptr + Output->byte_offset);
 
   float alpha = 1.0f;
   float beta = 0.0f;
 
-  cublasLtEpilogue_t epilogue = CUBLASLT_EPILOGUE_BIAS;
-  cublasLtMatmulDescSetAttribute(Output->desc->cublastlt.op, CUBLASLT_MATMUL_DESC_EPILOGUE, &epilogue, sizeof(epilogue));
+  cublasLtEpilogue_t epilogue = Bias_D == CF_NULL ? CUBLASLT_EPILOGUE_DEFAULT : CUBLASLT_EPILOGUE_BIAS;
+  cublasStatus_t state = cublasLtMatmulDescSetAttribute(Output->desc->cublastlt.op, CUBLASLT_MATMUL_DESC_EPILOGUE, &epilogue, sizeof(epilogue));
 
-  cublasLtMatmulDescSetAttribute(Output->desc->cublastlt.op, CUBLASLT_MATMUL_DESC_BIAS_POINTER, &Bias_D, sizeof(Bias_D));
+  if(state == CUBLAS_STATUS_SUCCESS && Bias_D != CF_NULL)
+  {
+    state = cublasLtMatmulDescSetAttribute(Output->desc->cublastlt.op, CUBLASLT_MATMUL_DESC_BIAS_POINTER, &Bias_D, sizeof(Bias_D));
+  }
 
-  cublasLtMatmul(handle->ctx->context.cuda.cublasLt, Output->desc->cublastlt.op, &alpha, Input_D, Input->desc->cublastlt.layout,
-    Weight_D, Weight->desc->cublastlt.layout, &beta, Output_D, Output->desc->cublastlt.layout, Output_D, Output->desc->cublastlt.layout,
-     CF_NULL, handle->workspace->scratchpad, handle->workspace->scratchpad_size, handle->workspace->stream);
+  if(state == CUBLAS_STATUS_SUCCESS)
+  {
+    state = cublasLtMatmul(handle->ctx->context.cuda.cublasLt, Output->desc->cublastlt.op, &alpha, Input_D, Input->desc->cublastlt.layout,
+      Weight_D, Weight->desc->cublastlt.layout, &beta, Output_D, Output->desc->cublastlt.layout, Output_D, Output->desc->cublastlt.layout,
+      CF_NULL, handle->workspace->scratchpad, handle->workspace->scratchpad_size, handle->workspace->stream);
+  }
+
+  if(state != CUBLAS_STATUS_SUCCESS)
+  {
+    int rows = Output->desc->dim[Output->desc->rank - 2];
+    int cols = Output->desc->dim[Output->desc->rank - 1];
+    int inner = Input->desc->dim[Input->desc->rank - 1];
+    cf_math_launch_linear_bias_f16_fallback(handle, Output_D, Input_D, Weight_D, Bias_D, rows, inner, cols);
+  }
 
   epilogue = CUBLASLT_EPILOGUE_DEFAULT;
-  cublasLtMatmulDescSetAttribute(Output->desc->cublastlt.op, CUBLASLT_MATMUL_DESC_EPILOGUE, &epilogue, sizeof(epilogue));
+  (void)cublasLtMatmulDescSetAttribute(Output->desc->cublastlt.op, CUBLASLT_MATMUL_DESC_EPILOGUE, &epilogue, sizeof(epilogue));
 }
 
 void cf_math_norm_f16(cf_math_handle *handle, cf_math *C, cf_math *A, const float scalar)

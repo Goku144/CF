@@ -20,23 +20,6 @@
 
 #include <string.h>
 
-#if(CF_MATH_USE_DNNL == 1)
-static cudnnDataType_t cf_math_cudnn_dtype(cf_math_dtype dtype)
-{
-  switch (dtype)
-  {
-    case CF_MATH_DTYPE_I8: return CUDNN_DATA_INT8;
-    case CF_MATH_DTYPE_U8: return CUDNN_DATA_UINT8;
-    case CF_MATH_DTYPE_I32: return CUDNN_DATA_INT32;
-    case CF_MATH_DTYPE_BF16: return CUDNN_DATA_BFLOAT16;
-    case CF_MATH_DTYPE_F16: return CUDNN_DATA_HALF;
-    case CF_MATH_DTYPE_F32: return CUDNN_DATA_FLOAT;
-    case CF_MATH_DTYPE_F64: return CUDNN_DATA_DOUBLE;
-    default: return CUDNN_DATA_FLOAT;
-  }
-}
-#endif
-
 static cudaDataType_t cf_math_cuda_dtype(cf_math_dtype dtype)
 {
   switch (dtype)
@@ -64,6 +47,22 @@ static cudnnDataType_t cf_math_cudnn_dtype(cf_math_dtype dtype)
     case CF_MATH_DTYPE_F32:  return CUDNN_DATA_FLOAT;
     case CF_MATH_DTYPE_F64:  return CUDNN_DATA_DOUBLE;
     default: return CUDNN_DATA_FLOAT;
+  }
+}
+
+static cf_bool cf_math_cudnn_dtype_supported(cf_math_dtype dtype)
+{
+  switch (dtype)
+  {
+    case CF_MATH_DTYPE_I8:
+    case CF_MATH_DTYPE_I32:
+    case CF_MATH_DTYPE_BF16:
+    case CF_MATH_DTYPE_F16:
+    case CF_MATH_DTYPE_F32:
+    case CF_MATH_DTYPE_F64:
+      return CF_TRUE;
+    default:
+      return CF_FALSE;
   }
 }
 
@@ -160,6 +159,8 @@ static cf_status cf_math_cudnn_desc_create(cf_math_cudnn_desc *desc, int rank, c
   if (desc == CF_NULL || dim == CF_NULL || strides == CF_NULL) return CF_ERR_NULL;
 
   *desc = (cf_math_cudnn_desc) {0};
+
+  if (rank < 4 || !cf_math_cudnn_dtype_supported(dtype)) return CF_OK;
 
   cudnnStatus_t state;
   cudnnDataType_t cudnn_dtype = cf_math_cudnn_dtype(dtype);

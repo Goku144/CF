@@ -68,7 +68,7 @@ typedef struct {
 static const char *g_train_csv = "public/train.csv";
 static const char *g_test_csv = "public/test.csv";
 static const char *g_dataset_root = "public";
-static int g_batch_cursor = 0;
+static uint32_t g_rng_state = 0x12345678u;
 
 static int app_check_cf_status(const char *step, cf_status state)
 {
@@ -141,6 +141,28 @@ static int app_join_path(char *dst, size_t dst_size, const char *root, const cha
   return n > 0 && (size_t)n < dst_size;
 }
 
+static uint32_t app_rand_u32(void)
+{
+  uint32_t x = g_rng_state;
+  x ^= x << 13;
+  x ^= x >> 17;
+  x ^= x << 5;
+  g_rng_state = x;
+  return x;
+}
+
+static void app_shuffle_indices(int *order, int count)
+{
+  if(order == NULL || count <= 1) return;
+
+  for(int i = count - 1; i > 0; --i) {
+    int j = (int)(app_rand_u32() % (uint32_t)(i + 1));
+    int tmp = order[i];
+    order[i] = order[j];
+    order[j] = tmp;
+  }
+}
+
 int load_csv(const char *csv_path, sample_t **out_samples, int *out_count)
 {
   FILE *file = fopen(csv_path, "rb");
@@ -205,10 +227,11 @@ static void app_resize_or_copy_u16(uint16_t *dst, const uint16_t *src, int width
   }
 }
 
-void get_next_batch(sample_t *dataset, int dataset_size, uint16_t *images_cpu, uint8_t *labels_cpu, int batch_size)
+static void app_load_batch(sample_t *dataset, int dataset_size, const int *order, int start, uint16_t *images_cpu, uint8_t *labels_cpu, int batch_size)
 {
   for(int i = 0; i < batch_size; ++i) {
-    int index = g_batch_cursor++ % dataset_size;
+    int slot = (start + i) % dataset_size;
+    int index = order == NULL ? slot : order[slot];
     char full_path[512];
     int width = 0;
     int height = 0;
@@ -233,6 +256,17 @@ void get_next_batch(sample_t *dataset, int dataset_size, uint16_t *images_cpu, u
     stbi_image_free(pixels);
     (void)channels;
   }
+}
+
+static void app_next_train_batch(sample_t *dataset, int dataset_size, int *order, int *cursor, uint16_t *images_cpu, uint8_t *labels_cpu, int batch_size)
+{
+  if(*cursor + batch_size > dataset_size) {
+    app_shuffle_indices(order, dataset_size);
+    *cursor = 0;
+  }
+
+  app_load_batch(dataset, dataset_size, order, *cursor, images_cpu, labels_cpu, batch_size);
+  *cursor += batch_size;
 }
 
 static int app_desc_create(digit_descs *d)
@@ -396,6 +430,33 @@ static void app_save_checkpoints(cf_math_handle *handle, digit_tensors *t, const
 
   snprintf(path, sizeof(path), "%s/dense_bias_step%d.bin", save_dir, step);
   if(!cf_math_save_weights(handle, &t->dense_b, path)) printf("checkpoint failed: %s\n", path);
+
+  printf("checkpoints saved to %s at step %d\n", save_dir, step);
+}
+
+static int app_load_weights_from_file(cf_math_handle *handle, cf_math *weights, const char *path)
+{
+  FILE *file = NULL;
+  __half *host = NULL;
+  size_t bytes = weights->elem_len * sizeof(__half);
+  int ok = 0;
+
+  host = (__half *)malloc(bytes);
+  if(host == NULL) { printf("load_weights: out of memory for %s\n", path); return 0; }
+
+  file = fopen(path, "rb");
+  if(file == NULL) { printf("load_weights: cannot open %s\n", path); free(host); return 0; }
+
+  if(fread(host, 1, bytes, file) == bytes) {
+    cudaError_t state = cudaMemcpyAsync(app_device_ptr(handle, weights), host, bytes, cudaMemcpyHostToDevice, handle->workspace->stream);
+    ok = (app_check_cuda_status("cudaMemcpyAsync(load_weights)", state) == 0);
+  } else {
+    printf("load_weights: short read on %s (expected %zu bytes)\n", path, bytes);
+  }
+
+  fclose(file);
+  free(host);
+  return ok;
 }
 
 int predict_digit(cf_math_handle *handle, digit_tensors *t, float *confidence)
@@ -425,6 +486,202 @@ int predict_digit(cf_math_handle *handle, digit_tensors *t, float *confidence)
   return best;
 }
 
+static int app_count_batch_correct(cf_math_handle *handle, digit_tensors *t, const uint8_t *labels_cpu)
+{
+  __half probs[DIGIT_BATCH_SIZE * DIGIT_PADDED_CLASSES];
+  int correct = 0;
+
+  if(app_check_cf_status("cf_math_copy_to_host(probs)", cf_math_copy_to_host(handle, &t->probs, probs, sizeof(probs)))) return -1;
+
+  for(int row = 0; row < DIGIT_BATCH_SIZE; ++row) {
+    int best = 0;
+    float best_p = -1.0f;
+
+    for(int col = 0; col < DIGIT_REAL_CLASSES; ++col) {
+      float p = __half2float(probs[row * DIGIT_PADDED_CLASSES + col]);
+      if(p > best_p) {
+        best_p = p;
+        best = col;
+      }
+    }
+
+    if(best == labels_cpu[row]) ++correct;
+  }
+
+  return correct;
+}
+
+static int app_count_batch_correct_detail(cf_math_handle *handle, digit_tensors *t,
+                                          const uint8_t *labels_cpu,
+                                          int *correct_per_digit, int *total_per_digit)
+{
+  __half probs[DIGIT_BATCH_SIZE * DIGIT_PADDED_CLASSES];
+  int correct = 0;
+
+  if(app_check_cf_status("cf_math_copy_to_host(probs_detail)", cf_math_copy_to_host(handle, &t->probs, probs, sizeof(probs)))) return -1;
+
+  for(int row = 0; row < DIGIT_BATCH_SIZE; ++row) {
+    int best = 0;
+    float best_p = -1.0f;
+    int label = (int)labels_cpu[row];
+
+    for(int col = 0; col < DIGIT_REAL_CLASSES; ++col) {
+      float p = __half2float(probs[row * DIGIT_PADDED_CLASSES + col]);
+      if(p > best_p) {
+        best_p = p;
+        best = col;
+      }
+    }
+
+    if(label >= 0 && label < DIGIT_REAL_CLASSES) {
+      total_per_digit[label]++;
+      if(best == label) {
+        correct_per_digit[label]++;
+        ++correct;
+      }
+    }
+  }
+
+  return correct;
+}
+
+static int app_eval_dataset(cf_math_handle *handle, digit_tensors *t, sample_t *dataset, int dataset_size, uint16_t *images_cpu, uint8_t *labels_cpu, const char *name)
+{
+  int full_batches = dataset_size / DIGIT_BATCH_SIZE;
+  int total = full_batches * DIGIT_BATCH_SIZE;
+  int correct = 0;
+  int correct_per_digit[DIGIT_REAL_CLASSES];
+  int total_per_digit[DIGIT_REAL_CLASSES];
+
+  for(int i = 0; i < DIGIT_REAL_CLASSES; ++i) {
+    correct_per_digit[i] = 0;
+    total_per_digit[i] = 0;
+  }
+
+  if(full_batches <= 0) return 0;
+
+  for(int batch = 0; batch < full_batches; ++batch) {
+    app_load_batch(dataset, dataset_size, NULL, batch * DIGIT_BATCH_SIZE, images_cpu, labels_cpu, DIGIT_BATCH_SIZE);
+
+    if(app_check_cuda_status("cudaMemcpyAsync(eval_images)", cudaMemcpyAsync(app_device_ptr(handle, &t->input_raw), images_cpu, DIGIT_BATCH_SIZE * DIGIT_IMAGE_PIXELS * sizeof(uint16_t), cudaMemcpyHostToDevice, handle->workspace->stream))) return 0;
+
+    app_normalize_u16_to_f16(handle, &t->input, &t->input_raw);
+    digit_forward(handle, t);
+
+    int batch_correct = app_count_batch_correct_detail(handle, t, labels_cpu, correct_per_digit, total_per_digit);
+    if(batch_correct < 0) return 0;
+    correct += batch_correct;
+  }
+
+  printf("%s accuracy: %d/%d %.2f%%\n", name, correct, total, 100.0f * (float)correct / (float)total);
+  for(int d = 0; d < DIGIT_REAL_CLASSES; ++d) {
+    int tc = total_per_digit[d];
+    int cc = correct_per_digit[d];
+    printf("  digit %d: %d/%d %.2f%%\n", d, cc, tc, tc > 0 ? 100.0f * (float)cc / (float)tc : 0.0f);
+  }
+  return 1;
+}
+
+static int app_run_predict_mode(int argc, char **argv)
+{
+  const cf_usize workspace_capacity = 128 * 1024 * 1024;
+  const cf_usize storage_capacity   = 256 * 1024 * 1024;
+  cf_math_context   ctx       = {0};
+  cf_math_workspace workspace = {0};
+  cf_math_handle    handle    = {0};
+  digit_descs   descs;
+  digit_tensors tensors;
+  uint16_t images_cpu[DIGIT_IMAGE_PIXELS];
+  int exit_code = 1;
+
+  if(argc < 6) {
+    printf("Usage: %s predict <image> <conv_weights.bin> <dense_weights.bin> <dense_bias.bin>\n", argv[0]);
+    return 1;
+  }
+
+  const char *img_path      = argv[2];
+  const char *conv_w_path   = argv[3];
+  const char *dense_w_path  = argv[4];
+  const char *dense_b_path  = argv[5];
+
+  if(app_check_cf_status("cf_math_context_create",   cf_math_context_create(&ctx, 0, CF_MATH_DEVICE_CUDA)))   goto cleanup;
+  if(app_check_cf_status("cf_math_workspace_create", cf_math_workspace_create(&workspace, workspace_capacity, CF_MATH_DEVICE_CUDA))) goto cleanup;
+  if(app_check_cf_status("cf_math_handle_create",    cf_math_handle_create(&handle, &ctx, &workspace, storage_capacity, CF_MATH_DEVICE_CUDA))) goto cleanup;
+
+  if(!app_desc_create(&descs))               goto cleanup;
+  if(!app_bind_tensors(&handle, &tensors, &descs)) goto cleanup;
+
+  /* Load weights from disk */
+  if(!app_load_weights_from_file(&handle, &tensors.conv_w,   conv_w_path))  goto cleanup;
+  if(!app_load_weights_from_file(&handle, &tensors.dense_w,  dense_w_path)) goto cleanup;
+  if(!app_load_weights_from_file(&handle, &tensors.dense_b,  dense_b_path)) goto cleanup;
+
+  /* Load and prepare image */
+  {
+    int width = 0, height = 0, channels = 0;
+    uint16_t *pixels = stbi_load_16(img_path, &width, &height, &channels, 1);
+    if(pixels == NULL || width <= 0 || height <= 0) {
+      printf("predict: cannot load image: %s\n", img_path);
+      goto cleanup;
+    }
+    app_resize_or_copy_u16(images_cpu, pixels, width, height);
+    stbi_image_free(pixels);
+    (void)channels;
+  }
+
+  /* Zero the full batch staging buffer, then place our single image in slot 0 */
+  if(app_check_cuda_status("cudaMemsetAsync(input_raw)",
+      cudaMemsetAsync(app_device_ptr(&handle, &tensors.input_raw), 0,
+                      DIGIT_BATCH_SIZE * DIGIT_IMAGE_PIXELS * sizeof(uint16_t),
+                      handle.workspace->stream))) goto cleanup;
+
+  if(app_check_cuda_status("cudaMemcpyAsync(single_image)",
+      cudaMemcpyAsync(app_device_ptr(&handle, &tensors.input_raw), images_cpu,
+                      DIGIT_IMAGE_PIXELS * sizeof(uint16_t),
+                      cudaMemcpyHostToDevice, handle.workspace->stream))) goto cleanup;
+
+  app_normalize_u16_to_f16(&handle, &tensors.input, &tensors.input_raw);
+
+  /* Run forward pass and read first-row probs */
+  {
+    __half probs_row[DIGIT_PADDED_CLASSES];
+    int best = 0;
+    float best_p = -1.0f;
+
+    digit_forward(&handle, &tensors);
+
+    cf_math first_row = tensors.probs;
+    first_row.elem_len = DIGIT_PADDED_CLASSES;
+    if(app_check_cf_status("cf_math_copy_to_host(probs)",
+        cf_math_copy_to_host(&handle, &first_row, probs_row, sizeof(probs_row)))) goto cleanup;
+
+    for(int i = 0; i < DIGIT_REAL_CLASSES; ++i) {
+      float p = __half2float(probs_row[i]);
+      if(p > best_p) { best_p = p; best = i; }
+    }
+
+    printf("\nimage: %s\n", img_path);
+    printf("predicted digit: %d  (confidence %.2f%%)\n\n", best, best_p * 100.0f);
+    printf("class probabilities:\n");
+    for(int i = 0; i < DIGIT_REAL_CLASSES; ++i) {
+      float p = __half2float(probs_row[i]);
+      int bar_len = (int)(p * 40.0f + 0.5f);
+      printf("  %d | ", i);
+      for(int b = 0; b < bar_len; ++b) printf("#");
+      printf("%*s %.2f%%\n", 40 - bar_len, "", p * 100.0f);
+    }
+  }
+
+  exit_code = 0;
+
+cleanup:
+  app_desc_destroy(&descs);
+  cf_math_handle_destroy(&handle);
+  cf_math_workspace_destroy(&workspace);
+  cf_math_context_destroy(&ctx);
+  return exit_code;
+}
+
 void train_digit_recognizer(cf_math_handle *handle, int total_steps, const char *save_dir)
 {
   sample_t *train = NULL;
@@ -438,6 +695,8 @@ void train_digit_recognizer(cf_math_handle *handle, int total_steps, const char 
   cf_math_grad_node dense_b_node;
   uint16_t *images_cpu = NULL;
   uint8_t *labels_cpu = NULL;
+  int *train_order = NULL;
+  int train_cursor = 0;
   float loss_host = 0.0f;
   const float lr = 0.01f;
 
@@ -457,6 +716,11 @@ void train_digit_recognizer(cf_math_handle *handle, int total_steps, const char 
 
   app_attach_grads(&tensors, &conv_node, &dense_w_node, &dense_b_node);
 
+  train_order = (int *)malloc((size_t)train_count * sizeof(int));
+  if(train_order == NULL) goto done;
+  for(int i = 0; i < train_count; ++i) train_order[i] = i;
+  app_shuffle_indices(train_order, train_count);
+
   if(!app_init_param(handle, &tensors.conv_w, 0.01f)) goto done;
   if(!app_init_param(handle, &tensors.dense_w, 0.001f)) goto done;
   if(!app_init_zero_param(handle, &tensors.dense_b)) goto done;
@@ -465,7 +729,7 @@ void train_digit_recognizer(cf_math_handle *handle, int total_steps, const char 
   if(app_check_cuda_status("cudaMallocHost(labels)", cudaMallocHost((void **)&labels_cpu, DIGIT_BATCH_SIZE * sizeof(uint8_t)))) goto done;
 
   for(int step = 1; step <= total_steps; ++step) {
-    get_next_batch(train, train_count, images_cpu, labels_cpu, DIGIT_BATCH_SIZE);
+    app_next_train_batch(train, train_count, train_order, &train_cursor, images_cpu, labels_cpu, DIGIT_BATCH_SIZE);
 
     cf_math_zero_grad_f16(handle, &tensors.conv_w);
     cf_math_zero_grad_f16(handle, &tensors.dense_w);
@@ -491,7 +755,9 @@ void train_digit_recognizer(cf_math_handle *handle, int total_steps, const char 
     cf_math_sgd_update_f16(handle, &tensors.dense_b, &tensors.d_dense_b, lr);
 
     if(app_check_cf_status("cf_math_copy_to_host(loss)", cf_math_copy_to_host(handle, &tensors.loss, &loss_host, sizeof(loss_host)))) goto done;
-    printf("step %d/%d loss %.6f\n", step, total_steps, loss_host);
+    int batch_correct = app_count_batch_correct(handle, &tensors, labels_cpu);
+    if(batch_correct < 0) goto done;
+    printf("step %d/%d loss %.6f acc %.2f%%\n", step, total_steps, loss_host, 100.0f * (float)batch_correct / (float)DIGIT_BATCH_SIZE);
 
     if((step % 512) == 0 || step == total_steps) {
       app_save_checkpoints(handle, &tensors, save_dir, step);
@@ -499,15 +765,11 @@ void train_digit_recognizer(cf_math_handle *handle, int total_steps, const char 
   }
 
   if(test_count > 0) {
-    float confidence = 0.0f;
-    get_next_batch(test, test_count, images_cpu, labels_cpu, DIGIT_BATCH_SIZE);
-    if(app_check_cuda_status("cudaMemcpyAsync(test_images)", cudaMemcpyAsync(app_device_ptr(handle, &tensors.input_raw), images_cpu, DIGIT_BATCH_SIZE * DIGIT_IMAGE_PIXELS * sizeof(uint16_t), cudaMemcpyHostToDevice, handle->workspace->stream))) goto done;
-    app_normalize_u16_to_f16(handle, &tensors.input, &tensors.input_raw);
-    int digit = predict_digit(handle, &tensors, &confidence);
-    printf("test prediction sample: predicted=%d label=%u confidence=%.6f\n", digit, (unsigned)labels_cpu[0], confidence);
+    if(!app_eval_dataset(handle, &tensors, test, test_count, images_cpu, labels_cpu, "test")) goto done;
   }
 
 done:
+  free(train_order);
   if(images_cpu != NULL) cudaFreeHost(images_cpu);
   if(labels_cpu != NULL) cudaFreeHost(labels_cpu);
   app_desc_destroy(&descs);
@@ -517,8 +779,14 @@ done:
 
 int main(int argc, char **argv)
 {
+  /* Dispatch: predict subcommand */
+  if(argc > 1 && strcmp(argv[1], "predict") == 0) {
+    return app_run_predict_mode(argc, argv);
+  }
+
+  /* Training mode */
   int total_steps = argc > 1 ? atoi(argv[1]) : 2;
-  const char *save_dir = argc > 2 ? argv[2] : "checkpoints";
+  const char *save_dir = argc > 2 ? argv[2] : "public/checkpoints";
   const cf_usize workspace_capacity = 128 * 1024 * 1024;
   const cf_usize storage_capacity = 256 * 1024 * 1024;
   cf_math_context ctx = {0};
