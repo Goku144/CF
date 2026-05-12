@@ -20,7 +20,7 @@
 # PUBLIC VARS
 ##############
 
-INC := -Ipublic/inc -I/usr/local/cuda/include -I/usr/include
+INC := -Ipublic/inc -Ilib/src -I/usr/local/cuda/include -I/usr/include
 
 ###############
 # NVCC OPTIONS 
@@ -46,9 +46,9 @@ endif
 # Build App
 ############
 
-app: runApp
+app: app/build/app
 
-runApp: app/build/app
+run: app/build/app
 	@mkdir -p public/checkpoints
 	@./$< 2 public/checkpoints
 
@@ -77,4 +77,4 @@ lib/bin/%.o: lib/src/%.cu
 clean:
 	rm -rf lib/bin app/bin app/build
 
-.PHONY: app runApp lib clean
+.PHONY: app run lib clean

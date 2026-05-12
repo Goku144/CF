@@ -1,12 +1,10 @@
 #if !defined(DL_MODEL_HPP)
 #define DL_MODEL_HPP
 
-#include "MODEL/Layer.hpp"
-
-class ConvLayer;
-class PoolLayer;
-class ExtractFeaturesLayer;
-class DenseLayer;
+#include "MODEL/ConvLayer.hpp"
+#include "MODEL/PoolLayer.hpp"
+#include "MODEL/ExtractFeaturesLayer.hpp"
+#include "MODEL/DenseLayer.hpp"
 
 class HandleCpu;
 class HandleCuda;

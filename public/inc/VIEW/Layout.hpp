@@ -33,7 +33,7 @@ union layout
      * it describe how everything is stored
      * in memory and wath is the format
      * @format CUDNN_TENSOR_NCHW
-     * @datatype CUDNN_DATA_HALF
+     * @datatype CUDNN_DATA_HALF  (fp16 storage)
      * @N the batch number of images
      * @C chanel of the image grayscale/rgb/...
      * @H the height of the image
@@ -48,7 +48,7 @@ union layout
      * will slide over the Tensor based
      * on the convolution description
      * @format CUDNN_TENSOR_NCHW
-     * @datatype CUDNN_DATA_HALF
+     * @datatype CUDNN_DATA_HALF  (fp16 storage)
      * @K number of output 16 because we use 16 class
      * @C chanel of the image grayscale/rgb/...
      * @H the height of the image 3
@@ -63,7 +63,7 @@ union layout
      * how it is in the memory and wath 
      * type with row columns and how much
      * padding of the leading dim (column)
-     * @type CUDA_R_16F
+     * @type CUDA_R_16F  (fp16 storage)
      * @rows
      * @colums
      * @ld will be 16
@@ -93,7 +93,7 @@ union layout
      * @strides u,v
      * @dilation d_h,d_w
      * @mode CUDNN_CROSS_CORRELATION
-     * @computeType CUDNN_DATA_FLOAT
+     * @computeType CUDNN_DATA_FLOAT (fp32 compute)
      * @func cudnnSetConvolution2dDescriptor
     \*******************************************/
     cudnnConvolutionDescriptor_t conv;
@@ -114,7 +114,7 @@ union layout
      * we will use it do describe how
      * the matrix mul will be the type
      * too do the math and do we add bias
-     * @computeType CUBLAS_COMPUTE_32F
+     * @computeType CUBLAS_COMPUTE_32F (fp32 compute)
      * @epilogue CUBLASLT_EPILOGUE_BIAS
      * @func cublasLtMatmulDescCreate
     \*************************************/

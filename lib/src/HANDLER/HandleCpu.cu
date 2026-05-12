@@ -16,7 +16,7 @@
 HandleCpu::HandleCpu(size_t capacity)
 {
   std::string err_msg = "";
-  this->capacity = ALIGN_128(capacity * sizeof(float));
+  this->capacity = ALIGN_128(capacity * sizeof(__half));
 
 #if (CUDA_CPU == 1)
   if(cudaMallocHost(&this->backend, this->capacity) != cudaSuccess)
@@ -79,11 +79,12 @@ void HandleCpu::copyToDevice(HandleCuda& handle, Math& deviceMath, Math& hostMat
 
 void HandleCpu::bind(Math& math)
 {
-  size_t len = ALIGN_128(math.getLayout()->getStrides().at(0) * math.getLayout()->getDim().at(0) * sizeof(float));
+  /* fp16 storage: sizeof(__half) = 2 bytes per element */
+  size_t len = ALIGN_128(math.getLayout()->getStrides().at(0) * math.getLayout()->getDim().at(0) * sizeof(__half));
 
   if (this->offset > this->capacity || len > this->capacity - this->offset)
   {
-    std::cerr << "[WARNING] CUDA Handler Memory Not Enough to allocate requested Capacity, Not Allocating!\n";
+    std::cerr << "[WARNING] CPU Handler Memory Not Enough to allocate requested Capacity, Not Allocating!\n";
     return;
   }
 

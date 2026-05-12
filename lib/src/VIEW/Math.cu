@@ -1,7 +1,5 @@
 #include "VIEW/Math.hpp"
 
-#include <immintrin.h>
-
 
 Math::Math(size_t offset, size_t capacity, Layout *layout)
 {

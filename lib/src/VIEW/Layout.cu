@@ -4,6 +4,8 @@
 #include <string>
 #include <stdexcept>
 
+#include <cuda_fp16.h>
+
 #define ALIGN_128(x) (x + 0x0F) & ~0x0F
 
 Layout::Layout(int dim[HIGHEST_RANK], int rank, layoutType lt, operationType ot)
@@ -54,20 +56,28 @@ void Layout::update(void)
 
 void Layout::createDescriptors(void)
 {
+  /* ── Layout descriptors ──────────────────────────────────────────── */
+
   if (this->lt == LT_FILTER)
     if (cudnnCreateFilterDescriptor(&this->ly.filter) != CUDNN_STATUS_SUCCESS)
       throw std::runtime_error("FATAL ERROR: Filter descriptor creation failed!");
 
   if (this->lt == LT_MATRIX)
   {
+    /*
+     * fp16 storage: CUDA_R_16F
+     * Leading dimension = number of columns (row-major)
+     */
     int ld = this->dim[1];
-    if (cublasLtMatrixLayoutCreate(&this->ly.matrix, CUDA_R_32F, this->dim[0], this->dim[1], ld) != CUBLAS_STATUS_SUCCESS)
+    if (cublasLtMatrixLayoutCreate(&this->ly.matrix, CUDA_R_16F, this->dim[0], this->dim[1], ld) != CUBLAS_STATUS_SUCCESS)
       throw std::runtime_error("FATAL ERROR: Matrix layout creation failed!");
   }
 
   if (this->lt == LT_TENSOR)
     if (cudnnCreateTensorDescriptor(&this->ly.tensor) != CUDNN_STATUS_SUCCESS)
       throw std::runtime_error("FATAL ERROR: Tensor descriptor creation failed!");
+
+  /* ── Operation descriptors ───────────────────────────────────────── */
 
   if (this->ot == OT_CONV)
     if (cudnnCreateConvolutionDescriptor(&this->op.conv) != CUDNN_STATUS_SUCCESS)
@@ -84,8 +94,10 @@ void Layout::createDescriptors(void)
 
 void Layout::setDescriptors(void)
 {
+  /* ── Layout descriptors ──────────────────────────────────────────── */
+
   if (this->lt == LT_FILTER)
-    if (cudnnSetFilter4dDescriptor(this->ly.filter, CUDNN_DATA_FLOAT, CUDNN_TENSOR_NCHW, this->dim[0], this->dim[1], this->dim[2], this->dim[3]) != CUDNN_STATUS_SUCCESS)
+    if (cudnnSetFilter4dDescriptor(this->ly.filter, CUDNN_DATA_HALF, CUDNN_TENSOR_NCHW, this->dim[0], this->dim[1], this->dim[2], this->dim[3]) != CUDNN_STATUS_SUCCESS)
       throw std::runtime_error("FATAL ERROR: Filter descriptor setup failed!");
 
   if (this->lt == LT_MATRIX)
@@ -96,15 +108,22 @@ void Layout::setDescriptors(void)
   }
 
   if (this->lt == LT_TENSOR)
-    if (cudnnSetTensor4dDescriptor(this->ly.tensor, CUDNN_TENSOR_NCHW, CUDNN_DATA_FLOAT, this->dim[0], this->dim[1], this->dim[2], this->dim[3]) != CUDNN_STATUS_SUCCESS)
+    if (cudnnSetTensor4dDescriptor(this->ly.tensor, CUDNN_TENSOR_NCHW, CUDNN_DATA_HALF, this->dim[0], this->dim[1], this->dim[2], this->dim[3]) != CUDNN_STATUS_SUCCESS)
       throw std::runtime_error("FATAL ERROR: Tensor descriptor setup failed!");
+
+  /* ── Operation descriptors ───────────────────────────────────────── */
 
   if (this->ot == OT_CONV)
   {
+    /*
+     * fp16 storage, fp32 compute:
+     *   CUDNN_DATA_FLOAT as compute type lets cuDNN accumulate in fp32
+     *   while reading/writing fp16 tensors.
+     */
     if (cudnnSetConvolution2dDescriptor(this->op.conv, 1, 1, 1, 1, 1, 1, CUDNN_CROSS_CORRELATION, CUDNN_DATA_FLOAT) != CUDNN_STATUS_SUCCESS)
       throw std::runtime_error("FATAL ERROR: Convolution descriptor setup failed!");
 
-    if (cudnnSetConvolutionMathType(this->op.conv, CUDNN_DEFAULT_MATH) != CUDNN_STATUS_SUCCESS)
+    if (cudnnSetConvolutionMathType(this->op.conv, CUDNN_TENSOR_OP_MATH) != CUDNN_STATUS_SUCCESS)
       throw std::runtime_error("FATAL ERROR: Convolution math type setup failed!");
   }
 

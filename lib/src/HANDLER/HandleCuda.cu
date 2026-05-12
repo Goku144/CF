@@ -18,7 +18,7 @@ HandleCuda::HandleCuda(size_t capacity)
   /* Initial Var */
   std::string err_msg = "";
   this->workspace.scratchpad_size = ALIGN_128(WORKSPACE_SCRATCH_SPACE * sizeof(float));
-  this->capacity = ALIGN_128(capacity * sizeof(float));
+  this->capacity = ALIGN_128(capacity * sizeof(__half));
 
   /* Initialize Workspace */
   if(cudaMalloc(&this->workspace.scratchpad, this->workspace.scratchpad_size) != cudaSuccess)
@@ -156,7 +156,8 @@ void HandleCuda::copyToHost(HandleCpu& handle, Math& hostMath, Math& deviceMath)
 
 void HandleCuda::bind(Math& math)
 {
-  size_t len = ALIGN_128(math.getLayout()->getStrides().at(0) * math.getLayout()->getDim().at(0) * sizeof(float));
+  /* fp16 storage: sizeof(__half) = 2 bytes per element */
+  size_t len = ALIGN_128(math.getLayout()->getStrides().at(0) * math.getLayout()->getDim().at(0) * sizeof(__half));
 
   if (this->offset > this->capacity || len > this->capacity - this->offset)
   {
