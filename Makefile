@@ -50,7 +50,7 @@ app: app/build/app
 
 run: app/build/app
 	@mkdir -p public/checkpoints
-	@./$< 2 public/checkpoints
+	@./$< 
 
 app/build/app: app/bin/app.o $(OBJS_CUDA)
 	@mkdir -p $(dir $@)
