@@ -60,7 +60,7 @@ void Layout::createDescriptors(void)
 
   if (this->lt == LT_MATRIX)
   {
-    int ld = ALIGN_128(this->dim[1]);
+    int ld = this->dim[1];
     if (cublasLtMatrixLayoutCreate(&this->ly.matrix, CUDA_R_32F, this->dim[0], this->dim[1], ld) != CUBLAS_STATUS_SUCCESS)
       throw std::runtime_error("FATAL ERROR: Matrix layout creation failed!");
   }

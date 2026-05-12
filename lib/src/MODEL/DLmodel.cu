@@ -7,6 +7,9 @@
 #include <fstream>
 #include <filesystem>
 #include <iostream>
+#include <cmath>
+#include <random>
+#include <vector>
 
 #include <cublasLt.h>
 #include <cudnn.h>
@@ -169,6 +172,60 @@ static __global__ void biasBackwardKernel(const float *dz, float *db, int batch,
     sum += dz[n * output + o];
 
   db[o] = sum;
+}
+
+static void initMathRandom(HandleCuda& gpu, Math& m, float scale)
+{
+  static std::mt19937 rng(1337);
+  std::normal_distribution<float> dist(0.0f, scale);
+
+  size_t count = m.getCapacity() / sizeof(float);
+  std::vector<float> host(count);
+
+  for (size_t i = 0; i < count; i++)
+    host[i] = dist(rng);
+
+  cudaMemcpy((uint8_t *)gpu.getData() + m.getOffset(), host.data(), m.getCapacity(), cudaMemcpyHostToDevice);
+}
+
+static void initMathZero(HandleCuda& gpu, Math& m)
+{
+  cudaMemset((uint8_t *)gpu.getData() + m.getOffset(), 0, m.getCapacity());
+}
+
+static void printTrainingProgress(HandleCuda& gpu, int iteration, float *lossDevice, Math& probs, Math& targets)
+{
+  float loss = 0.0f;
+  float prob[64 * 10];
+  float target[64];
+
+  cudaMemcpyAsync(&loss, lossDevice, sizeof(float), cudaMemcpyDeviceToHost, gpu.getWorkspaceStream());
+  cudaMemcpyAsync(prob, (uint8_t *)gpu.getData() + probs.getOffset(), sizeof(prob), cudaMemcpyDeviceToHost, gpu.getWorkspaceStream());
+  cudaMemcpyAsync(target, (uint8_t *)gpu.getData() + targets.getOffset(), sizeof(target), cudaMemcpyDeviceToHost, gpu.getWorkspaceStream());
+  cudaStreamSynchronize(gpu.getWorkspaceStream());
+
+  int correct = 0;
+  float confidence = 0.0f;
+
+  for (int n = 0; n < 64; n++)
+  {
+    int best = 0;
+
+    for (int c = 1; c < 10; c++)
+      if (prob[n * 10 + c] > prob[n * 10 + best])
+        best = c;
+
+    confidence += prob[n * 10 + best];
+
+    if (best == (int)target[n])
+      correct++;
+  }
+
+  std::cout << "iter " << iteration
+            << " loss: " << loss
+            << " accuracy: " << (float)correct / 64.0f
+            << " avg confidence: " << confidence / 64.0f
+            << std::endl;
 }
 
 
@@ -543,10 +600,13 @@ public:
     float alpha = 1.0f;
     float beta = 0.0f;
 
-    void *x = (uint8_t *)this->handle->getData() + a1.getOffset();
+    void *src = (uint8_t *)this->handle->getData() + a1.getOffset();
+    void *x = (uint8_t *)this->handle->getData() + this->x.getOffset();
     void *w = (uint8_t *)this->handle->getData() + this->w.getOffset();
     void *b = (uint8_t *)this->handle->getData() + this->b.getOffset();
     void *z = (uint8_t *)this->handle->getData() + this->z.getOffset();
+
+    cudaMemcpyAsync(x, src, a1.getCapacity(), cudaMemcpyDeviceToDevice, this->handle->getWorkspaceStream());
 
     cublasLtMatmulDescSetAttribute(
       this->z.getLayout()->getOpDescriptor().matrix,
@@ -563,7 +623,7 @@ public:
       &alpha,
 
       x,
-      a1.getLayout()->getLayoutDescriptor().matrix,
+      this->x.getLayout()->getLayoutDescriptor().matrix,
 
       w,
       this->w.getLayout()->getLayoutDescriptor().matrix,
@@ -699,10 +759,13 @@ public:
     float alpha = 1.0f;
     float beta = 0.0f;
 
-    void *x = (uint8_t *)this->handle->getData() + a1.getOffset();
+    void *src = (uint8_t *)this->handle->getData() + a1.getOffset();
+    void *x = (uint8_t *)this->handle->getData() + this->x.getOffset();
     void *w = (uint8_t *)this->handle->getData() + this->w.getOffset();
     void *b = (uint8_t *)this->handle->getData() + this->b.getOffset();
     void *z = (uint8_t *)this->handle->getData() + this->z.getOffset();
+
+    cudaMemcpyAsync(x, src, a1.getCapacity(), cudaMemcpyDeviceToDevice, this->handle->getWorkspaceStream());
 
     cublasLtMatmulDescSetAttribute(
       this->z.getLayout()->getOpDescriptor().matrix,
@@ -717,7 +780,7 @@ public:
       &alpha,
 
       x,
-      a1.getLayout()->getLayoutDescriptor().matrix,
+      this->x.getLayout()->getLayoutDescriptor().matrix,
 
       w,
       this->w.getLayout()->getLayoutDescriptor().matrix,
@@ -805,6 +868,15 @@ DLModel::DLModel()
   this->poolL = new PoolLayer(*this->gpu);
   this->exfL = new ExtractFeaturesLayer(*this->gpu);
   this->dL = new DenseLayer(*this->gpu);
+
+  initMathRandom(*this->gpu, this->convL->w, std::sqrt(2.0f / 9.0f));
+  initMathZero(*this->gpu, this->convL->b);
+
+  initMathRandom(*this->gpu, this->exfL->w, std::sqrt(2.0f / 196.0f));
+  initMathZero(*this->gpu, this->exfL->b);
+
+  initMathRandom(*this->gpu, this->dL->w, std::sqrt(2.0f / 128.0f));
+  initMathZero(*this->gpu, this->dL->b);
 }
 
 DLModel::~DLModel()
@@ -839,7 +911,9 @@ void DLModel::train(int iterations)
     this->exfL->activationReLU();
 
     this->dL->linear(this->exfL->act);
-    this->dL->softmaxCrossEntropy(this->deviceTargets);
+    float *loss = this->dL->softmaxCrossEntropy(this->deviceTargets);
+
+    printTrainingProgress(*this->gpu, i + 1, loss, this->dL->act, this->deviceTargets);
 
     float lr = 0.01f;
 
