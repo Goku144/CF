@@ -25,6 +25,10 @@
 #define CF_IO_INIT_SIZE 32
 #define CF_IO_RESERVE_SIZE 2048
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /**
  * Runtime IO helpers assume that pointer arguments and framework objects are
  * valid. Argument validation belongs to higher layers.
@@ -120,5 +124,7 @@ cf_status cf_io_write_text(const char *path, cf_string *src);
  * writing fails, or `CF_ERR_IO_CLOSE` when closing fails.
  */
 cf_status cf_io_append_text(const char *path, cf_string *src);
-
+#ifdef __cplusplus
+}
+#endif
 #endif /* CF_IO_H */

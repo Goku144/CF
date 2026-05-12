@@ -33,6 +33,10 @@ typedef enum cf_log_level
   CF_LOG_LEVEL_OFF = 6,
 } cf_log_level;
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /**
  * @brief Return the symbolic name for a log level.
  *
@@ -90,4 +94,7 @@ void cf_log_write(cf_log_level level, const char *file, int line, const char *fm
 #define CF_LOG_STATUS(level, status) cf_log_write(level, __FILE__, __LINE__, "%s", cf_status_as_char(status))
 #define CF_LOG_CUDA_STATUS(status) cf_log_write(CF_LOG_LEVEL_ERROR, __FILE__, __LINE__, "CUDA: %s", cf_status_as_char(status))
 
+#ifdef __cplusplus
+}
+#endif
 #endif /* CF_LOG_H */

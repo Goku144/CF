@@ -45,6 +45,11 @@ typedef struct cf_buffer
   cf_alloc allocator;
 } cf_buffer, cf_string;
 
+
+#ifdef __cplusplus
+extern "C"{
+#endif
+
 /**
  * @brief Initialize a buffer with the default allocator and optional capacity.
  *
@@ -168,4 +173,8 @@ cf_bool cf_buffer_is_empty(cf_buffer *buffer);
  */
 void cf_buffer_info(cf_buffer *buffer);
 
+
+#ifdef __cplusplus
+}
+#endif
 #endif /* CF_MEMORY_H */

@@ -22,6 +22,10 @@
 #include "RUNTIME/cf_status.h"
 #include "RUNTIME/cf_types.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /**
  * @brief Fill a memory range with cryptographically secure random bytes.
  *
@@ -52,5 +56,9 @@ cf_status cf_random_u32(cf_u32 *dst);
  * `CF_ERR_RANDOM` when the operating system RNG fails.
  */
 cf_status cf_random_u64(cf_u64 *dst);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* CF_RANDOM_H */
