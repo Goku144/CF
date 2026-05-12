@@ -127,6 +127,51 @@ static __global__ void reduceLoss64Kernel(float *lossVec, float *lossOut)
     lossOut[0] = s[0] / 64.0f;
 }
 
+static void rowMajorGemm
+(
+  cublasHandle_t handle, cublasOperation_t transA, cublasOperation_t transB,
+  int m, int n, int k, const float *a, int aCols, const float *b, int bCols,
+  float *c
+)
+{
+  float alpha = 1.0f;
+  float beta = 0.0f;
+
+  cublasSgemm
+  (
+    handle,
+    transB,
+    transA,
+    n,
+    m,
+    k,
+    &alpha,
+    b,
+    bCols,
+    a,
+    aCols,
+    &beta,
+    c,
+    n
+  );
+}
+
+static __global__ void biasBackwardKernel(const float *dz, float *db, int batch, int output)
+{
+  int o = blockIdx.x * blockDim.x + threadIdx.x;
+
+  if (o >= output)
+    return;
+
+  float sum = 0.0f;
+
+  for (int n = 0; n < batch; n++)
+    sum += dz[n * output + o];
+
+  db[o] = sum;
+}
+
+
 static void saveMath(HandleCuda& gpu, Math& m, const char *path)
 {
   void *host;
@@ -328,6 +373,20 @@ public:
       dw
     );
   }
+
+  void learnFunc(float lr)
+  {
+    float negLr = -lr;
+
+    float *w  = (float *)((uint8_t *)this->handle->getData() + this->w.getOffset());
+    float *b  = (float *)((uint8_t *)this->handle->getData() + this->b.getOffset());
+    float *dw = (float *)((uint8_t *)this->handle->getData() + this->dw.getOffset());
+    float *db = (float *)((uint8_t *)this->handle->getData() + this->db.getOffset());
+
+    cublasSaxpy(this->handle->getContextCublasHanler(), 1 * 1 * 3 * 3, &negLr, dw, 1, w, 1);
+    cublasSaxpy(this->handle->getContextCublasHanler(), 1, &negLr, db, 1, b, 1);
+  }
+
 };
 
 
@@ -348,7 +407,10 @@ public:
     float beta = 0.0f;
 
     void *x = (uint8_t *)this->handle->getData() + a1.getOffset();
+    void *poolX = (uint8_t *)this->handle->getData() + this->x.getOffset();
     void *z = (uint8_t *)this->handle->getData() + this->z.getOffset();
+
+    cudaMemcpyAsync(poolX, x, a1.getCapacity(), cudaMemcpyDeviceToDevice, this->handle->getWorkspaceStream());
 
     cudnnPoolingForward(
       this->handle->getContextCudnnHanler(),
@@ -495,6 +557,37 @@ public:
       (uint4 *)dz
     );
   }
+
+  void backLinear(Math& a1)
+  {
+    float *x  = (float *)((uint8_t *)this->handle->getData() + a1.getOffset());
+    float *w  = (float *)((uint8_t *)this->handle->getData() + this->w.getOffset());
+    float *dz = (float *)((uint8_t *)this->handle->getData() + this->dz.getOffset());
+
+    float *da = (float *)((uint8_t *)this->handle->getData() + this->da.getOffset());
+    float *dw = (float *)((uint8_t *)this->handle->getData() + this->dw.getOffset());
+    float *db = (float *)((uint8_t *)this->handle->getData() + this->db.getOffset());
+
+    rowMajorGemm(this->handle->getContextCublasHanler(), CUBLAS_OP_N, CUBLAS_OP_T, 64, 196, 128, dz, 128, w, 128, da);
+
+    rowMajorGemm(this->handle->getContextCublasHanler(), CUBLAS_OP_T, CUBLAS_OP_N, 196, 128, 64, x, 196, dz, 128, dw);
+
+    biasBackwardKernel<<<1, 128, 0, this->handle->getWorkspaceStream()>>>(dz, db, 64, 128);
+  }
+
+  void learnFunc(float lr)
+  {
+    float negLr = -lr;
+
+    float *w  = (float *)((uint8_t *)this->handle->getData() + this->w.getOffset());
+    float *b  = (float *)((uint8_t *)this->handle->getData() + this->b.getOffset());
+    float *dw = (float *)((uint8_t *)this->handle->getData() + this->dw.getOffset());
+    float *db = (float *)((uint8_t *)this->handle->getData() + this->db.getOffset());
+
+    cublasSaxpy(this->handle->getContextCublasHanler(), 196 * 128, &negLr, dw, 1, w, 1);
+    cublasSaxpy(this->handle->getContextCublasHanler(), 128, &negLr, db, 1, b, 1);
+  }
+
 };
 
 
@@ -585,6 +678,36 @@ public:
 
     return lossOut;
   }
+
+  void backLinear(Math& a1)
+  {
+    float *x  = (float *)((uint8_t *)this->handle->getData() + a1.getOffset());
+    float *w  = (float *)((uint8_t *)this->handle->getData() + this->w.getOffset());
+    float *dz = (float *)((uint8_t *)this->handle->getData() + this->dz.getOffset());
+
+    float *da = (float *)((uint8_t *)this->handle->getData() + this->da.getOffset());
+    float *dw = (float *)((uint8_t *)this->handle->getData() + this->dw.getOffset());
+    float *db = (float *)((uint8_t *)this->handle->getData() + this->db.getOffset());
+
+    rowMajorGemm(this->handle->getContextCublasHanler(), CUBLAS_OP_N, CUBLAS_OP_T, 64, 128, 10, dz, 10, w, 10, da);
+
+    rowMajorGemm(this->handle->getContextCublasHanler(), CUBLAS_OP_T, CUBLAS_OP_N, 128, 10, 64, x, 128, dz, 10, dw);
+
+    biasBackwardKernel<<<1, 32, 0, this->handle->getWorkspaceStream()>>>(dz, db, 64, 10);
+  }
+
+  void learnFunc(float lr)
+  {
+    float negLr = -lr;
+
+    float *w  = (float *)((uint8_t *)this->handle->getData() + this->w.getOffset());
+    float *b  = (float *)((uint8_t *)this->handle->getData() + this->b.getOffset());
+    float *dw = (float *)((uint8_t *)this->handle->getData() + this->dw.getOffset());
+    float *db = (float *)((uint8_t *)this->handle->getData() + this->db.getOffset());
+
+    cublasSaxpy(this->handle->getContextCublasHanler(), 128 * 10, &negLr, dw, 1, w, 1);
+    cublasSaxpy(this->handle->getContextCublasHanler(), 10, &negLr, db, 1, b, 1);
+  }
 };
 
 
@@ -633,6 +756,21 @@ void DLModel::train(int iterations)
 
     this->dL->linear(this->exfL->act);
     this->dL->softmaxCrossEntropy(this->deviceTargets);
+
+    float lr = 0.01f;
+
+    this->dL->backLinear(this->exfL->act);
+    this->dL->learnFunc(lr);
+
+    this->exfL->backActivation(this->dL->da);
+    this->exfL->backLinear(this->poolL->z);
+    this->exfL->learnFunc(lr);
+
+    this->poolL->backPool(this->exfL->da);
+
+    this->convL->backActivation(this->poolL->da);
+    this->convL->learnFunc(lr);
+
 
     if ((i + 1) % 32 == 0)
     {

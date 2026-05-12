@@ -6,12 +6,12 @@
 class Layer
 {
 protected:
-  Math da = {0}, dw = {0}, db = {0};
   HandleCuda *handle = NULL;
 public:
+  Math da = {0}, dw = {0}, db = {0};
   Math x = {0}, w = {0}, b = {0};
   Math z = {0}, act = {0}, dz = {0};
-  
+
   Layer(HandleCuda& handle);
   virtual ~Layer();
 
