@@ -231,6 +231,7 @@ class ConvLayer: public Layer
 public:
   ConvLayer(HandleCuda& handle): Layer(handle)
   {
+#ifdef use_old
     this->setX((int[])   {64, 1, 28, 28}, 4, LT_TENSOR, OT_CONV);
     this->setW((int[])   {1, 1, 3, 3},    4, LT_FILTER, OT_CONV);
     this->setB((int[])   {1, 1, 1, 1},    4, LT_TENSOR, OT_CONV);
@@ -241,6 +242,27 @@ public:
     this->setDz((int[])  {64, 1, 28, 28}, 4, LT_TENSOR, OT_CONV);
     this->setDw((int[])  {1, 1, 3, 3},    4, LT_FILTER, OT_CONV);
     this->setDb((int[])  {1, 1, 1, 1},    4, LT_TENSOR, OT_CONV);
+#else
+    int xDim[HIGHEST_RANK]   = {64, 1, 28, 28};
+    int wDim[HIGHEST_RANK]   = {1, 1, 3, 3};
+    int bDim[HIGHEST_RANK]   = {1, 1, 1, 1};
+    int zDim[HIGHEST_RANK]   = {64, 1, 28, 28};
+    int actDim[HIGHEST_RANK] = {64, 1, 28, 28};
+    int dzDim[HIGHEST_RANK]  = {64, 1, 28, 28};
+    int dwDim[HIGHEST_RANK]  = {1, 1, 3, 3};
+    int dbDim[HIGHEST_RANK]  = {1, 1, 1, 1};
+
+    this->setX(xDim,     4, LT_TENSOR, OT_CONV);
+    this->setW(wDim,     4, LT_FILTER, OT_CONV);
+    this->setB(bDim,     4, LT_TENSOR, OT_CONV);
+
+    this->setZ(zDim,     4, LT_TENSOR, OT_CONV);
+    this->setAct(actDim, 4, LT_TENSOR, OT_CONV);
+
+    this->setDz(dzDim,   4, LT_TENSOR, OT_CONV);
+    this->setDw(dwDim,   4, LT_FILTER, OT_CONV);
+    this->setDb(dbDim,   4, LT_TENSOR, OT_CONV);
+#endif
   }
 
   void convXWpB()
@@ -395,10 +417,22 @@ class PoolLayer: public Layer
 public:
   PoolLayer(HandleCuda& handle): Layer(handle)
   {
+#ifdef use_old
     this->setX((int[])  {64, 1, 28, 28}, 4, LT_TENSOR, OT_POOL);
     this->setZ((int[])  {64, 1, 14, 14}, 4, LT_TENSOR, OT_POOL);
     this->setDz((int[]) {64, 1, 14, 14}, 4, LT_TENSOR, OT_POOL);
     this->setDa((int[]) {64, 1, 28, 28}, 4, LT_TENSOR, OT_POOL);
+#else
+    int xDim[HIGHEST_RANK]  = {64, 1, 28, 28};
+    int zDim[HIGHEST_RANK]  = {64, 1, 14, 14};
+    int dzDim[HIGHEST_RANK] = {64, 1, 14, 14};
+    int daDim[HIGHEST_RANK] = {64, 1, 28, 28};
+
+    this->setX(xDim,   4, LT_TENSOR, OT_POOL);
+    this->setZ(zDim,   4, LT_TENSOR, OT_POOL);
+    this->setDz(dzDim, 4, LT_TENSOR, OT_POOL);
+    this->setDa(daDim, 4, LT_TENSOR, OT_POOL);
+#endif
   }
 
   void maxPool(Math& a1)
@@ -465,6 +499,7 @@ class ExtractFeaturesLayer: public Layer
 public:
   ExtractFeaturesLayer(HandleCuda& handle): Layer(handle)
   {
+#ifdef use_old
     this->setX((int[])   {64, 196, 0, 0}, 2, LT_MATRIX, OT_MATRIX);
     this->setW((int[])   {196, 128, 0, 0}, 2, LT_MATRIX, OT_MATRIX);
     this->setB((int[])   {1, 128, 0, 0}, 2, LT_MATRIX, OT_MATRIX);
@@ -477,6 +512,30 @@ public:
     this->setDb((int[])  {1, 128, 0, 0}, 2, LT_MATRIX, OT_MATRIX);
 
     this->setDa((int[])  {64, 196, 0, 0}, 2, LT_MATRIX, OT_MATRIX);
+#else
+    int xDim[HIGHEST_RANK]   = {64, 196, 0, 0};
+    int wDim[HIGHEST_RANK]   = {196, 128, 0, 0};
+    int bDim[HIGHEST_RANK]   = {1, 128, 0, 0};
+    int zDim[HIGHEST_RANK]   = {64, 128, 0, 0};
+    int actDim[HIGHEST_RANK] = {64, 128, 0, 0};
+    int dzDim[HIGHEST_RANK]  = {64, 128, 0, 0};
+    int dwDim[HIGHEST_RANK]  = {196, 128, 0, 0};
+    int dbDim[HIGHEST_RANK]  = {1, 128, 0, 0};
+    int daDim[HIGHEST_RANK]  = {64, 196, 0, 0};
+
+    this->setX(xDim,     2, LT_MATRIX, OT_MATRIX);
+    this->setW(wDim,     2, LT_MATRIX, OT_MATRIX);
+    this->setB(bDim,     2, LT_MATRIX, OT_MATRIX);
+
+    this->setZ(zDim,     2, LT_MATRIX, OT_MATRIX);
+    this->setAct(actDim, 2, LT_MATRIX, OT_MATRIX);
+
+    this->setDz(dzDim,   2, LT_MATRIX, OT_MATRIX);
+    this->setDw(dwDim,   2, LT_MATRIX, OT_MATRIX);
+    this->setDb(dbDim,   2, LT_MATRIX, OT_MATRIX);
+
+    this->setDa(daDim,   2, LT_MATRIX, OT_MATRIX);
+#endif
   }
 
   void linear(Math& a1)
@@ -596,6 +655,7 @@ class DenseLayer: public Layer
 public:
   DenseLayer(HandleCuda& handle): Layer(handle)
   {
+#ifdef use_old
     this->setX((int[])   {64, 128, 0, 0}, 2, LT_MATRIX, OT_MATRIX);
     this->setW((int[])   {128, 10, 0, 0}, 2, LT_MATRIX, OT_MATRIX);
     this->setB((int[])   {1, 10, 0, 0}, 2, LT_MATRIX, OT_MATRIX);
@@ -608,6 +668,30 @@ public:
     this->setDb((int[])  {1, 10, 0, 0}, 2, LT_MATRIX, OT_MATRIX);
 
     this->setDa((int[])  {64, 128, 0, 0}, 2, LT_MATRIX, OT_MATRIX);
+#else
+    int xDim[HIGHEST_RANK]   = {64, 128, 0, 0};
+    int wDim[HIGHEST_RANK]   = {128, 10, 0, 0};
+    int bDim[HIGHEST_RANK]   = {1, 10, 0, 0};
+    int zDim[HIGHEST_RANK]   = {64, 10, 0, 0};
+    int actDim[HIGHEST_RANK] = {64, 10, 0, 0};
+    int dzDim[HIGHEST_RANK]  = {64, 10, 0, 0};
+    int dwDim[HIGHEST_RANK]  = {128, 10, 0, 0};
+    int dbDim[HIGHEST_RANK]  = {1, 10, 0, 0};
+    int daDim[HIGHEST_RANK]  = {64, 128, 0, 0};
+
+    this->setX(xDim,     2, LT_MATRIX, OT_MATRIX);
+    this->setW(wDim,     2, LT_MATRIX, OT_MATRIX);
+    this->setB(bDim,     2, LT_MATRIX, OT_MATRIX);
+
+    this->setZ(zDim,     2, LT_MATRIX, OT_MATRIX);
+    this->setAct(actDim, 2, LT_MATRIX, OT_MATRIX);
+
+    this->setDz(dzDim,   2, LT_MATRIX, OT_MATRIX);
+    this->setDw(dwDim,   2, LT_MATRIX, OT_MATRIX);
+    this->setDb(dbDim,   2, LT_MATRIX, OT_MATRIX);
+
+    this->setDa(daDim,   2, LT_MATRIX, OT_MATRIX);
+#endif
   }
 
   void linear(Math& a1)
