@@ -104,7 +104,7 @@ void Layout::setDescriptors(void)
     if (cudnnSetConvolution2dDescriptor(this->op.conv, 1, 1, 1, 1, 1, 1, CUDNN_CROSS_CORRELATION, CUDNN_DATA_FLOAT) != CUDNN_STATUS_SUCCESS)
       throw std::runtime_error("FATAL ERROR: Convolution descriptor setup failed!");
 
-    if (cudnnSetConvolutionMathType(this->op.conv, CUDNN_TENSOR_OP_MATH) != CUDNN_STATUS_SUCCESS)
+    if (cudnnSetConvolutionMathType(this->op.conv, CUDNN_DEFAULT_MATH) != CUDNN_STATUS_SUCCESS)
       throw std::runtime_error("FATAL ERROR: Convolution math type setup failed!");
   }
 

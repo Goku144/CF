@@ -174,6 +174,17 @@ static __global__ void biasBackwardKernel(const float *dz, float *db, int batch,
   db[o] = sum;
 }
 
+static __global__ void addBiasKernel(float *z, const float *b, int batch, int output)
+{
+  int index = blockIdx.x * blockDim.x + threadIdx.x;
+  int total = batch * output;
+
+  if (index >= total)
+    return;
+
+  z[index] += b[index % output];
+}
+
 static void initMathRandom(HandleCuda& gpu, Math& m, float scale)
 {
   static std::mt19937 rng(1337);
@@ -597,9 +608,6 @@ public:
 
   void linear(Math& a1)
   {
-    float alpha = 1.0f;
-    float beta = 0.0f;
-
     void *src = (uint8_t *)this->handle->getData() + a1.getOffset();
     void *x = (uint8_t *)this->handle->getData() + this->x.getOffset();
     void *w = (uint8_t *)this->handle->getData() + this->w.getOffset();
@@ -608,40 +616,25 @@ public:
 
     cudaMemcpyAsync(x, src, a1.getCapacity(), cudaMemcpyDeviceToDevice, this->handle->getWorkspaceStream());
 
-    cublasLtMatmulDescSetAttribute(
-      this->z.getLayout()->getOpDescriptor().matrix,
-      CUBLASLT_MATMUL_DESC_BIAS_POINTER,
-      &b,
-      sizeof(b)
+    rowMajorGemm(
+      this->handle->getContextCublasHanler(),
+      CUBLAS_OP_N,
+      CUBLAS_OP_N,
+      64,
+      128,
+      196,
+      (float *)x,
+      196,
+      (float *)w,
+      128,
+      (float *)z
     );
 
-    cublasLtMatmul(
-      this->handle->getContextCublasLtHanler(),
-
-      this->z.getLayout()->getOpDescriptor().matrix,
-
-      &alpha,
-
-      x,
-      this->x.getLayout()->getLayoutDescriptor().matrix,
-
-      w,
-      this->w.getLayout()->getLayoutDescriptor().matrix,
-
-      &beta,
-
-      z,
-      this->z.getLayout()->getLayoutDescriptor().matrix,
-
-      z,
-      this->z.getLayout()->getLayoutDescriptor().matrix,
-
-      NULL,
-
-      this->handle->getWorkspaceScratchpad(),
-      this->handle->getWorkspaceScratchpadSize(),
-
-      this->handle->getWorkspaceStream()
+    addBiasKernel<<<32, 256, 0, this->handle->getWorkspaceStream()>>>(
+      (float *)z,
+      (float *)b,
+      64,
+      128
     );
   }
 
@@ -756,9 +749,6 @@ public:
 
   void linear(Math& a1)
   {
-    float alpha = 1.0f;
-    float beta = 0.0f;
-
     void *src = (uint8_t *)this->handle->getData() + a1.getOffset();
     void *x = (uint8_t *)this->handle->getData() + this->x.getOffset();
     void *w = (uint8_t *)this->handle->getData() + this->w.getOffset();
@@ -767,36 +757,25 @@ public:
 
     cudaMemcpyAsync(x, src, a1.getCapacity(), cudaMemcpyDeviceToDevice, this->handle->getWorkspaceStream());
 
-    cublasLtMatmulDescSetAttribute(
-      this->z.getLayout()->getOpDescriptor().matrix,
-      CUBLASLT_MATMUL_DESC_BIAS_POINTER,
-      &b,
-      sizeof(b)
+    rowMajorGemm(
+      this->handle->getContextCublasHanler(),
+      CUBLAS_OP_N,
+      CUBLAS_OP_N,
+      64,
+      10,
+      128,
+      (float *)x,
+      128,
+      (float *)w,
+      10,
+      (float *)z
     );
 
-    cublasLtMatmul(
-      this->handle->getContextCublasLtHanler(),
-      this->z.getLayout()->getOpDescriptor().matrix,
-      &alpha,
-
-      x,
-      this->x.getLayout()->getLayoutDescriptor().matrix,
-
-      w,
-      this->w.getLayout()->getLayoutDescriptor().matrix,
-
-      &beta,
-
-      z,
-      this->z.getLayout()->getLayoutDescriptor().matrix,
-
-      z,
-      this->z.getLayout()->getLayoutDescriptor().matrix,
-
-      NULL,
-      this->handle->getWorkspaceScratchpad(),
-      this->handle->getWorkspaceScratchpadSize(),
-      this->handle->getWorkspaceStream()
+    addBiasKernel<<<3, 256, 0, this->handle->getWorkspaceStream()>>>(
+      (float *)z,
+      (float *)b,
+      64,
+      10
     );
   }
 

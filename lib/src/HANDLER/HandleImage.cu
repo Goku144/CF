@@ -9,6 +9,7 @@
 
 #include <iostream>
 #include <cstring>
+#include <stdexcept>
 
 namespace fs = std::filesystem;
 
@@ -35,7 +36,16 @@ HandleImage::~HandleImage()
 
 void HandleImage::getTensorAndTargets(HandleCpu& handle, Math& tensor, Math& targets)
 {
-  if(this->index > this->samples.size() - 64) return;
+  if (this->samples.size() < 64)
+    throw std::runtime_error("FATAL ERROR: Not enough images to build a batch!");
+
+  if (this->index + 64 > this->samples.size())
+  {
+    std::mt19937 rng(std::random_device{}());
+    std::shuffle(this->samples.begin(), this->samples.end(), rng);
+    this->index = 0;
+  }
+
   handle.reset();
   size_t offset = 0;
   float target[64] = {0};
